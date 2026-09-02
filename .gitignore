@@ -1,0 +1,23 @@
+# Roblox / tooling
+*.rbxl
+*.rbxlx
+*.rbxl.lock
+*.rbxlx.lock
+*.rbxm
+*.rbxmx
+sourcemap.json
+/build/
+/out/
+
+# Package managers
+/Packages/
+/DevPackages/
+/ServerPackages/
+*.package-lock.json
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/settings.json
+.idea/

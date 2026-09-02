@@ -1,0 +1,74 @@
+{
+  "name": "HyperBlast",
+  "globIgnorePaths": ["**/.package-lock.json"],
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "HyperBlast": {
+        "$path": "src/shared"
+      }
+    },
+
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "HyperBlastServer": {
+        "$path": "src/server"
+      }
+    },
+
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "HyperBlastClient": {
+          "$path": "src/client"
+        }
+      },
+      "StarterCharacterScripts": {
+        "$className": "StarterCharacterScripts"
+      }
+    },
+
+    "Workspace": {
+      "$className": "Workspace",
+      "$properties": {
+        "FilteringEnabled": true,
+        "StreamingEnabled": false,
+        "Gravity": 145
+      }
+    },
+
+    "Lighting": {
+      "$className": "Lighting",
+      "$properties": {
+        "Ambient": [0.06, 0.05, 0.12],
+        "OutdoorAmbient": [0.08, 0.06, 0.16],
+        "Brightness": 1.2,
+        "ClockTime": 0,
+        "GeographicLatitude": 0,
+        "ExposureCompensation": 0.15,
+        "EnvironmentDiffuseScale": 0.35,
+        "EnvironmentSpecularScale": 0.6,
+        "GlobalShadows": true,
+        "Technology": "Future"
+      }
+    },
+
+    "SoundService": {
+      "$className": "SoundService",
+      "$properties": {
+        "RespectFilteringEnabled": true
+      }
+    },
+
+    "Players": {
+      "$className": "Players",
+      "$properties": {
+        "CharacterAutoLoads": false,
+        "RespawnTime": 3
+      }
+    }
+  }
+}
