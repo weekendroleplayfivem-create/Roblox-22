@@ -11,26 +11,17 @@ local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 
-local function hideOwnBody(character)
-	for _, descendant in ipairs(character:GetDescendants()) do
-		if descendant:IsA("BasePart") then
-			descendant.LocalTransparencyModifier = 1
-		end
-	end
-	character.DescendantAdded:Connect(function(descendant)
-		if descendant:IsA("BasePart") then
-			descendant.LocalTransparencyModifier = 1
-		end
-	end)
-end
+-- Hiding the local body is owned by CameraController (it has to re-apply
+-- LocalTransparencyModifier every frame, so it keeps the cached part list).
 
 local function onCharacterAdded(character)
-	hideOwnBody(character)
-
 	local humanoid = character:WaitForChild("Humanoid")
+
+	-- Roblox's default animations assume walking speeds; at scooter speeds the
+	-- run cycle just looks like a blur, and the character is hidden in first
+	-- person anyway, so there's nothing to tear down on death here.
 	humanoid.Died:Connect(function()
-		-- WeaponController/ScooterController simply stop finding a live
-		-- character/scooter on their next frame; nothing else to tear down.
+		humanoid.WalkSpeed = 0
 	end)
 end
 

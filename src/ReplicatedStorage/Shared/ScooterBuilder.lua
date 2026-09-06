@@ -1,25 +1,40 @@
 --[[
 	ScooterBuilder
 	Procedurally assembles a combat-scooter model from parts (see brief
-	section 42: prefer generated geometry over hand placement). Used by the
-	server to spawn a rideable scooter and by the client to render cosmetic
-	previews in the Inventory/Loadout UI.
+	section 42: prefer generated geometry over hand placement).
+
+	The scooter is a *welded cosmetic rig*, not a seated physics vehicle: every
+	part is massless and non-colliding, and the whole model is welded under the
+	player's HumanoidRootPart. Movement feel (accel/boost/drift) is applied to
+	the Humanoid itself by ScooterController. That keeps driving on top of
+	Roblox's own character controller, which is far more reliable than a
+	VehicleSeat + BodyVelocity chain, and means the player can always move.
 ]]
 
 local ScooterData = require(script.Parent.ScooterData)
 
 local ScooterBuilder = {}
 
-local function neonPart(size, cframe, color)
-	local part = Instance.new("Part")
-	part.Size = size
-	part.CFrame = cframe
-	part.Material = Enum.Material.Neon
-	part.Color = color
+-- Where the deck sits relative to the character's HumanoidRootPart.
+ScooterBuilder.RideOffset = CFrame.new(0, -2.6, 0)
+
+-- Every scooter part: no collision, no mass, so it never fights the character
+-- it's welded to and never traps the player inside geometry.
+local function configure(part)
 	part.Anchored = false
 	part.CanCollide = false
+	part.CanTouch = true
+	part.Massless = true
 	part.CastShadow = false
 	return part
+end
+
+local function weldTo(root, part)
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = root
+	weld.Part1 = part
+	weld.Parent = part
+	return weld
 end
 
 function ScooterBuilder.Build(skinId)
@@ -33,114 +48,103 @@ function ScooterBuilder.Build(skinId)
 	deck.Size = Vector3.new(2.2, 0.35, 5)
 	deck.Material = skin.Material
 	deck.Color = skin.BodyColor
-	deck.CanCollide = true
 	deck.CFrame = CFrame.new(0, 1.5, 0)
+	configure(deck)
 	deck.Parent = model
 	model.PrimaryPart = deck
 
-	local stripe = neonPart(Vector3.new(0.2, 0.06, 4.6), deck.CFrame * CFrame.new(0, 0.21, 0), skin.AccentColor)
-	stripe.Parent = model
-	local weldStripe = Instance.new("WeldConstraint")
-	weldStripe.Part0 = deck
-	weldStripe.Part1 = stripe
-	weldStripe.Parent = stripe
-
-	local stem = Instance.new("Part")
-	stem.Name = "Stem"
-	stem.Size = Vector3.new(0.3, 3, 0.3)
-	stem.Material = skin.Material
-	stem.Color = skin.BodyColor
-	stem.CanCollide = false
-	stem.CFrame = deck.CFrame * CFrame.new(0, 1.5, -2.2)
-	stem.Parent = model
-	local weldStem = Instance.new("WeldConstraint")
-	weldStem.Part0 = deck
-	weldStem.Part1 = stem
-	weldStem.Parent = stem
-
-	local handlebar = Instance.new("Part")
-	handlebar.Name = "Handlebar"
-	handlebar.Size = Vector3.new(2, 0.25, 0.25)
-	handlebar.Material = skin.Material
-	handlebar.Color = skin.AccentColor
-	handlebar.CanCollide = false
-	handlebar.CFrame = stem.CFrame * CFrame.new(0, 1.5, 0)
-	handlebar.Parent = model
-	local weldBar = Instance.new("WeldConstraint")
-	weldBar.Part0 = deck
-	weldBar.Part1 = handlebar
-	weldBar.Parent = handlebar
-
-	for _, offsetZ in ipairs({ 2.1, -2.1 }) do
-		local wheel = Instance.new("Part")
-		wheel.Name = "Wheel"
-		wheel.Shape = Enum.PartType.Cylinder
-		wheel.Size = Vector3.new(0.4, 1.1, 1.1)
-		wheel.Material = Enum.Material.Metal
-		wheel.Color = Color3.fromRGB(20, 20, 20)
-		wheel.CanCollide = false
-		wheel.CFrame = deck.CFrame * CFrame.new(0, -0.6, offsetZ) * CFrame.Angles(0, 0, math.rad(90))
-		wheel.Parent = model
-		local weldWheel = Instance.new("WeldConstraint")
-		weldWheel.Part0 = deck
-		weldWheel.Part1 = wheel
-		weldWheel.Parent = wheel
-
-		local wheelGlow = neonPart(Vector3.new(0.42, 0.5, 0.5), wheel.CFrame, skin.AccentColor)
-		wheelGlow.Shape = Enum.PartType.Cylinder
-		wheelGlow.Transparency = 0.35
-		wheelGlow.Parent = model
-		local weldGlow = Instance.new("WeldConstraint")
-		weldGlow.Part0 = deck
-		weldGlow.Part1 = wheelGlow
-		weldGlow.Parent = wheelGlow
+	local function addPart(name, size, cframe, color, material)
+		local p = Instance.new("Part")
+		p.Name = name
+		p.Size = size
+		p.CFrame = cframe
+		p.Color = color
+		p.Material = material or skin.Material
+		configure(p)
+		p.Parent = model
+		weldTo(deck, p)
+		return p
 	end
 
-	local seat = Instance.new("VehicleSeat")
-	seat.Name = "DriverSeat"
-	seat.Size = Vector3.new(1.8, 0.3, 1.6)
-	seat.Transparency = 1
-	seat.MaxSpeed = 0 -- we drive velocity ourselves; disable built-in car physics
-	seat.Torque = 0
-	seat.TurnSpeed = 0
-	seat.CFrame = deck.CFrame * CFrame.new(0, 0.35, 0.6)
-	seat.Parent = model
-	local weldSeat = Instance.new("WeldConstraint")
-	weldSeat.Part0 = deck
-	weldSeat.Part1 = seat
-	weldSeat.Parent = seat
+	addPart("Stripe", Vector3.new(0.2, 0.06, 4.6), deck.CFrame * CFrame.new(0, 0.21, 0), skin.AccentColor, Enum.Material.Neon)
+
+	local stem = addPart("Stem", Vector3.new(0.3, 2.4, 0.3), deck.CFrame * CFrame.new(0, 1.2, -2.2), skin.BodyColor)
+	addPart("Handlebar", Vector3.new(2, 0.25, 0.25), stem.CFrame * CFrame.new(0, 1.2, 0), skin.AccentColor)
+
+	for index, offsetZ in ipairs({ 2.1, -2.1 }) do
+		local wheel = addPart(
+			"Wheel" .. index,
+			Vector3.new(0.4, 1.1, 1.1),
+			deck.CFrame * CFrame.new(0, -0.6, offsetZ) * CFrame.Angles(0, 0, math.rad(90)),
+			Color3.fromRGB(20, 20, 20),
+			Enum.Material.Metal
+		)
+		wheel.Shape = Enum.PartType.Cylinder
+
+		local glow = addPart(
+			"WheelGlow" .. index,
+			Vector3.new(0.42, 0.5, 0.5),
+			wheel.CFrame,
+			skin.AccentColor,
+			Enum.Material.Neon
+		)
+		glow.Shape = Enum.PartType.Cylinder
+		glow.Transparency = 0.35
+	end
 
 	local light = Instance.new("PointLight")
 	light.Color = skin.AccentColor
-	light.Range = 12
+	light.Range = 14
 	light.Brightness = 2
-	light.Parent = stripe
+	light.Parent = deck
 
 	local trailAttachment0 = Instance.new("Attachment")
 	trailAttachment0.Name = "TrailAttachment0"
-	trailAttachment0.Position = Vector3.new(-1, -0.4, -2.4)
+	trailAttachment0.Position = Vector3.new(-1, -0.4, 2.4)
 	trailAttachment0.Parent = deck
 
 	local trailAttachment1 = Instance.new("Attachment")
 	trailAttachment1.Name = "TrailAttachment1"
-	trailAttachment1.Position = Vector3.new(1, -0.4, -2.4)
+	trailAttachment1.Position = Vector3.new(1, -0.4, 2.4)
 	trailAttachment1.Parent = deck
 
 	local trail = Instance.new("Trail")
+	trail.Name = "BoostTrail"
 	trail.Attachment0 = trailAttachment0
 	trail.Attachment1 = trailAttachment1
 	trail.Color = ColorSequence.new(skin.AccentColor)
 	trail.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.4),
+		NumberSequenceKeypoint.new(0, 0.35),
 		NumberSequenceKeypoint.new(1, 1),
 	})
-	trail.Lifetime = 0.4
+	trail.Lifetime = 0.45
 	trail.Enabled = false
-	trail.Name = "BoostTrail"
 	trail.Parent = deck
 
 	model:SetAttribute("SkinId", skin.Id)
 	return model
+end
+
+-- Welds a freshly built scooter under a character. Returns the Weld so the
+-- client can animate C0 for cosmetic lean while turning.
+function ScooterBuilder.AttachTo(model, character)
+	local root = character:FindFirstChild("HumanoidRootPart")
+	local deck = model.PrimaryPart
+	if not root or not deck then
+		return nil
+	end
+
+	-- Sit the deck just below the character's feet.
+	model:PivotTo(root.CFrame * ScooterBuilder.RideOffset)
+
+	local weld = Instance.new("Weld")
+	weld.Name = "ScooterWeld"
+	weld.Part0 = root
+	weld.Part1 = deck
+	weld.C0 = ScooterBuilder.RideOffset
+	weld.Parent = deck
+
+	return weld
 end
 
 return ScooterBuilder

@@ -12,6 +12,7 @@ local TeamsService = game:GetService("Teams")
 
 local MatchData = require(ReplicatedStorage.Shared.MatchData)
 local ScooterBuilder = require(ReplicatedStorage.Shared.ScooterBuilder)
+local ScooterData = require(ReplicatedStorage.Shared.ScooterData)
 local PlayerData = require(script.Parent.PlayerData)
 local DamageService = require(script.Parent.DamageService)
 local XPService = require(script.Parent.XPService)
@@ -144,26 +145,24 @@ function MatchManager.SpawnPlayer(player)
 	local team = MatchManager.Mode == "TeamBlast" and assignTeam(player) or nil
 	local spawnCFrame = pickSpawnPoint(team)
 
-	if not player.Character then
-		player:LoadCharacter()
-	end
+	player:LoadCharacter()
 	local character = player.Character or player.CharacterAdded:Wait()
 	local humanoid = character:WaitForChild("Humanoid")
 	local root = character:WaitForChild("HumanoidRootPart")
 
 	humanoid.Health = humanoid.MaxHealth
-	root.CFrame = spawnCFrame
+	humanoid.UseJumpPower = true
+	humanoid.JumpPower = ScooterData.Physics.JumpPower
+	humanoid.WalkSpeed = ScooterData.Physics.BaseSpeed
+
+	-- Clear of the platform surface so nothing interpenetrates on spawn. The
+	-- scooter is welded under the character rather than placed beside it, so
+	-- there is only ever one thing occupying this spot.
+	root.CFrame = spawnCFrame + Vector3.new(0, 2, 0)
 	root.AssemblyLinearVelocity = Vector3.zero
 
 	local scooter = spawnScooterFor(player)
-	scooter:PivotTo(spawnCFrame)
-
-	task.defer(function()
-		local seat = scooter:FindFirstChild("DriverSeat")
-		if seat and humanoid.Health > 0 then
-			seat:Sit(humanoid)
-		end
-	end)
+	ScooterBuilder.AttachTo(scooter, character)
 end
 
 local function onElimination(victim, killer, _weaponId, _isHeadshot)

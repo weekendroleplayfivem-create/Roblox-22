@@ -23,7 +23,6 @@ ClientState.Scooter = {
 	Boosting = false,
 	BoostMeter = 100,
 	Drifting = false,
-	JumpQueued = false,
 }
 
 ClientState.Weapon = {

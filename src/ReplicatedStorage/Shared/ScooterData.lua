@@ -4,6 +4,7 @@ local ScooterData = {}
 
 ScooterData.Physics = {
 	Acceleration = 55,
+	BaseSpeed = 26, -- speed the moment you start moving, before the ramp kicks in
 	MaxSpeed = 85,
 	ReverseSpeed = 35,
 	BoostSpeed = 120,

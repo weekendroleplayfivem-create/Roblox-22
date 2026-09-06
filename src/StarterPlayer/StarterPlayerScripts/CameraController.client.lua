@@ -1,25 +1,32 @@
 --[[
 	CameraController
-	Fully scriptable FPS camera (brief section 35). Runs independently of
-	Roblox's default vehicle camera restrictions so mouselook stays free even
-	while the player is seated on the scooter. Reads ADS/boost/recoil state
-	from ClientState so WeaponController and ScooterController don't need to
-	know anything about the camera directly.
+	Fully scriptable FPS camera (brief section 35). Reads ADS/boost/recoil
+	state from ClientState so WeaponController and ScooterController don't need
+	to know anything about the camera directly.
+
+	The camera type is re-asserted every frame — Roblox resets it to Custom on
+	respawn, which would otherwise hand control back to the default camera
+	mid-match.
 ]]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
 local WeaponData = require(ReplicatedStorage.Shared.WeaponData)
 local ScooterData = require(ReplicatedStorage.Shared.ScooterData)
 local ClientState = require(script.Parent:WaitForChild("ClientState"))
 
 local player = Players.LocalPlayer
-local camera = workspace.CurrentCamera
 
-camera.CameraType = Enum.CameraType.Scriptable
+-- Never cache CurrentCamera: Roblox swaps the camera instance on respawn, and
+-- a stale reference is a black/frozen screen.
+local function getCamera()
+	return Workspace.CurrentCamera
+end
+
 ClientState.Camera.InputEnabled = true
 
 local yaw, pitch = 0, 0
@@ -47,17 +54,17 @@ UserInputService.InputChanged:Connect(function(input)
 	end
 end)
 
-local function getEyeCFrame()
+local function getEyePosition()
 	local character = player.Character
 	local head = character and character:FindFirstChild("Head")
 	if head then
-		return head.CFrame
+		return head.Position
 	end
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	if root then
-		return root.CFrame * CFrame.new(0, 1.5, 0)
+		return root.Position + Vector3.new(0, 1.5, 0)
 	end
-	return camera.CFrame
+	return getCamera().CFrame.Position
 end
 
 local function targetFOV()
@@ -97,13 +104,58 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 	end
 
-	local eye = getEyeCFrame()
+	local camera = getCamera()
+	if not camera then
+		return
+	end
+	-- Re-assert every frame: respawning resets this to Custom.
+	if camera.CameraType ~= Enum.CameraType.Scriptable then
+		camera.CameraType = Enum.CameraType.Scriptable
+	end
+
 	local recoilRad = math.rad(ClientState.Camera.RecoilPitch)
 	local recoilYawRad = math.rad(ClientState.Camera.RecoilYaw)
-
 	local rotation = CFrame.Angles(0, yaw + recoilYawRad, 0) * CFrame.Angles(pitch + recoilRad, 0, 0)
-	camera.CFrame = CFrame.new(eye.Position + shakeOffset) * rotation
+
+	-- Push the eye slightly forward along the look direction so the camera can
+	-- never end up inside the player's own head mesh.
+	local eyePosition = getEyePosition() + shakeOffset + rotation.LookVector * 0.8
+	camera.CFrame = CFrame.new(eyePosition) * rotation
 
 	currentFOV += (targetFOV() - currentFOV) * math.clamp(dt * 8, 0, 1)
 	camera.FieldOfView = currentFOV
+end)
+
+-- Keep the character's own body from ever obscuring the first-person view.
+-- The engine resets LocalTransparencyModifier, so it has to be re-applied each
+-- frame; the part list is cached so this isn't a per-frame tree walk.
+local hiddenParts = {}
+
+local function trackCharacter(character)
+	table.clear(hiddenParts)
+	local function track(instance)
+		if instance:IsA("BasePart") or instance:IsA("Decal") then
+			table.insert(hiddenParts, instance)
+		end
+	end
+	for _, descendant in ipairs(character:GetDescendants()) do
+		track(descendant)
+	end
+	character.DescendantAdded:Connect(track)
+end
+
+if player.Character then
+	trackCharacter(player.Character)
+end
+player.CharacterAdded:Connect(trackCharacter)
+
+RunService.RenderStepped:Connect(function()
+	for index = #hiddenParts, 1, -1 do
+		local instance = hiddenParts[index]
+		if instance.Parent then
+			instance.LocalTransparencyModifier = 1
+		else
+			table.remove(hiddenParts, index)
+		end
+	end
 end)

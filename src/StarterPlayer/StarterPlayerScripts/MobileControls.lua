@@ -1,10 +1,9 @@
 --[[
 	MobileControls
-	Touch controls for phones/tablets (brief section 4). Roblox already draws
-	a steering-wheel + throttle pedal automatically once the local humanoid
-	is seated in the scooter's VehicleSeat (that's where Throttle/Steer come
-	from for everyone, keyboard or touch) — this module only adds the buttons
-	that aren't covered by that: fire, boost, jump, reload, and weapon switch.
+	Touch controls for phones/tablets (brief section 4). Movement rides the
+	Humanoid, so Roblox's own on-screen thumbstick already drives the scooter
+	on touch devices — this module adds the buttons that aren't covered by it:
+	fire, ADS, boost, jump, reload, and weapon switch.
 ]]
 
 local Players = game:GetService("Players")
