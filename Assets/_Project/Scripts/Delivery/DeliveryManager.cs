@@ -28,6 +28,10 @@ namespace DeliveryDisaster.Delivery
 
         public DeliveryJob ActiveJob { get; private set; }
 
+        // Scoped to the Gameplay scene - must NOT survive a return to the main menu, otherwise a
+        // second Gameplay load would leave a stale manager running alongside a fresh one.
+        protected override bool Persistent => false;
+
         private void Start()
         {
             StartCoroutine(GenerateJobAfterDelay(1f));

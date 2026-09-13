@@ -62,7 +62,15 @@ namespace DeliveryDisaster.Utils
 
         protected virtual void OnDestroy()
         {
-            if (instance == this as T)
+            if (instance != this as T) return;
+
+            instance = null;
+
+            // Only latch isShuttingDown for persistent (DontDestroyOnLoad) singletons, whose
+            // OnDestroy realistically only fires at application quit. A non-persistent
+            // (scene-scoped) singleton is destroyed on every normal scene unload too - latching
+            // here would permanently stop it from ever re-registering on the next scene load.
+            if (Persistent)
             {
                 isShuttingDown = true;
             }

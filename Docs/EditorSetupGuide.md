@@ -1,12 +1,40 @@
 # Editor Setup Guide
 
-Everything in `Assets/_Project/Scripts/` is complete, working C#. What it does **not** include
-is scene/prefab assembly (dragging scripts onto GameObjects, wiring Inspector references,
-placing level geometry) - that's inherently a Unity Editor GUI activity that has to happen
-inside the Editor itself, by you or whoever opens this project next. This guide is the exact
-sequence to go from "scripts on disk" to "playable game."
+Everything in `Assets/_Project/Scripts/` is complete, working C#. Scene/prefab assembly
+(placing GameObjects, wiring Inspector references) is inherently a Unity Editor activity that
+has to happen inside the Editor - it can't be done from outside it.
 
-Estimated time for a barebones playable vertical slice (primitives, no art): **30-60 minutes**.
+## Fast path: the automated scene builder
+
+`Assets/_Project/Editor/DeliveryDisasterSceneBuilder.cs` builds both scenes and all supporting
+prefabs/ScriptableObjects for you, using real Editor APIs (`AddComponent`, `SerializedObject`,
+`PrefabUtility`) rather than hand-edited files, so every reference resolves correctly. After
+opening the project (step 0 below):
+
+1. Menu bar > **Delivery Disaster > Build Everything (Content + Scenes)**.
+2. It creates: a starter vehicle (prefab + `VehicleData`, with WheelColliders/Rigidbody/damage/
+   package/interaction/audio wired up), all 8 disaster prefabs + `DisasterDefinition` assets
+   (pre-tuned per the table in Section 5 below), an NPC traffic prefab, a notification toast
+   prefab, an empty `SfxLibrary` asset, then `MainMenu.unity` (bootstrap managers, camera, light,
+   Canvas with a working Play/Settings/Quit main menu) and `Gameplay.unity` (ground, 6 delivery
+   locations in a ring, an 8-node waypoint loop for traffic with checkpoints, a bridge disaster
+   spawn point, all gameplay managers with their pools populated, and a full HUD Canvas -
+   delivery panel, timer, money/XP, package status, disaster warning banner, notifications,
+   pause menu, game over screen, and a settings panel with working volume sliders and toggles).
+3. Both scenes are added to Build Settings automatically. Open `MainMenu.unity` and press Play.
+
+It's safe to re-run (existing prefabs/ScriptableObjects are reused, not duplicated; it asks
+before overwriting existing scenes). Two things it deliberately leaves for you, since they're
+safer built through Unity's own menus than hand-constructed: the **Quality dropdown** on the
+Settings panel (`GameObject > UI > Dropdown - TextMeshPro`, then drag it onto
+`SettingsMenuUI.qualityDropdown`) and any **art/audio** (it uses primitive placeholders and
+silent audio hooks throughout, exactly like every disaster does at runtime).
+
+The manual walkthrough below is what the builder automates - read it if you want to understand
+what got built, extend it by hand, or build a scene without the tool.
+
+Estimated time for a barebones playable vertical slice by hand (primitives, no art): **30-60
+minutes**; with the builder script, **under 5 minutes**.
 
 ## 0. Opening the project
 

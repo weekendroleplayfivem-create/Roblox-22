@@ -22,6 +22,9 @@ namespace DeliveryDisaster.Economy
 
         public float CurrentDifficulty { get; private set; }
 
+        // Scoped to the Gameplay scene - see DeliveryManager.Persistent for why.
+        protected override bool Persistent => false;
+
         protected override void Awake()
         {
             base.Awake();

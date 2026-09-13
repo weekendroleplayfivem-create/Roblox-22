@@ -34,6 +34,9 @@ namespace DeliveryDisaster.Disasters
         private readonly Dictionary<DisasterDefinition, float> cooldownExpiryTime = new Dictionary<DisasterDefinition, float>();
         private readonly List<GameObject> activeDisasterInstances = new List<GameObject>();
 
+        // Scoped to the Gameplay scene - see DeliveryManager.Persistent for why.
+        protected override bool Persistent => false;
+
         private Coroutine schedulerRoutine;
 
         private void Start()

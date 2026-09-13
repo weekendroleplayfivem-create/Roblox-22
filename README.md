@@ -13,11 +13,16 @@ and more.
 
 ## Getting started
 
-This repo contains complete, working gameplay/economy/disaster/UI/save/Steam code, but scene
-and prefab assembly (an inherently Editor-GUI task) still needs to be done once inside Unity.
-Follow **`Docs/EditorSetupGuide.md`** step by step - it takes roughly 30-60 minutes to reach a
-playable vertical slice using primitive placeholder art (every system, including all 8
-disasters, works with zero external art assets).
+1. Open this repo's root folder as a project in Unity Hub (Unity 2022.3 LTS).
+2. Menu bar > **Delivery Disaster > Build Everything (Content + Scenes)**. This builds both
+   scenes and every supporting prefab/ScriptableObject (vehicle, all 8 disasters, traffic, UI)
+   automatically via `Assets/_Project/Editor/DeliveryDisasterSceneBuilder.cs`, using real Editor
+   APIs rather than hand-edited files.
+3. Open `Assets/_Project/Scenes/MainMenu.unity` and press Play.
+
+Everything works with primitive placeholder art out of the box - no external assets required.
+See **`Docs/EditorSetupGuide.md`** for what the builder creates and how to extend or hand-build
+a scene yourself instead.
 
 ## Project layout
 
@@ -36,8 +41,8 @@ Assets/_Project/
     Audio/            Event-driven SFX/music hub
     SteamIntegration/ Achievements/stats/cloud, NoOp-by-default
     Input/            Swappable input abstraction
-  ScriptableObjects/  (empty - populate via the Create menus per the setup guide)
-  Prefabs/, Scenes/   (empty - built during the setup guide)
+  Editor/              DeliveryDisasterSceneBuilder.cs - builds both scenes + prefabs/SOs
+  ScriptableObjects/, Prefabs/, Scenes/  populated by running the scene builder (see above)
 Docs/
   EditorSetupGuide.md  Step-by-step scene/prefab assembly
   SteamSetup.md         What to configure for real Steam integration
