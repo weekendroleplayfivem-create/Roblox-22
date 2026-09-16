@@ -1,0 +1,95 @@
+--!strict
+-- Generic, data-driven status effect table. CombatService applies effects by id;
+-- EnemyAIService and player combat both read the same table, so "add a new
+-- status effect" (e.g. a Season 2 "Corrode") never requires touching combat code,
+-- only adding an entry here plus a tick handler id that StatusEffectService dispatches.
+local Types = require(script.Parent.Parent.Types)
+
+local StatusEffects: { [Types.StatusEffectId]: Types.StatusEffectDef } = {
+	Poison = {
+		id = "Poison",
+		displayName = "Poison",
+		description = "Deals Blight damage over time. Stacks up to 5 times, each stack adding a separate tick.",
+		tickInterval = 1,
+		defaultDuration = 6,
+		stacking = "Stack",
+		maxStacks = 5,
+		tickHandlerId = "DamageOverTime",
+		tintColor = Color3.fromRGB(126, 196, 84),
+		icon = "",
+	},
+	Burn = {
+		id = "Burn",
+		displayName = "Burn",
+		description = "Deals rapidly-decaying Fire damage. Refreshing does not stack intensity, only duration.",
+		tickInterval = 0.5,
+		defaultDuration = 4,
+		stacking = "Refresh",
+		maxStacks = 1,
+		tickHandlerId = "DamageOverTime",
+		tintColor = Color3.fromRGB(224, 118, 42),
+		icon = "",
+	},
+	Stun = {
+		id = "Stun",
+		displayName = "Stunned",
+		description = "Cannot move, attack, or cast. Breaks on a fixed timer, never on damage taken.",
+		tickInterval = 0,
+		defaultDuration = 1.2,
+		stacking = "Ignore", -- a second stun while stunned does not extend duration, preventing infinite-lock chains
+		maxStacks = 1,
+		tickHandlerId = "Incapacitate",
+		tintColor = Color3.fromRGB(230, 214, 120),
+		icon = "",
+	},
+	Chill = {
+		id = "Chill",
+		displayName = "Chilled",
+		description = "Move speed and attack speed reduced. Stacking Chill past 3 applies Stun once, converting into a control tool for the Cold-oriented Crypt kit.",
+		tickInterval = 0,
+		defaultDuration = 3,
+		stacking = "Stack",
+		maxStacks = 3,
+		tickHandlerId = "SlowFactor",
+		tintColor = Color3.fromRGB(120, 196, 224),
+		icon = "",
+	},
+	Shock = {
+		id = "Shock",
+		displayName = "Shocked",
+		description = "Next instance of damage taken is amplified. Consumed on trigger.",
+		tickInterval = 0,
+		defaultDuration = 5,
+		stacking = "Refresh",
+		maxStacks = 1,
+		tickHandlerId = "AmplifyNextHit",
+		tintColor = Color3.fromRGB(224, 224, 90),
+		icon = "",
+	},
+	Bleed = {
+		id = "Bleed",
+		displayName = "Bleeding",
+		description = "Deals Physical damage over time, doubled while the target is moving.",
+		tickInterval = 1,
+		defaultDuration = 5,
+		stacking = "Stack",
+		maxStacks = 8,
+		tickHandlerId = "DamageOverTimeMovementScaled",
+		tintColor = Color3.fromRGB(168, 34, 40),
+		icon = "",
+	},
+	Sunder = {
+		id = "Sunder",
+		displayName = "Sundered",
+		description = "Armor reduced, stacking multiplicatively. The Molten Forge's signature debuff for its brute archetypes.",
+		tickInterval = 0,
+		defaultDuration = 8,
+		stacking = "Stack",
+		maxStacks = 4,
+		tickHandlerId = "ArmorShred",
+		tintColor = Color3.fromRGB(158, 90, 56),
+		icon = "",
+	},
+}
+
+return StatusEffects

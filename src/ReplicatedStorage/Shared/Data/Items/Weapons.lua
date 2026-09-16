@@ -1,0 +1,108 @@
+--!strict
+-- Weapon item definitions, spanning all 4 weapon categories. Phase 1 seeds a
+-- representative pair per category (one Common baseline, one Legendary to
+-- prove rarity means a categorically different item, not just bigger
+-- numbers - see Rarity.lua's affixCount) rather than a full catalog; the
+-- full weapon table is authored during content passes per biome/floor tier.
+local Types = require(script.Parent.Parent.Types)
+
+local Weapons: { [string]: Types.ItemDef } = {
+	RustedShortsword = {
+		id = "RustedShortsword",
+		displayName = "Rusted Shortsword",
+		flavorText = "Standard-issue for crypt-watch conscripts. The rust is older than the conscription.",
+		rarity = "Common",
+		slot = "MainHand",
+		weaponCategory = "MeleeArc",
+		baseStats = { Damage = 14, AttackSpeed = 1.1, CritChance = 0.05 },
+		affixSlots = 0,
+		iconId = "",
+		meshId = "",
+	},
+	OathbreakersGrief = {
+		id = "OathbreakersGrief",
+		displayName = "Oathbreaker's Grief",
+		flavorText = "It remembers every oath sworn on it, and it remembers every one that was broken. It has opinions about which was worse.",
+		rarity = "Legendary",
+		slot = "MainHand",
+		weaponCategory = "MeleeArc",
+		baseStats = { Damage = 46, AttackSpeed = 1.25, CritChance = 0.14, LifestealPct = 0.06 },
+		affixSlots = 4,
+		iconId = "",
+		meshId = "",
+	},
+	WardenSpike = {
+		id = "WardenSpike",
+		displayName = "Warden Spike",
+		flavorText = "A crypt-guard's parade pike, still stiff with old formality.",
+		rarity = "Common",
+		slot = "MainHand",
+		weaponCategory = "MeleeThrust",
+		baseStats = { Damage = 12, AttackSpeed = 0.9, ArmorPen = 0.1 },
+		affixSlots = 0,
+		iconId = "",
+		meshId = "",
+	},
+	TheLastRite = {
+		id = "TheLastRite",
+		displayName = "The Last Rite",
+		flavorText = "Forged from a reliquary spike that pierced the Sepulcher King's own honor guard once, and did not stop at one.",
+		rarity = "Legendary",
+		slot = "MainHand",
+		weaponCategory = "MeleeThrust",
+		baseStats = { Damage = 38, AttackSpeed = 1.05, ArmorPen = 0.35, CritDamage = 0.5 },
+		affixSlots = 4,
+		iconId = "",
+		meshId = "",
+	},
+	SporeBonePistol = {
+		id = "SporeBonePistol",
+		displayName = "Sporebone Pistol",
+		flavorText = "Fungal Depths scavengers hollow bone into barrels. It's disgusting. It works.",
+		rarity = "Common",
+		slot = "MainHand",
+		weaponCategory = "Ranged",
+		baseStats = { Damage = 10, AttackSpeed = 1.4, Range = 32 },
+		affixSlots = 0,
+		iconId = "",
+		meshId = "",
+	},
+	MothersLastBreath = {
+		id = "MothersLastBreath",
+		displayName = "Mother's Last Breath",
+		flavorText = "Grown, not built, from a spore-sac that kept firing for a full minute after the Mother Spore fell.",
+		rarity = "Legendary",
+		slot = "MainHand",
+		weaponCategory = "Ranged",
+		baseStats = { Damage = 28, AttackSpeed = 1.6, Range = 40, StatusChance = 0.25 },
+		affixSlots = 4,
+		iconId = "",
+		meshId = "",
+	},
+	CinderTouchedFocus = {
+		id = "CinderTouchedFocus",
+		displayName = "Cinder-Touched Focus",
+		flavorText = "A forge-worker's tuning rod, still holding a fraction of the heat that killed its last owner.",
+		rarity = "Common",
+		slot = "MainHand",
+		weaponCategory = "Magic",
+		baseStats = { SpellPower = 16, CastSpeed = 1.0, ManaCost = 12 },
+		affixSlots = 0,
+		iconId = "",
+		meshId = "",
+	},
+	ForgeheartEmber = {
+		id = "ForgeheartEmber",
+		displayName = "Forgeheart Ember",
+		flavorText = "A fragment of the Colossus's core, still trying to remember what it felt like to be the center of something.",
+		rarity = "Legendary",
+		slot = "MainHand",
+		weaponCategory = "Magic",
+		baseStats = { SpellPower = 52, CastSpeed = 1.15, ManaCost = 10, BurnOnHit = 1 },
+		affixSlots = 4,
+		iconId = "",
+		meshId = "",
+	},
+}
+
+return Weapons
