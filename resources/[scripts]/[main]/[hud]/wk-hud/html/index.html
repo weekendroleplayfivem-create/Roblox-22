@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WK HUD</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Filmmodus -->
+    <div id="cinema" class="cinema">
+        <div class="cinema-bar top"></div>
+        <div class="cinema-bar bottom"></div>
+    </div>
+
+    <div id="hud" class="hud hidden">
+
+        <!-- ===== Kompas + straat (boven midden) ===== -->
+        <section id="compass-wrap" class="compass-wrap" data-el="compass">
+            <div class="compass">
+                <div class="compass-strip" id="compass-strip"></div>
+                <div class="compass-needle"></div>
+            </div>
+            <div class="compass-heading" id="heading">0° N</div>
+            <div class="street" data-el="street">
+                <span id="street">—</span>
+                <span class="street-sep" id="cross-sep">·</span>
+                <span id="cross" class="street-cross"></span>
+                <span class="street-zone" id="zone"></span>
+            </div>
+        </section>
+
+        <!-- ===== Info (rechtsboven) ===== -->
+        <section class="info" data-el="info">
+            <div class="info-row info-top">
+                <span class="chip" data-el="clock"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><b id="clock">12:00</b></span>
+                <span class="chip"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg><b id="pid">ID 1</b></span>
+            </div>
+            <div class="money" data-el="money">
+                <div class="money-row" id="cash-row"><span class="money-label">Contant</span><b id="cash" class="cash">€ 0</b></div>
+                <div class="money-row" id="bank-row"><span class="money-label">Bank</span><b id="bank" class="bank">€ 0</b></div>
+            </div>
+            <div class="job" id="job-row" data-el="job"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg><span id="job"></span></div>
+        </section>
+
+        <!-- ===== Status (linksonder, naast minimap) ===== -->
+        <section id="status" class="status" data-el="status">
+            <div class="ring" id="ring-health" data-stat="health" data-el="health">
+                <svg class="ring-svg" viewBox="0 0 44 44"><circle class="ring-bg" cx="22" cy="22" r="18"/><circle class="ring-fg" cx="22" cy="22" r="18"/></svg>
+                <svg class="ring-icon" viewBox="0 0 24 24"><path d="M12 21s-7.5-4.6-9.5-9.2C1 8.3 3.2 4.5 7 4.5c2.1 0 3.6 1.1 5 3 1.4-1.9 2.9-3 5-3 3.8 0 6 3.8 4.5 7.3C19.5 16.4 12 21 12 21z"/></svg>
+                <span class="ring-val"></span>
+            </div>
+            <div class="ring" id="ring-armor" data-stat="armor" data-el="armor">
+                <svg class="ring-svg" viewBox="0 0 44 44"><circle class="ring-bg" cx="22" cy="22" r="18"/><circle class="ring-fg" cx="22" cy="22" r="18"/></svg>
+                <svg class="ring-icon" viewBox="0 0 24 24"><path d="M12 2.5 4 5.5v6c0 5 3.4 8.8 8 10 4.6-1.2 8-5 8-10v-6z"/></svg>
+                <span class="ring-val"></span>
+            </div>
+            <div class="ring" id="ring-hunger" data-stat="hunger" data-el="hunger">
+                <svg class="ring-svg" viewBox="0 0 44 44"><circle class="ring-bg" cx="22" cy="22" r="18"/><circle class="ring-fg" cx="22" cy="22" r="18"/></svg>
+                <svg class="ring-icon" viewBox="0 0 24 24"><path d="M7 2v9a3 3 0 0 0 3 3v8M4 2v6a3 3 0 0 0 3 3M10 2v6a3 3 0 0 1-3 3M17 22V2c-2.5 1.5-4 4.5-4 8v4h4"/></svg>
+                <span class="ring-val"></span>
+            </div>
+            <div class="ring" id="ring-thirst" data-stat="thirst" data-el="thirst">
+                <svg class="ring-svg" viewBox="0 0 44 44"><circle class="ring-bg" cx="22" cy="22" r="18"/><circle class="ring-fg" cx="22" cy="22" r="18"/></svg>
+                <svg class="ring-icon" viewBox="0 0 24 24"><path d="M12 2.5S5.5 10 5.5 14.5a6.5 6.5 0 0 0 13 0C18.5 10 12 2.5 12 2.5z"/></svg>
+                <span class="ring-val"></span>
+            </div>
+            <div class="ring" id="ring-stress" data-stat="stress" data-el="stress">
+                <svg class="ring-svg" viewBox="0 0 44 44"><circle class="ring-bg" cx="22" cy="22" r="18"/><circle class="ring-fg" cx="22" cy="22" r="18"/></svg>
+                <svg class="ring-icon" viewBox="0 0 24 24"><path d="M9.5 3.5a4 4 0 0 0-4 4 3.5 3.5 0 0 0-2 6.2A4 4 0 0 0 8 20h1.5V3.5zM14.5 3.5a4 4 0 0 1 4 4 3.5 3.5 0 0 1 2 6.2A4 4 0 0 1 16 20h-1.5V3.5z"/></svg>
+                <span class="ring-val"></span>
+            </div>
+            <div class="ring" id="ring-stamina" data-stat="stamina" data-el="stamina">
+                <svg class="ring-svg" viewBox="0 0 44 44"><circle class="ring-bg" cx="22" cy="22" r="18"/><circle class="ring-fg" cx="22" cy="22" r="18"/></svg>
+                <svg class="ring-icon" viewBox="0 0 24 24"><circle cx="14" cy="4" r="2"/><path d="m6 22 3-7 3 2v5M9 15l1.5-6L14 7l3 4 3 1M10.5 9 7 10l-2 3"/></svg>
+                <span class="ring-val"></span>
+            </div>
+            <div class="ring" id="ring-oxygen" data-stat="oxygen" data-el="oxygen">
+                <svg class="ring-svg" viewBox="0 0 44 44"><circle class="ring-bg" cx="22" cy="22" r="18"/><circle class="ring-fg" cx="22" cy="22" r="18"/></svg>
+                <svg class="ring-icon" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><circle cx="16" cy="8" r="3"/><circle cx="17" cy="17" r="2"/></svg>
+                <span class="ring-val"></span>
+            </div>
+            <div class="ring voice" id="ring-voice" data-el="voice">
+                <svg class="ring-svg" viewBox="0 0 44 44"><circle class="ring-bg" cx="22" cy="22" r="18"/><circle class="ring-fg" cx="22" cy="22" r="18"/></svg>
+                <svg class="ring-icon" viewBox="0 0 24 24"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3.5"/></svg>
+                <span class="voice-bars"><i></i><i></i><i></i></span>
+            </div>
+        </section>
+
+        <!-- ===== Voertuig (rechtsonder) ===== -->
+        <section id="vehicle" class="vehicle" data-el="speedo">
+            <div class="speedo">
+                <svg class="speedo-svg" viewBox="0 0 200 200">
+                    <defs>
+                        <linearGradient id="speedGrad" x1="0" y1="1" x2="1" y2="0">
+                            <stop offset="0%" stop-color="var(--accent)" stop-opacity=".55"/>
+                            <stop offset="100%" stop-color="var(--accent)"/>
+                        </linearGradient>
+                    </defs>
+                    <path class="speedo-track" d="M 37.8 162.2 A 88 88 0 1 1 162.2 162.2"/>
+                    <path class="speedo-fill" id="speed-arc" d="M 37.8 162.2 A 88 88 0 1 1 162.2 162.2"/>
+                    <path class="rpm-track" d="M 51.9 148.1 A 68 68 0 1 1 148.1 148.1"/>
+                    <path class="rpm-fill" id="rpm-arc" d="M 51.9 148.1 A 68 68 0 1 1 148.1 148.1"/>
+                    <g id="speedo-ticks"></g>
+                </svg>
+                <div class="speedo-center">
+                    <div class="speed" id="speed">0</div>
+                    <div class="unit" id="unit">KM/U</div>
+                    <div class="gear" id="gear">N</div>
+                </div>
+                <div class="altitude" id="altitude"><span id="alt-val">0</span> m</div>
+            </div>
+
+            <div class="veh-bars">
+                <div class="veh-bar" id="fuel-bar">
+                    <svg viewBox="0 0 24 24"><path d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M3 21h12M4 10h10M14 8l3 0 3 3v7a1.5 1.5 0 0 1-3 0v-3h-3"/></svg>
+                    <div class="bar"><div class="bar-fill" id="fuel-fill"></div></div>
+                    <b id="fuel-val">100%</b>
+                </div>
+                <div class="veh-bar" id="engine-bar">
+                    <svg viewBox="0 0 24 24"><path d="M4 10h2V8h3V6h6v2h2l2 3h2v5h-2l-2 3H8l-2-3H4z"/></svg>
+                    <div class="bar"><div class="bar-fill" id="engine-fill"></div></div>
+                    <b id="engine-val">100%</b>
+                </div>
+            </div>
+
+            <div class="veh-icons">
+                <span class="vicon" id="ic-belt" title="Gordel">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="4" r="2"/><path d="M8 22v-8l-2-4 3-3h6l3 3-2 4v8M9 7l7 11"/></svg>
+                </span>
+                <span class="vicon" id="ic-engine" title="Motor">
+                    <svg viewBox="0 0 24 24"><path d="M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0"/></svg>
+                </span>
+                <span class="vicon" id="ic-lights" title="Lichten">
+                    <svg viewBox="0 0 24 24"><path d="M13 5C8 5 5 8 5 12s3 7 8 7c2 0 3-3 3-7s-1-7-3-7zM2 9h3M2 12h3M2 15h3"/></svg>
+                </span>
+                <span class="vicon warn" id="ic-fuel" title="Weinig brandstof">
+                    <svg viewBox="0 0 24 24"><path d="M12 3 2 20h20zM12 10v4M12 17v.5"/></svg>
+                </span>
+            </div>
+        </section>
+    </div>
+
+    <!-- ===== Instellingen (/hud) ===== -->
+    <div id="settings" class="settings hidden">
+        <div class="settings-panel">
+            <header class="settings-head">
+                <div>
+                    <h1>HUD instellingen</h1>
+                    <p>Wijzigingen worden automatisch opgeslagen.</p>
+                </div>
+                <button class="icon-btn" id="close-settings" aria-label="Sluiten">
+                    <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+                </button>
+            </header>
+
+            <div class="settings-body">
+                <div class="group">
+                    <h2>Weergave</h2>
+                    <label class="field">
+                        <span>Grootte <em id="scale-val">100%</em></span>
+                        <input type="range" id="opt-scale" min="70" max="130" step="5">
+                    </label>
+                    <div class="field">
+                        <span>Accentkleur</span>
+                        <div class="swatches" id="swatches"></div>
+                    </div>
+                    <div class="field">
+                        <span>Snelheid</span>
+                        <div class="seg" id="opt-unit">
+                            <button data-v="kmh">KM/U</button>
+                            <button data-v="mph">MPH</button>
+                        </div>
+                    </div>
+                    <label class="toggle-row"><span>Waarden in ringen tonen</span><input type="checkbox" id="opt-values"><i></i></label>
+                    <label class="toggle-row"><span>Volle ringen automatisch verbergen</span><input type="checkbox" id="opt-autohide"><i></i></label>
+                </div>
+
+                <div class="group">
+                    <h2>Onderdelen</h2>
+                    <div id="element-toggles"></div>
+                </div>
+            </div>
+
+            <footer class="settings-foot">
+                <button class="btn ghost" id="reset-settings">Standaard herstellen</button>
+                <button class="btn" id="done-settings">Klaar</button>
+            </footer>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
