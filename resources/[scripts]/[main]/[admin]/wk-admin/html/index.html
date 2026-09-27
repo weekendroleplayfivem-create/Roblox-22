@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WK Staff</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============ Overlays (voor iedereen) ============ -->
+<div id="toasts" class="toasts"></div>
+
+<div id="announce" class="announce hidden">
+    <div class="announce-icon"><svg viewBox="0 0 24 24"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg></div>
+    <div>
+        <div class="announce-title">Aankondiging · <span id="announce-from"></span></div>
+        <div class="announce-msg" id="announce-msg"></div>
+    </div>
+</div>
+
+<div id="dm" class="dm hidden">
+    <div class="dm-head"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4z"/></svg>Bericht van staff · <b id="dm-from"></b></div>
+    <div class="dm-msg" id="dm-msg"></div>
+</div>
+
+<div id="warn" class="warn hidden">
+    <div class="warn-card">
+        <div class="warn-icon"><svg viewBox="0 0 24 24"><path d="M12 3 2 20h20zM12 10v4M12 17v.5"/></svg></div>
+        <h1>Je hebt een waarschuwing gekregen</h1>
+        <p class="warn-reason" id="warn-reason"></p>
+        <p class="warn-from">Door <b id="warn-from"></b></p>
+        <button class="btn danger" id="warn-ack" disabled>Ik begrijp het (<span id="warn-count">5</span>)</button>
+    </div>
+</div>
+
+<div id="spectate-bar" class="pill-bar hidden">
+    <span class="dot live"></span>Je bekijkt <b id="spec-name"></b>
+    <span class="kbd">Backspace</span> stoppen
+</div>
+
+<div id="noclip-bar" class="pill-bar noclip hidden">
+    <span class="dot"></span>Noclip · snelheid <b id="nc-speed">1</b>
+    <span class="kbd">W A S D</span><span class="kbd">Q/E</span> omlaag/omhoog
+    <span class="kbd">Shift</span> snel <span class="kbd">Scroll</span> snelheid
+</div>
+
+<!-- ============ Staffmenu ============ -->
+<div id="menu" class="menu hidden">
+    <aside class="side">
+        <div class="brand">
+            <div class="logo">WK</div>
+            <div>
+                <div class="brand-name">Staffmenu</div>
+                <div class="brand-sub" id="server-name">Weekend Roleplay</div>
+            </div>
+        </div>
+
+        <nav class="nav">
+            <button class="nav-btn active" data-tab="self">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>Mijzelf
+            </button>
+            <button class="nav-btn" data-tab="players" data-perm="players">
+                <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2 20c0-3.5 3-5.5 7-5.5s7 2 7 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5c2.4.5 4 2.3 4 5.5"/></svg>Spelers
+                <span class="nav-count" id="player-count">0</span>
+            </button>
+            <button class="nav-btn" data-tab="server" data-perm="announce">
+                <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>Server
+            </button>
+            <button class="nav-btn" data-tab="bans" data-perm="bans">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>Bans
+            </button>
+            <button class="nav-btn" data-tab="logs" data-perm="logs">
+                <svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>Logs
+            </button>
+        </nav>
+
+        <div class="me">
+            <div class="avatar" id="me-avatar">?</div>
+            <div>
+                <div class="me-name" id="me-name">Staff</div>
+                <div class="rank" id="me-rank">Moderator</div>
+            </div>
+        </div>
+    </aside>
+
+    <main class="main">
+        <button class="close-btn" id="close-menu" aria-label="Sluiten"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+
+        <!-- Mijzelf -->
+        <section class="tab active" data-tab="self">
+            <header class="tab-head"><div><h1>Mijzelf</h1><p>Staff-tools voor je eigen personage.</p></div></header>
+
+            <div class="grid toggles">
+                <button class="toggle-card" data-toggle="noclip" data-perm="noclip">
+                    <svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M12 2l-3 3M12 2l3 3M12 22l-3-3M12 22l3-3M2 12l3-3M2 12l3 3M22 12l-3-3M22 12l-3 3"/></svg>
+                    <span>Noclip</span><i class="switch"></i>
+                </button>
+                <button class="toggle-card" data-toggle="godmode" data-perm="godmode">
+                    <svg viewBox="0 0 24 24"><path d="M12 2.5 4 5.5v6c0 5 3.4 8.8 8 10 4.6-1.2 8-5 8-10v-6z"/></svg>
+                    <span>Godmode</span><i class="switch"></i>
+                </button>
+                <button class="toggle-card" data-toggle="invisible" data-perm="invisible">
+                    <svg viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6 0 10 7 10 7a17 17 0 0 1-3 3.8M6.6 6.6C3.9 8.4 2 12 2 12s4 7 10 7a9.6 9.6 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+                    <span>Onzichtbaar</span><i class="switch"></i>
+                </button>
+                <button class="toggle-card" data-toggle="names" data-perm="names">
+                    <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10h6M7 14h10"/></svg>
+                    <span>Namen & ID's</span><i class="switch"></i>
+                </button>
+                <button class="toggle-card" data-toggle="blips" data-perm="blips">
+                    <svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
+                    <span>Blips op kaart</span><i class="switch"></i>
+                </button>
+            </div>
+
+            <div class="cols">
+                <div class="card">
+                    <h2>Snel</h2>
+                    <div class="btn-grid">
+                        <button class="btn soft" data-act="healSelf" data-perm="healSelf">Genezen</button>
+                        <button class="btn soft" data-act="reviveSelf" data-perm="reviveSelf">Reviven</button>
+                        <button class="btn soft" data-act="tpWaypoint" data-perm="tpWaypoint">Naar waypoint</button>
+                        <button class="btn soft" data-act="copyCoords" data-perm="copyCoords">Coördinaten</button>
+                    </div>
+                    <div class="coords-out hidden" id="coords-out"></div>
+                </div>
+
+                <div class="card" data-perm="tpCoords">
+                    <h2>Teleport naar coördinaten</h2>
+                    <form class="tp-grid" id="tp-form">
+                        <input name="x" placeholder="X" inputmode="decimal">
+                        <input name="y" placeholder="Y" inputmode="decimal">
+                        <input name="z" placeholder="Z (optioneel)" inputmode="decimal">
+                        <button class="btn" type="submit">Ga</button>
+                    </form>
+                    <p class="hint">Plak ook gerust <code>vector3(…)</code> in het X-veld.</p>
+                </div>
+
+                <div class="card">
+                    <h2>Voertuig</h2>
+                    <form class="row" id="veh-form" data-perm="spawnVehicle">
+                        <input name="model" placeholder="Model, bv. adder" autocomplete="off">
+                        <button class="btn" type="submit">Spawn</button>
+                    </form>
+                    <div class="btn-grid two">
+                        <button class="btn soft" data-act="fixVehicle" data-perm="fixVehicle">Repareren</button>
+                        <button class="btn soft danger-soft" data-act="deleteVehicle" data-perm="deleteVehicle">Verwijderen</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Spelers -->
+        <section class="tab" data-tab="players">
+            <header class="tab-head">
+                <div><h1>Spelers</h1><p><span id="players-online">0</span> online</p></div>
+                <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="player-search" placeholder="Zoek op naam of ID"></div>
+            </header>
+
+            <div class="players">
+                <div class="player-list" id="player-list"></div>
+
+                <div class="player-detail" id="player-detail">
+                    <div class="empty">
+                        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+                        Kies een speler
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Server -->
+        <section class="tab" data-tab="server">
+            <header class="tab-head"><div><h1>Server</h1><p>Acties voor de hele server.</p></div></header>
+            <div class="cols">
+                <div class="card wide" data-perm="announce">
+                    <h2>Aankondiging</h2>
+                    <form id="announce-form" class="stack">
+                        <textarea name="message" rows="3" maxlength="500" placeholder="Bericht aan alle spelers…"></textarea>
+                        <button class="btn" type="submit">Versturen naar iedereen</button>
+                    </form>
+                </div>
+                <div class="card">
+                    <h2>Iedereen</h2>
+                    <div class="btn-grid one">
+                        <button class="btn soft" data-act="healAll" data-perm="healAll" data-confirm="Iedereen genezen?">Iedereen genezen</button>
+                        <button class="btn soft" data-act="reviveAll" data-perm="reviveAll" data-confirm="Iedereen reviven?">Iedereen reviven</button>
+                        <button class="btn soft danger-soft" data-act="clearArea" data-perm="clearArea" data-confirm="Alle lege voertuigen en NPC's rondom jou verwijderen?">Gebied opruimen</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Bans -->
+        <section class="tab" data-tab="bans">
+            <header class="tab-head">
+                <div><h1>Bans</h1><p><span id="bans-count">0</span> actief</p></div>
+                <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="ban-search" placeholder="Zoek op naam, ID of reden"></div>
+            </header>
+            <div class="table" id="ban-list"></div>
+        </section>
+
+        <!-- Logs -->
+        <section class="tab" data-tab="logs">
+            <header class="tab-head">
+                <div><h1>Logs</h1><p>Laatste staff-acties sinds herstart.</p></div>
+                <button class="btn soft" id="refresh-logs">Vernieuwen</button>
+            </header>
+            <div class="logs" id="log-list"></div>
+        </section>
+    </main>
+</div>
+
+<!-- Modal -->
+<div id="modal" class="modal hidden">
+    <form class="modal-card" id="modal-form">
+        <h2 id="modal-title"></h2>
+        <p id="modal-text"></p>
+        <div id="modal-fields" class="stack"></div>
+        <div class="modal-actions">
+            <button type="button" class="btn ghost" id="modal-cancel">Annuleren</button>
+            <button type="submit" class="btn" id="modal-ok">Bevestigen</button>
+        </div>
+    </form>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
