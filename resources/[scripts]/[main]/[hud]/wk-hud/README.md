@@ -43,4 +43,4 @@ local belt = exports['wk-hud']:IsSeatbeltOn()
 
 ## Voorbeeld bekijken
 
-Open `html/index.html` in je browser. Druk op `/` voor de commandobalk (`/hud`, `/cinema`, `/togglehud`, `/gordel`, `/voertuig`, `/praten`, `/geld`).
+Open `html/index.html` in je browser voor een demo. In-game gebruik je de commando's hierboven via de chat.
