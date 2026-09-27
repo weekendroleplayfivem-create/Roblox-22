@@ -497,23 +497,91 @@ function startPreview() {
     let t = 0;
     let speed = 0;
 
-    const bar = document.createElement('div');
-    bar.className = 'demo-bar';
-    bar.innerHTML = `
-        <button class="btn ghost" data-a="veh">Voertuig in/uit</button>
-        <button class="btn ghost" data-a="belt">Gordel</button>
-        <button class="btn ghost" data-a="talk">Praten</button>
-        <button class="btn ghost" data-a="cash">Geld +</button>
-        <button class="btn" data-a="settings">Instellingen</button>`;
-    document.body.appendChild(bar);
-    bar.addEventListener('click', (e) => {
-        const a = e.target.dataset.a;
-        if (a === 'veh') inVeh = !inVeh;
-        if (a === 'belt') emit('seatbelt', { on: !state.seatbelt });
-        if (a === 'talk') talking = !talking;
-        if (a === 'cash') emit('info', { cash: (state.money.cash || 0) + 500 });
-        if (a === 'settings') openSettings();
+    let cinema = false;
+    let hudOff = false;
+    const refresh = () => emit('visible', { hud: !cinema && !hudOff, cinematic: cinema });
+
+    // Commando's (zelfde namen als in-game waar mogelijk)
+    const COMMANDS = {
+        hud: ['Instellingen openen', () => openSettings()],
+        cinema: ['Filmmodus aan/uit', () => { cinema = !cinema; refresh(); }],
+        togglehud: ['HUD aan/uit', () => { hudOff = !hudOff; refresh(); }],
+        gordel: ['Gordel om/af', () => emit('seatbelt', { on: !state.seatbelt })],
+        voertuig: ['In/uit voertuig', () => { inVeh = !inVeh; }],
+        praten: ['Praten aan/uit', () => { talking = !talking; }],
+        geld: ['€ 500 erbij', () => emit('info', { cash: (state.money.cash || 0) + 500 })],
+    };
+
+    const box = document.createElement('div');
+    box.className = 'cmd hidden';
+    box.innerHTML = `
+        <div class="cmd-input"><span>/</span><input id="cmd-input" spellcheck="false" autocomplete="off" placeholder="commando"></div>
+        <ul class="cmd-list" id="cmd-list"></ul>`;
+    document.body.appendChild(box);
+
+    const hint = document.createElement('div');
+    hint.className = 'cmd-hint';
+    hint.innerHTML = 'Druk op <kbd>/</kbd> voor commando\'s';
+    document.body.appendChild(hint);
+
+    const input = box.querySelector('#cmd-input');
+    const list = box.querySelector('#cmd-list');
+    let selected = 0;
+
+    const matches = () => {
+        const q = input.value.trim().toLowerCase().split(' ')[0];
+        return Object.keys(COMMANDS).filter((k) => k.startsWith(q));
+    };
+    const renderList = () => {
+        const m = matches();
+        selected = Math.min(selected, Math.max(m.length - 1, 0));
+        list.innerHTML = m.map((k, i) =>
+            `<li class="${i === selected ? 'sel' : ''}" data-k="${k}"><b>/${k}</b><span>${COMMANDS[k][0]}</span></li>`).join('')
+            || '<li class="none">Onbekend commando</li>';
+    };
+    const openCmd = () => {
+        box.classList.remove('hidden');
+        hint.classList.add('hidden');
+        input.value = '';
+        selected = 0;
+        renderList();
+        void box.offsetWidth; // stijl bijwerken zodat focus lukt
+        input.focus();
+    };
+    const closeCmd = () => {
+        box.classList.add('hidden');
+        hint.classList.remove('hidden');
+        input.blur();
+    };
+    const run = (key) => {
+        closeCmd();
+        if (COMMANDS[key]) COMMANDS[key][1]();
+    };
+
+    document.addEventListener('keydown', (e) => {
+        const open = !box.classList.contains('hidden');
+        if (!open && e.key === '/' && $('#settings').classList.contains('hidden')) {
+            e.preventDefault();
+            openCmd();
+            return;
+        }
+        if (!open) return;
+        const m = matches();
+        if (e.key === 'Escape') closeCmd();
+        else if (e.key === 'ArrowDown') { e.preventDefault(); selected = (selected + 1) % Math.max(m.length, 1); renderList(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); selected = (selected - 1 + m.length) % Math.max(m.length, 1); renderList(); }
+        else if (e.key === 'Tab') { e.preventDefault(); if (m[selected]) { input.value = m[selected]; renderList(); } }
+        else if (e.key === 'Enter') {
+            const typed = input.value.trim().toLowerCase().replace(/^\//, '');
+            run(COMMANDS[typed] ? typed : m[selected]);
+        }
     });
+    input.addEventListener('input', () => { selected = 0; renderList(); });
+    list.addEventListener('mousedown', (e) => {
+        const li = e.target.closest('li[data-k]');
+        if (li) { e.preventDefault(); run(li.dataset.k); }
+    });
+    input.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== input) closeCmd(); }, 100));
 
     emit('visible', { hud: true, cinematic: false });
 
