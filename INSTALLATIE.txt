@@ -1,0 +1,65 @@
+DAYVERSE ROLEPLAY - INSTALLATIE
+================================
+
+Inhoud van deze zip
+-------------------
+  resources/[scripts]/[main]/[hud]/dv-hud        HUD (status, snelheidsmeter, kompas, /hud instellingen)
+  resources/[scripts]/[main]/[admin]/dv-admin    Staffmenu (/staff of F10)
+  resources/[scripts]/[main]/[admin]/dv-reports  Reportsysteem (/report voor spelers, /reports voor staff)
+  dayverse.cfg                                   Alles wat in je server-config moet
+  INSTALLATIE.txt                                Dit bestand
+
+
+Stap 1 - Oude versies weghalen
+------------------------------
+Stop je server. Verwijder (als ze bestaan) de oude mappen:
+  resources/[scripts]/[main]/[hud]/wk-hud
+  resources/[scripts]/[main]/[admin]/wk-admin
+Had je al bans/warns? Kopieer eerst wk-admin/data/bans.json en warns.json,
+en zet ze na stap 2 in dv-admin/data/ (overschrijven).
+
+Heb je nog een andere HUD aanstaan (bv. qb-hud, esx_hud)? Zet die uit,
+anders zie je twee HUD's.
+
+
+Stap 2 - Bestanden neerzetten
+-----------------------------
+Kopieer de map "resources" uit deze zip over de "resources"-map van je server heen.
+Kopieer dayverse.cfg naar dezelfde map als je server.cfg.
+
+
+Stap 3 - Config
+---------------
+1. Open dayverse.cfg en vervang VERVANG_MIJ door jouw license
+   (bv. identifier.license:3f9a1c7e2b...). Voeg een regel toe voor elk staflid.
+2. Open server.cfg en zet onderaan (na je framework, bv. na "ensure qb-core"):
+       exec dayverse.cfg
+3. Optioneel: zet je Discord-webhook in dayverse.cfg.
+
+
+Stap 4 - Starten en testen
+--------------------------
+Start de server en join.
+  - HUD verschijnt linksonder/rechtsonder.   /hud = instellingen
+  - Staffmenu: /staff of F10                   (alleen met een staff-rang)
+  - Reports:   /report als speler, /reports als staff
+
+Werkt /staff niet? Controleer in de serverconsole:
+  - staat "dv-admin" gestart? (typ: ensure dv-admin)
+  - klopt je license in dayverse.cfg? Typ in de serverconsole:  list_principals
+  - de rechten gelden pas na opnieuw joinen.
+
+
+Commando's
+----------
+  /hud          HUD-instellingen (grootte, kleur, km/u of mph, onderdelen aan/uit)
+  /cinema       filmmodus aan/uit
+  /togglehud    HUD aan/uit
+  B             gordel om/af (aan te passen in GTA > Instellingen > Toetsen > FiveM)
+  /staff, F10   staffmenu
+  /noclip       noclip aan/uit (staff)
+  /report       report maken of je lopende report openen
+  /reports      reportpaneel (staff)
+  dvunban DV-1234   (serverconsole) ban opheffen
+
+Meer uitleg staat in de README.md in elke resource-map.
