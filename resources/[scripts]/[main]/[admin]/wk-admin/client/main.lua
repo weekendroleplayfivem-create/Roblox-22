@@ -3,7 +3,8 @@
 -- ============================================================
 
 local menuOpen = false
-local focusReason = nil        -- 'menu' of 'warn'
+local reportOpen = false
+local focusReason = nil        -- 'menu', 'warn' of 'report'
 
 local flags = {
     noclip = false,
@@ -581,18 +582,20 @@ end
 --  Menu openen / NUI
 -- ------------------------------------------------------------
 
-local function openMenu()
+local function openMenu(tab)
     if menuOpen then return end
     local res = call('open')
-    if not res.ok then return end
+    if not res.ok then return notify(res.msg or 'Geen toegang', 'error') end
     menuOpen = true
     focusReason = 'menu'
     SetNuiFocus(true, true)
     res.flags = flags
+    res.tab = tab
     nui('open', res)
 end
 
 RegisterCommand(Config.Command, function() CreateThread(openMenu) end, false)
+RegisterCommand(Config.Reports.staffCommand, function() CreateThread(function() openMenu('reports') end) end, false)
 RegisterKeyMapping(Config.Command, 'Staffmenu openen', 'keyboard', Config.Key)
 
 RegisterCommand(Config.NoclipCommand, function()
@@ -614,10 +617,62 @@ end)
 
 RegisterNUICallback('warnAck', function(_, cb)
     if focusReason == 'warn' then
-        focusReason = menuOpen and 'menu' or nil
-        if not menuOpen then SetNuiFocus(false, false) end
+        focusReason = menuOpen and 'menu' or (reportOpen and 'report' or nil)
+        if not focusReason then SetNuiFocus(false, false) end
     end
     cb('ok')
+end)
+
+-- ------------------------------------------------------------
+--  Reports
+-- ------------------------------------------------------------
+
+local function openReport(prefill)
+    if reportOpen or menuOpen then return end
+    local res = call('reportMine')
+    if not res.ok then return notify(res.msg or 'Er ging iets mis', 'error') end
+    reportOpen = true
+    focusReason = 'report'
+    SetNuiFocus(true, true)
+    res.prefill = prefill
+    nui('reportOpen', res)
+end
+
+RegisterCommand(Config.Reports.command, function(_, args)
+    local prefill = #args > 0 and table.concat(args, ' ') or nil
+    CreateThread(function() openReport(prefill) end)
+end, false)
+
+TriggerEvent('chat:addSuggestion', '/' .. Config.Reports.command, 'Meld iets bij staff (speler, bug, vraag)', {
+    { name = 'bericht', help = 'Optioneel: je bericht' },
+})
+
+RegisterNUICallback('reportClose', function(_, cb)
+    reportOpen = false
+    if focusReason == 'report' then
+        focusReason = nil
+        SetNuiFocus(false, false)
+    end
+    cb('ok')
+end)
+
+-- speler: update over eigen report (antwoord, opgepakt, gesloten)
+RegisterNetEvent('wk-admin:client:reportUpdate', function(report, toast, kind)
+    nui('myReport', { report = report, toast = toast, kind = kind, open = reportOpen })
+    if toast then
+        PlaySoundFrontend(-1, 'Text_Arrive_Tone', 'Phone_SoundSet_Default', true)
+    end
+end)
+
+-- staff: meldingen en live verversen
+RegisterNetEvent('wk-admin:client:staffNotify', function(msg, kind, count)
+    nui('toast', { msg = msg, kind = kind })
+    nui('reportCount', { count = count })
+    PlaySoundFrontend(-1, 'ATM_WINDOW', 'HUD_FRONTEND_DEFAULT_SOUNDSET', true)
+end)
+
+RegisterNetEvent('wk-admin:client:reportsChanged', function(id)
+    nui('reportsChanged', { id = id })
 end)
 
 RegisterNUICallback('stopSpectate', function(_, cb)
@@ -644,7 +699,7 @@ end)
 
 AddEventHandler('onResourceStop', function(res)
     if res ~= GetCurrentResourceName() then return end
-    if menuOpen or focusReason then SetNuiFocus(false, false) end
+    if menuOpen or reportOpen or focusReason then SetNuiFocus(false, false) end
     if flags.noclip then setNoclip(false) end
     if spectating then stopSpectate() end
     clearBlips()

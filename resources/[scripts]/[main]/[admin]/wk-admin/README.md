@@ -30,7 +30,19 @@ set wkadmin_webhook "https://discord.com/api/webhooks/..."
 ## Openen
 
 - `/staff` of **F10** (aan te passen in GTA-instellingen → Toetsen → FiveM)
+- `/reports` opent het staffmenu direct op het tabblad Reports
 - `/noclip` zet noclip direct aan/uit
+
+## Reports
+
+Spelers typen `/report` (of `/report <bericht>`) en krijgen een venster:
+
+1. Onderwerp kiezen (Speler melden, Bug, Vraag, Vastgelopen, Anders), eventueel het ID van de speler die ze melden, en een beschrijving.
+2. Alle online staff krijgt direct een melding met geluid; de teller bij **Reports** in het menu loopt op.
+3. Staff pakt de report op, kan chatten met de speler, naar de speler (of de gemelde speler) teleporteren, hem halen of spectaten, en sluit de report met een notitie.
+4. De speler ziet live wie hem helpt en krijgt antwoorden als melding. Met `/report` opent hij het gesprek weer.
+
+Eén open report per speler, met een cooldown (`Config.Reports.cooldown`). Gesloten reports blijven 6 uur zichtbaar onder *Gesloten*. Alles komt in de logs (en in Discord als je een webhook hebt ingesteld).
 
 ## Functies
 
@@ -49,6 +61,7 @@ set wkadmin_webhook "https://discord.com/api/webhooks/..."
 - Elke actie wordt op de server op rang gecontroleerd; de client beslist niets zelf.
 - Staff kan geen acties uitvoeren op iemand met een hogere rang.
 - Pogingen zonder rechten worden in de console gelogd.
+- Spam-bescherming: maximaal 25 acties per 5 seconden per speler.
 - De Discord-webhook staat in `server.cfg`, niet in een bestand dat spelers kunnen lezen.
 
 Welke rang wat mag, stel je in via `Config.Permissions` in `config.lua`.

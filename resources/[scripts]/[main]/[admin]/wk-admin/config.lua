@@ -32,6 +32,17 @@ Config.Permissions = {
 
     -- server
     announce = 2, healAll = 2, reviveAll = 2, clearArea = 2,
+
+    -- reports
+    reports = 1, reportClaim = 1, reportReply = 1, reportClose = 1,
+}
+
+-- Reports (/report voor spelers, /reports voor staff)
+Config.Reports = {
+    command = 'report',
+    staffCommand = 'reports',
+    cooldown = 60,   -- seconden tussen twee reports van dezelfde speler
+    categories = { 'Speler melden', 'Bug', 'Vraag', 'Vastgelopen', 'Anders' },
 }
 
 Config.RankNames = { [1] = 'Moderator', [2] = 'Admin', [3] = 'Eigenaar' }

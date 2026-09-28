@@ -184,7 +184,9 @@ Actions.open = function(src)
         name = name(src),
         perms = perms,
         durations = Config.BanDurations,
-        serverName = GetConvar('sv_projectName', GetConvar('sv_hostname', 'Server')),
+        serverName = (GetConvar('sv_projectName', '') ~= '' and GetConvar('sv_projectName', '') or GetConvar('sv_hostname', 'Server'))
+            :gsub('%^%d', ''):sub(1, 60),
+        openReports = 0,
     }
 end
 
@@ -439,30 +441,292 @@ Actions.clearArea = function(src)
 end
 
 -- ------------------------------------------------------------
+--  Reports
+-- ------------------------------------------------------------
+
+local reports = {}        -- [id] = report
+local nextReportId = 1
+local lastReport = {}     -- [src] = os.time() van laatste report (cooldown)
+
+local function reportCount()
+    local n = 0
+    for _, r in pairs(reports) do if r.status ~= 'closed' then n = n + 1 end end
+    return n
+end
+
+--- Stuur iets naar alle online staff die reports mogen zien.
+local function toStaff(event, ...)
+    for _, sid in ipairs(GetPlayers()) do
+        local id = tonumber(sid)
+        if getLevel(id) >= Config.Permissions.reports then
+            TriggerClientEvent(event, id, ...)
+        end
+    end
+end
+
+local function staffNotify(msg, kind)
+    toStaff('wk-admin:client:staffNotify', msg, kind or 'info', reportCount())
+end
+
+--- Versie van een report die de speler zelf mag zien.
+local function publicReport(r)
+    if not r then return nil end
+    return {
+        id = r.id,
+        category = r.category,
+        status = r.status,
+        claimedBy = r.claimedBy and r.claimedBy.name or nil,
+        messages = r.messages,
+        created = os.date('%H:%M', r.created),
+        closedNote = r.closedNote,
+    }
+end
+
+local function playerUpdate(r, toast, kind)
+    if isOnline(r.src) and not r.offline then
+        TriggerClientEvent('wk-admin:client:reportUpdate', r.src, publicReport(r), toast, kind)
+    end
+end
+
+local function addMessage(r, from, author, text)
+    r.messages[#r.messages + 1] = { from = from, name = author, text = text, time = os.date('%H:%M') }
+    r.updated = os.time()
+end
+
+local function openReportOf(src)
+    for _, r in pairs(reports) do
+        if r.src == src and r.status ~= 'closed' and not r.offline then return r end
+    end
+end
+
+local function cleanText(v, max)
+    return tostring(v or ''):gsub('^%s+', ''):gsub('%s+$', ''):sub(1, max or 500)
+end
+
+-- Acties voor spelers (geen staff-rang nodig)
+local Public = {}
+
+Public.reportMine = function(src)
+    return {
+        ok = true,
+        report = publicReport(openReportOf(src)),
+        categories = Config.Reports.categories,
+    }
+end
+
+Public.reportCreate = function(src, d)
+    if openReportOf(src) then return { ok = false, msg = 'Je hebt al een open report' } end
+    local wait = (lastReport[src] or 0) + Config.Reports.cooldown - os.time()
+    if wait > 0 then return { ok = false, msg = ('Wacht nog %d seconden'):format(wait) } end
+
+    local message = cleanText(d.message, 500)
+    if #message < 5 then return { ok = false, msg = 'Beschrijf je report iets uitgebreider' } end
+
+    local category = Config.Reports.categories[1]
+    for _, c in ipairs(Config.Reports.categories) do if c == d.category then category = c end end
+
+    local target
+    local tid = tonumber(d.target)
+    if tid and isOnline(tid) and tid ~= src then target = { id = tid, name = name(tid) } end
+
+    local r = {
+        id = nextReportId,
+        src = src,
+        name = name(src),
+        license = identifier(src, 'license'),
+        category = category,
+        target = target,
+        status = 'open',
+        created = os.time(),
+        updated = os.time(),
+        messages = {},
+    }
+    nextReportId = nextReportId + 1
+    addMessage(r, 'player', r.name, message)
+    reports[r.id] = r
+    lastReport[src] = os.time()
+
+    log(src, 'Report #' .. r.id, target and target.id or nil, ('[%s] %s'):format(category, message))
+    staffNotify(('Nieuwe report #%d van %s: %s'):format(r.id, r.name, message:sub(1, 80)), 'warn')
+    toStaff('wk-admin:client:reportsChanged', r.id)
+    return { ok = true, msg = 'Report verstuurd, staff is op de hoogte', report = publicReport(r) }
+end
+
+Public.reportMessage = function(src, d)
+    local r = openReportOf(src)
+    if not r then return { ok = false, msg = 'Je hebt geen open report' } end
+    local text = cleanText(d.text, 500)
+    if text == '' then return { ok = false, msg = 'Leeg bericht' } end
+    addMessage(r, 'player', r.name, text)
+    if r.claimedBy and isOnline(r.claimedBy.src) then
+        TriggerClientEvent('wk-admin:client:staffNotify', r.claimedBy.src,
+            ('Report #%d · %s: %s'):format(r.id, r.name, text:sub(1, 80)), 'info', reportCount())
+    end
+    toStaff('wk-admin:client:reportsChanged', r.id)
+    return { ok = true, report = publicReport(r) }
+end
+
+Public.reportCancel = function(src)
+    local r = openReportOf(src)
+    if not r then return { ok = false, msg = 'Je hebt geen open report' } end
+    r.status = 'closed'
+    r.closedBy = r.name
+    r.closedNote = 'Ingetrokken door speler'
+    r.updated = os.time()
+    toStaff('wk-admin:client:reportsChanged', r.id)
+    staffNotify(('Report #%d is ingetrokken door %s'):format(r.id, r.name), 'info')
+    return { ok = true, msg = 'Report ingetrokken', report = nil }
+end
+
+-- Acties voor staff
+Actions.reports = function()
+    local list = {}
+    local closedCutoff = os.time() - 3600 * 6
+    for id, r in pairs(reports) do
+        if r.status == 'closed' and r.updated < closedCutoff then
+            reports[id] = nil
+        else
+            list[#list + 1] = {
+                id = r.id,
+                src = r.src,
+                name = r.name,
+                online = isOnline(r.src) and not r.offline,
+                category = r.category,
+                target = r.target,
+                status = r.status,
+                claimedBy = r.claimedBy and r.claimedBy.name or nil,
+                claimedByMe = nil,
+                created = os.date('%H:%M', r.created),
+                age = os.time() - r.created,
+                updated = r.updated,
+                messages = r.messages,
+                closedBy = r.closedBy,
+                closedNote = r.closedNote,
+            }
+        end
+    end
+    table.sort(list, function(a, b)
+        if (a.status == 'closed') ~= (b.status == 'closed') then return b.status == 'closed' end
+        return a.id > b.id
+    end)
+    return { ok = true, reports = list }
+end
+
+local function getReport(id)
+    local r = reports[tonumber(id)]
+    if not r then return nil, 'Report niet gevonden' end
+    return r
+end
+
+Actions.reportClaim = function(src, d)
+    local r, err = getReport(d.id)
+    if not r then return { ok = false, msg = err } end
+    if r.status == 'closed' then return { ok = false, msg = 'Report is al gesloten' } end
+    if r.claimedBy and r.claimedBy.src == src then return { ok = true, msg = 'Je had deze report al' } end
+    r.status = 'claimed'
+    r.claimedBy = { src = src, name = name(src) }
+    addMessage(r, 'system', nil, name(src) .. ' heeft je report opgepakt')
+    log(src, 'Report #' .. r.id .. ' opgepakt', isOnline(r.src) and r.src or nil)
+    playerUpdate(r, name(src) .. ' heeft je report opgepakt', 'success')
+    staffNotify(('%s heeft report #%d opgepakt'):format(name(src), r.id), 'info')
+    toStaff('wk-admin:client:reportsChanged', r.id)
+    return { ok = true, msg = 'Report #' .. r.id .. ' opgepakt' }
+end
+
+Actions.reportReply = function(src, d)
+    local r, err = getReport(d.id)
+    if not r then return { ok = false, msg = err } end
+    if r.status == 'closed' then return { ok = false, msg = 'Report is al gesloten' } end
+    local text = cleanText(d.text, 500)
+    if text == '' then return { ok = false, msg = 'Leeg bericht' } end
+    if not r.claimedBy then
+        r.status = 'claimed'
+        r.claimedBy = { src = src, name = name(src) }
+    end
+    addMessage(r, 'staff', name(src), text)
+    log(src, 'Report #' .. r.id .. ' antwoord', isOnline(r.src) and r.src or nil, text)
+    playerUpdate(r, 'Nieuw bericht van ' .. name(src) .. ' over je report', 'info')
+    toStaff('wk-admin:client:reportsChanged', r.id)
+    return { ok = true }
+end
+
+Actions.reportClose = function(src, d)
+    local r, err = getReport(d.id)
+    if not r then return { ok = false, msg = err } end
+    if r.status == 'closed' then return { ok = false, msg = 'Report is al gesloten' } end
+    r.status = 'closed'
+    r.closedBy = name(src)
+    r.closedNote = cleanText(d.note, 300)
+    if r.closedNote == '' then r.closedNote = nil end
+    addMessage(r, 'system', nil, 'Report gesloten door ' .. name(src) .. (r.closedNote and (': ' .. r.closedNote) or ''))
+    log(src, 'Report #' .. r.id .. ' gesloten', isOnline(r.src) and r.src or nil, r.closedNote)
+    playerUpdate(r, 'Je report is afgehandeld door ' .. name(src), 'success')
+    toStaff('wk-admin:client:reportsChanged', r.id)
+    return { ok = true, msg = 'Report #' .. r.id .. ' gesloten' }
+end
+
+AddEventHandler('playerDropped', function()
+    local src = source
+    for _, r in pairs(reports) do
+        if r.src == src and r.status ~= 'closed' then
+            r.offline = true
+            addMessage(r, 'system', nil, r.name .. ' heeft de server verlaten')
+            toStaff('wk-admin:client:reportsChanged', r.id)
+        end
+    end
+    lastReport[src] = nil
+end)
+
+-- ------------------------------------------------------------
 --  Aanroepen vanaf de client
 -- ------------------------------------------------------------
+
+local rate = {}   -- [src] = { tijd, aantal }
 
 RegisterNetEvent('wk-admin:server:call', function(reqId, action, data)
     local src = source
     local res
-    local handler = Actions[action]
-    local need = action == 'open' and 1 or Config.Permissions[action]
+    data = type(data) == 'table' and data or {}
 
-    if not handler or not need then
-        res = { ok = false, msg = 'Onbekende actie' }
-    elseif getLevel(src) < need then
-        res = { ok = false, msg = 'Je hebt hier geen permissie voor' }
-        if action ~= 'open' then
-            print(('[wk-admin] %s (%d) probeerde zonder rechten: %s'):format(name(src), src, tostring(action)))
-        end
-    else
-        local ok, result = pcall(handler, src, type(data) == 'table' and data or {})
+    -- simpele spam-bescherming: max 25 aanroepen per 5 seconden
+    local now = os.time()
+    local r = rate[src]
+    if not r or now - r[1] >= 5 then r = { now, 0 }; rate[src] = r end
+    r[2] = r[2] + 1
+    if r[2] > 25 then
+        TriggerClientEvent('wk-admin:client:reply', src, reqId, { ok = false, msg = 'Rustig aan, te veel acties' })
+        return
+    end
+
+    if type(action) ~= 'string' then return end
+
+    if Public[action] then
+        local ok, result = pcall(Public[action], src, data)
         res = ok and result or { ok = false, msg = 'Er ging iets mis' }
         if not ok then print('[wk-admin] fout in ' .. action .. ': ' .. tostring(result)) end
+    else
+        local handler = Actions[action]
+        local need = action == 'open' and 1 or Config.Permissions[action]
+
+        if not handler or not need then
+            res = { ok = false, msg = 'Onbekende actie' }
+        elseif getLevel(src) < need then
+            res = { ok = false, msg = action == 'open' and 'Je hebt geen toegang tot het staffmenu' or 'Je hebt hier geen permissie voor' }
+            if action ~= 'open' then
+                print(('[wk-admin] %s (%d) probeerde zonder rechten: %s'):format(name(src), src, action))
+            end
+        else
+            local ok, result = pcall(handler, src, data)
+            res = ok and result or { ok = false, msg = 'Er ging iets mis' }
+            if not ok then print('[wk-admin] fout in ' .. action .. ': ' .. tostring(result)) end
+            if action == 'open' and res.ok then res.openReports = reportCount() end
+        end
     end
 
     TriggerClientEvent('wk-admin:client:reply', src, reqId, res)
 end)
+
+AddEventHandler('playerDropped', function() rate[source] = nil end)
 
 -- Console: unban vanaf de servercommandline ->  wkunban WK-1234
 RegisterCommand('wkunban', function(src, args)
