@@ -8,7 +8,7 @@ local playerItems = {}           -- laatste kopie van eigen inventory (voor hotb
 local equipped = nil             -- { slot, name, hash }
 local drops = {}                 -- [id] = { coords, obj }
 local openedTrunk = nil          -- voertuig waarvan de kofferbak open staat
-local UNARMED = joaat('WEAPON_UNARMED')
+local UNARMED = GetHashKey('WEAPON_UNARMED')
 
 -- ------------------------------------------------------------
 --  Server-aanroepen met antwoord
@@ -206,7 +206,7 @@ local function holster()
 end
 
 RegisterNetEvent('dv-inventory:client:weapon', function(slot, name, weapon)
-    local hash = joaat(weapon)
+    local hash = GetHashKey(weapon)
     if equipped and equipped.slot == slot then
         return holster()
     end
@@ -278,7 +278,7 @@ RegisterNetEvent('dv-inventory:client:special', function(slot, name, ammo, actio
     local ped = PlayerPedId()
     if ammo then
         local weapon = GetSelectedPedWeapon(ped)
-        if weapon == UNARMED or GetPedAmmoTypeFromWeapon(ped, weapon) ~= joaat(ammo.type) then
+        if weapon == UNARMED or GetPedAmmoTypeFromWeapon(ped, weapon) ~= GetHashKey(ammo.type) then
             return notify('Pak eerst het juiste wapen', 'error')
         end
         local res = call('consume', { slot = slot, name = name })
@@ -375,7 +375,7 @@ end)
 -- ------------------------------------------------------------
 
 local function spawnDropProp(d)
-    local model = joaat(Config.DropProp)
+    local model = GetHashKey(Config.DropProp)
     RequestModel(model)
     local t = GetGameTimer() + 3000
     while not HasModelLoaded(model) and GetGameTimer() < t do Wait(0) end

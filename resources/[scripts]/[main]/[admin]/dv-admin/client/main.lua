@@ -517,7 +517,7 @@ Self.copyCoords = function()
 end
 
 Self.spawnVehicle = function(d)
-    local model = joaat(tostring(d.model or ''))
+    local model = GetHashKey(tostring(d.model or ''))
     if not IsModelInCdimage(model) or not IsModelAVehicle(model) then
         return { ok = false, msg = 'Onbekend voertuigmodel' }
     end

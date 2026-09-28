@@ -196,7 +196,8 @@ AddEventHandler('playerDropped', function()
 end)
 
 -- Wisselen van karakter (QBCore / ESX)
-RegisterNetEvent('QBCore:Server:OnPlayerUnload', function() unloadPlayer(source) end)
+-- QBCore roept dit op de server zelf aan met het speler-ID als argument
+AddEventHandler('QBCore:Server:OnPlayerUnload', function(src) unloadPlayer(tonumber(src) or source) end)
 AddEventHandler('esx:playerDropped', function(src) unloadPlayer(src) end)
 
 -- ------------------------------------------------------------
