@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WK Staff</title>
+    <title>Dayverse Staff</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
@@ -51,10 +51,10 @@
 <div id="menu" class="menu hidden">
     <aside class="side">
         <div class="brand">
-            <div class="logo">WK</div>
+            <div class="logo">DV</div>
             <div>
                 <div class="brand-name">Staffmenu</div>
-                <div class="brand-sub" id="server-name">Weekend Roleplay</div>
+                <div class="brand-sub" id="server-name">Dayverse Roleplay</div>
             </div>
         </div>
 
@@ -66,9 +66,9 @@
                 <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2 20c0-3.5 3-5.5 7-5.5s7 2 7 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5c2.4.5 4 2.3 4 5.5"/></svg>Spelers
                 <span class="nav-count" id="player-count">0</span>
             </button>
-            <button class="nav-btn" data-tab="reports" data-perm="reports">
+            <button class="nav-btn" id="nav-reports">
                 <svg viewBox="0 0 24 24"><path d="M4 21V4h11l1 3h4v9h-9l-1-3H4"/></svg>Reports
-                <span class="nav-count alert" id="report-count">0</span>
+                <svg class="ext" viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8"/></svg>
             </button>
             <button class="nav-btn" data-tab="server" data-perm="announce">
                 <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>Server
@@ -176,28 +176,6 @@
             </div>
         </section>
 
-        <!-- Reports -->
-        <section class="tab" data-tab="reports">
-            <header class="tab-head">
-                <div><h1>Reports</h1><p><span id="reports-open">0</span> open · spelers melden met <code>/report</code></p></div>
-                <div class="seg" id="report-filter">
-                    <button class="active" data-f="open">Open</button>
-                    <button data-f="mine">Mijn</button>
-                    <button data-f="closed">Gesloten</button>
-                </div>
-            </header>
-
-            <div class="players">
-                <div class="player-list" id="report-list"></div>
-                <div class="player-detail report-detail" id="report-detail">
-                    <div class="empty">
-                        <svg viewBox="0 0 24 24"><path d="M4 21V4h11l1 3h4v9h-9l-1-3H4"/></svg>
-                        Kies een report
-                    </div>
-                </div>
-            </div>
-        </section>
-
         <!-- Server -->
         <section class="tab" data-tab="server">
             <header class="tab-head"><div><h1>Server</h1><p>Acties voor de hele server.</p></div></header>
@@ -238,44 +216,6 @@
             <div class="logs" id="log-list"></div>
         </section>
     </main>
-</div>
-
-<!-- ============ Report-venster voor spelers (/report) ============ -->
-<div id="rp" class="rp hidden">
-    <div class="rp-card">
-        <header class="rp-head">
-            <div class="rp-title">
-                <div class="logo sm"><svg viewBox="0 0 24 24"><path d="M4 21V4h11l1 3h4v9h-9l-1-3H4"/></svg></div>
-                <div>
-                    <h2 id="rp-heading">Report maken</h2>
-                    <p id="rp-sub">Staff krijgt direct een melding.</p>
-                </div>
-            </div>
-            <button class="close-btn static" id="rp-close" aria-label="Sluiten"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
-        </header>
-
-        <!-- nieuw report -->
-        <form id="rp-form" class="rp-body stack">
-            <div class="field-label">Onderwerp</div>
-            <div class="chips" id="rp-cats"></div>
-            <div class="field-label">Speler-ID <span class="hint">(optioneel, als je iemand meldt)</span></div>
-            <input name="target" inputmode="numeric" placeholder="Bijv. 12" autocomplete="off">
-            <div class="field-label">Wat is er aan de hand?</div>
-            <textarea name="message" rows="4" maxlength="500" placeholder="Beschrijf zo duidelijk mogelijk wat er gebeurt…"></textarea>
-            <button class="btn" type="submit">Report versturen</button>
-        </form>
-
-        <!-- lopend report -->
-        <div id="rp-chat" class="rp-body off">
-            <div class="rp-status" id="rp-status"></div>
-            <div class="thread" id="rp-thread"></div>
-            <form id="rp-reply" class="row">
-                <input name="text" placeholder="Stuur een bericht naar staff…" autocomplete="off" maxlength="500">
-                <button class="btn" type="submit">Stuur</button>
-            </form>
-            <button class="btn ghost danger-soft rp-cancel" id="rp-cancel" type="button">Report intrekken</button>
-        </div>
-    </div>
 </div>
 
 <!-- Modal -->

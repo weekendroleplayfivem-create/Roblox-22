@@ -1,15 +1,15 @@
 /* ============================================================
-   wk-hud  |  NUI
+   dv-hud  |  NUI
    ============================================================ */
 
 const IS_FIVEM = typeof GetParentResourceName === 'function';
-const RESOURCE = IS_FIVEM ? GetParentResourceName() : 'wk-hud';
-const STORAGE_KEY = 'wk-hud:settings:v2';
+const RESOURCE = IS_FIVEM ? GetParentResourceName() : 'dv-hud';
+const STORAGE_KEY = 'dv-hud:settings:v3';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
-const ACCENTS = ['#4ade80', '#38bdf8', '#a78bfa', '#f472b6', '#fb923c', '#facc15', '#f4f6fb'];
+const ACCENTS = ['#ff8c1a', '#4ade80', '#38bdf8', '#a78bfa', '#f472b6', '#facc15', '#f4f6fb'];
 
 const ELEMENTS = [
     ['compass', 'Kompas'],

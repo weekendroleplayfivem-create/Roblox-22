@@ -1,12 +1,12 @@
-# wk-hud v2
+# dv-hud · Dayverse Roleplay
 
-Moderne HUD voor FiveM (QBCore, Qbox, ESX of standalone).
+Moderne HUD voor Dayverse Roleplay (QBCore, Qbox, ESX of standalone). Standaardkleur is oranje; spelers kunnen een andere accentkleur kiezen in `/hud`.
 
 ## Installatie
 
-1. Maak een backup van je oude `wk-hud`.
-2. Vervang de map `resources/[scripts]/[main]/[hud]/wk-hud` door deze map.
-3. Zorg dat `ensure wk-hud` in je `server.cfg` staat (na je framework).
+1. Maak een backup van je oude `dv-hud`.
+2. Vervang de map `resources/[scripts]/[main]/[hud]/dv-hud` door deze map.
+3. Zorg dat `ensure dv-hud` in je `server.cfg` staat (na je framework).
 4. Gebruik je al een ander HUD-script dat ook status/snelheid toont (bv. `qb-hud`), zet dat dan uit.
 5. Gebruik je al een gordelscript (bv. in `qb-smallresources`)? Zet `Config.Seatbelt.enabled = false`.
 
@@ -36,9 +36,9 @@ Instellingen worden per speler opgeslagen.
 ## Voor andere scripts
 
 ```lua
-exports['wk-hud']:SetStatus('hunger', 80)   -- standalone: honger/dorst/stress zetten
-TriggerEvent('wk-hud:client:setStatus', 'stress', 25)
-local belt = exports['wk-hud']:IsSeatbeltOn()
+exports['dv-hud']:SetStatus('hunger', 80)   -- standalone: honger/dorst/stress zetten
+TriggerEvent('dv-hud:client:setStatus', 'stress', 25)
+local belt = exports['dv-hud']:IsSeatbeltOn()
 ```
 
 ## Voorbeeld bekijken

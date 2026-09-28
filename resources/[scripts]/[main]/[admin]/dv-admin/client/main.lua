@@ -1,10 +1,9 @@
 -- ============================================================
---  wk-admin  |  client
+--  dv-admin  |  client
 -- ============================================================
 
 local menuOpen = false
-local reportOpen = false
-local focusReason = nil        -- 'menu', 'warn' of 'report'
+local focusReason = nil        -- 'menu' of 'warn'
 
 local flags = {
     noclip = false,
@@ -27,7 +26,7 @@ local function call(action, data)
     local id = reqId
     local p = promise.new()
     pending[id] = p
-    TriggerServerEvent('wk-admin:server:call', id, action, data or {})
+    TriggerServerEvent('dv-admin:server:call', id, action, data or {})
     SetTimeout(10000, function()
         if pending[id] then
             pending[id] = nil
@@ -37,7 +36,7 @@ local function call(action, data)
     return Citizen.Await(p)
 end
 
-RegisterNetEvent('wk-admin:client:reply', function(id, res)
+RegisterNetEvent('dv-admin:client:reply', function(id, res)
     local p = pending[id]
     if p then
         pending[id] = nil
@@ -352,7 +351,7 @@ local function stopSpectate()
     nui('spectate', { on = false })
 end
 
-RegisterNetEvent('wk-admin:client:spectate', function(target, coords, targetName)
+RegisterNetEvent('dv-admin:client:spectate', function(target, coords, targetName)
     if spectating then stopSpectate() end
     if not coords then return notify('Positie van speler onbekend', 'error') end
 
@@ -416,11 +415,11 @@ end)
 --  Events van de server (op jou uitgevoerd)
 -- ------------------------------------------------------------
 
-RegisterNetEvent('wk-admin:client:teleport', function(coords)
+RegisterNetEvent('dv-admin:client:teleport', function(coords)
     teleport(coords)
 end)
 
-RegisterNetEvent('wk-admin:client:freeze', function(state)
+RegisterNetEvent('dv-admin:client:freeze', function(state)
     local ped = PlayerPedId()
     local veh = GetVehiclePedIsIn(ped, false)
     FreezeEntityPosition(ped, state)
@@ -428,29 +427,29 @@ RegisterNetEvent('wk-admin:client:freeze', function(state)
     nui('toast', { msg = state and 'Je bent bevroren door staff' or 'Je kunt weer bewegen', kind = state and 'warn' or 'success', player = true })
 end)
 
-RegisterNetEvent('wk-admin:client:heal', function()
+RegisterNetEvent('dv-admin:client:heal', function()
     doHeal()
 end)
 
-RegisterNetEvent('wk-admin:client:revive', function()
+RegisterNetEvent('dv-admin:client:revive', function()
     doRevive()
 end)
 
-RegisterNetEvent('wk-admin:client:kill', function()
+RegisterNetEvent('dv-admin:client:kill', function()
     SetEntityHealth(PlayerPedId(), 0)
 end)
 
-RegisterNetEvent('wk-admin:client:dm', function(from, msg)
+RegisterNetEvent('dv-admin:client:dm', function(from, msg)
     nui('dm', { from = from, msg = msg })
     PlaySoundFrontend(-1, 'Text_Arrive_Tone', 'Phone_SoundSet_Default', true)
 end)
 
-RegisterNetEvent('wk-admin:client:announce', function(from, msg)
+RegisterNetEvent('dv-admin:client:announce', function(from, msg)
     nui('announce', { from = from, msg = msg })
     PlaySoundFrontend(-1, 'CHECKPOINT_PERFECT', 'HUD_MINI_GAME_SOUNDSET', true)
 end)
 
-RegisterNetEvent('wk-admin:client:warned', function(from, reason)
+RegisterNetEvent('dv-admin:client:warned', function(from, reason)
     focusReason = 'warn'
     SetNuiFocus(true, true)
     nui('warn', { from = from, reason = reason })
@@ -595,7 +594,6 @@ local function openMenu(tab)
 end
 
 RegisterCommand(Config.Command, function() CreateThread(openMenu) end, false)
-RegisterCommand(Config.Reports.staffCommand, function() CreateThread(function() openMenu('reports') end) end, false)
 RegisterKeyMapping(Config.Command, 'Staffmenu openen', 'keyboard', Config.Key)
 
 RegisterCommand(Config.NoclipCommand, function()
@@ -617,62 +615,23 @@ end)
 
 RegisterNUICallback('warnAck', function(_, cb)
     if focusReason == 'warn' then
-        focusReason = menuOpen and 'menu' or (reportOpen and 'report' or nil)
-        if not focusReason then SetNuiFocus(false, false) end
+        focusReason = menuOpen and 'menu' or nil
+        if not menuOpen then SetNuiFocus(false, false) end
     end
     cb('ok')
 end)
 
--- ------------------------------------------------------------
---  Reports
--- ------------------------------------------------------------
-
-local function openReport(prefill)
-    if reportOpen or menuOpen then return end
-    local res = call('reportMine')
-    if not res.ok then return notify(res.msg or 'Er ging iets mis', 'error') end
-    reportOpen = true
-    focusReason = 'report'
-    SetNuiFocus(true, true)
-    res.prefill = prefill
-    nui('reportOpen', res)
-end
-
-RegisterCommand(Config.Reports.command, function(_, args)
-    local prefill = #args > 0 and table.concat(args, ' ') or nil
-    CreateThread(function() openReport(prefill) end)
-end, false)
-
-TriggerEvent('chat:addSuggestion', '/' .. Config.Reports.command, 'Meld iets bij staff (speler, bug, vraag)', {
-    { name = 'bericht', help = 'Optioneel: je bericht' },
-})
-
-RegisterNUICallback('reportClose', function(_, cb)
-    reportOpen = false
-    if focusReason == 'report' then
-        focusReason = nil
-        SetNuiFocus(false, false)
-    end
+-- Reports-knop in het menu: sluit het staffmenu en opent dv-reports
+RegisterNUICallback('openReports', function(_, cb)
+    menuOpen = false
+    focusReason = nil
+    SetNuiFocus(false, false)
     cb('ok')
-end)
-
--- speler: update over eigen report (antwoord, opgepakt, gesloten)
-RegisterNetEvent('wk-admin:client:reportUpdate', function(report, toast, kind)
-    nui('myReport', { report = report, toast = toast, kind = kind, open = reportOpen })
-    if toast then
-        PlaySoundFrontend(-1, 'Text_Arrive_Tone', 'Phone_SoundSet_Default', true)
+    if GetResourceState('dv-reports') == 'started' then
+        ExecuteCommand('reports')
+    else
+        notify('dv-reports is niet gestart', 'error')
     end
-end)
-
--- staff: meldingen en live verversen
-RegisterNetEvent('wk-admin:client:staffNotify', function(msg, kind, count)
-    nui('toast', { msg = msg, kind = kind })
-    nui('reportCount', { count = count })
-    PlaySoundFrontend(-1, 'ATM_WINDOW', 'HUD_FRONTEND_DEFAULT_SOUNDSET', true)
-end)
-
-RegisterNetEvent('wk-admin:client:reportsChanged', function(id)
-    nui('reportsChanged', { id = id })
 end)
 
 RegisterNUICallback('stopSpectate', function(_, cb)
@@ -699,7 +658,7 @@ end)
 
 AddEventHandler('onResourceStop', function(res)
     if res ~= GetCurrentResourceName() then return end
-    if menuOpen or reportOpen or focusReason then SetNuiFocus(false, false) end
+    if menuOpen or focusReason then SetNuiFocus(false, false) end
     if flags.noclip then setNoclip(false) end
     if spectating then stopSpectate() end
     clearBlips()

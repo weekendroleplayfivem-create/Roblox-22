@@ -1,5 +1,5 @@
 -- ============================================================
---  wk-hud  |  client
+--  dv-hud  |  client
 -- ============================================================
 
 local framework = 'standalone'
@@ -172,12 +172,12 @@ AddEventHandler('esx_status:onTick', function(data)
     end
 end)
 
--- Standalone / andere scripts: exports['wk-hud']:SetStatus('hunger', 80)
+-- Standalone / andere scripts: exports['dv-hud']:SetStatus('hunger', 80)
 local function setStatus(name, value)
     if needs[name] ~= nil then needs[name] = value end
 end
 exports('SetStatus', setStatus)
-RegisterNetEvent('wk-hud:client:setStatus', setStatus)
+RegisterNetEvent('dv-hud:client:setStatus', setStatus)
 
 -- ------------------------------------------------------------
 --  Voice (pma-voice)
@@ -204,12 +204,12 @@ end
 exports('IsSeatbeltOn', function() return seatbelt end)
 
 if Config.Seatbelt.enabled then
-    RegisterCommand('wkseatbelt', function()
+    RegisterCommand('dvseatbelt', function()
         local veh = GetVehiclePedIsIn(PlayerPedId(), false)
         if not hasBelt(veh) then return end
         setSeatbelt(not seatbelt)
     end, false)
-    RegisterKeyMapping('wkseatbelt', 'Gordel om/af', 'keyboard', Config.Seatbelt.key)
+    RegisterKeyMapping('dvseatbelt', 'Gordel om/af', 'keyboard', Config.Seatbelt.key)
 else
     -- compatibel met qb-smallresources en vergelijkbare scripts
     RegisterNetEvent('seatbelt:client:ToggleSeatbelt', function(state)

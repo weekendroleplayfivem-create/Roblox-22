@@ -10,9 +10,9 @@ Config.NoclipKey = ''
 
 --[[
     Rangen (in server.cfg via ACE):
-      1 = moderator   ->  add_ace group.mod   wkadmin.mod   allow
-      2 = admin       ->  add_ace group.admin wkadmin.admin allow
-      3 = eigenaar    ->  add_ace group.owner wkadmin.owner allow
+      1 = moderator   ->  add_ace group.mod   dvadmin.mod   allow
+      2 = admin       ->  add_ace group.admin dvadmin.admin allow
+      3 = eigenaar    ->  add_ace group.owner dvadmin.owner allow
 
     Minimale rang per actie:
 ]]
@@ -32,17 +32,6 @@ Config.Permissions = {
 
     -- server
     announce = 2, healAll = 2, reviveAll = 2, clearArea = 2,
-
-    -- reports
-    reports = 1, reportClaim = 1, reportReply = 1, reportClose = 1,
-}
-
--- Reports (/report voor spelers, /reports voor staff)
-Config.Reports = {
-    command = 'report',
-    staffCommand = 'reports',
-    cooldown = 60,   -- seconden tussen twee reports van dezelfde speler
-    categories = { 'Speler melden', 'Bug', 'Vraag', 'Vastgelopen', 'Anders' },
 }
 
 Config.RankNames = { [1] = 'Moderator', [2] = 'Admin', [3] = 'Eigenaar' }
@@ -61,5 +50,5 @@ Config.BanDurations = {
 Config.ClearAreaRadius = 75.0
 Config.SpawnPlate = 'STAFF'
 
--- Discord-logs: zet in server.cfg ->  set wkadmin_webhook "https://discord.com/api/webhooks/..."
+-- Discord-logs: zet in server.cfg ->  set dvadmin_webhook "https://discord.com/api/webhooks/..."
 -- (staat bewust niet hier, want dit bestand is ook voor spelers leesbaar)

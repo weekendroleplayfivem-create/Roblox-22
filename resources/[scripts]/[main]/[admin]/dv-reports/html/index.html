@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dayverse Reports</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="toasts" class="toasts"></div>
+
+<!-- ============ Spelers: /report ============ -->
+<div id="rp" class="rp hidden">
+    <div class="rp-card">
+        <header class="rp-head">
+            <div class="rp-title">
+                <div class="logo sm"><svg viewBox="0 0 24 24"><path d="M4 21V4h11l1 3h4v9h-9l-1-3H4"/></svg></div>
+                <div>
+                    <h2 id="rp-heading">Report maken</h2>
+                    <p id="rp-sub">Dayverse Roleplay · staff krijgt direct een melding.</p>
+                </div>
+            </div>
+            <button class="close-btn static" id="rp-close" aria-label="Sluiten"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </header>
+
+        <form id="rp-form" class="rp-body stack">
+            <div class="field-label">Onderwerp</div>
+            <div class="chips" id="rp-cats"></div>
+            <div class="field-label">Speler-ID <span class="hint">(optioneel, als je iemand meldt)</span></div>
+            <input name="target" inputmode="numeric" placeholder="Bijv. 12" autocomplete="off">
+            <div class="field-label">Wat is er aan de hand?</div>
+            <textarea name="message" rows="4" maxlength="500" placeholder="Beschrijf zo duidelijk mogelijk wat er gebeurt…"></textarea>
+            <button class="btn" type="submit">Report versturen</button>
+        </form>
+
+        <div id="rp-chat" class="rp-body off">
+            <div class="rp-status" id="rp-status"></div>
+            <div class="thread" id="rp-thread"></div>
+            <form id="rp-reply" class="row">
+                <input name="text" placeholder="Stuur een bericht naar staff…" autocomplete="off" maxlength="500">
+                <button class="btn" type="submit">Stuur</button>
+            </form>
+            <button class="btn ghost danger-soft rp-cancel" id="rp-cancel" type="button">Report intrekken</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============ Staff: /reports ============ -->
+<div id="panel" class="panel hidden">
+    <header class="panel-head">
+        <div class="logo">DV</div>
+        <div class="title">
+            <h1>Reports</h1>
+            <p><span id="open-count">0</span> open · Dayverse Roleplay</p>
+        </div>
+        <div class="seg" id="filter">
+            <button class="active" data-f="open">Open</button>
+            <button data-f="mine">Mijn</button>
+            <button data-f="closed">Gesloten</button>
+        </div>
+        <div class="me-chip"><div class="avatar" id="me-avatar">?</div><div><div id="me-name">Staff</div><div class="rank" id="me-rank">Staff</div></div></div>
+        <button class="close-btn" id="panel-close" aria-label="Sluiten"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </header>
+    <div class="panel-body">
+        <div class="players">
+            <div class="player-list" id="list"></div>
+            <div class="player-detail report-detail" id="detail"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal -->
+<div id="modal" class="modal hidden">
+    <form class="modal-card" id="modal-form">
+        <h2 id="modal-title"></h2>
+        <p id="modal-text"></p>
+        <input id="modal-input" autocomplete="off" maxlength="300">
+        <div class="modal-actions">
+            <button type="button" class="btn ghost" id="modal-cancel">Annuleren</button>
+            <button type="submit" class="btn" id="modal-ok">Sluiten</button>
+        </div>
+    </form>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>

@@ -2,8 +2,8 @@ fx_version 'cerulean'
 game 'gta5'
 lua54 'yes'
 
-name 'wk-admin'
-author 'Weekend Roleplay'
+name 'dv-admin'
+author 'Dayverse Roleplay'
 description 'Staffmenu: spelers, bans, warns, noclip, spectate en logs'
 version '1.0.0'
 

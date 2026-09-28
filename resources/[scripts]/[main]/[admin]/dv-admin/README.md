@@ -1,28 +1,28 @@
-# wk-admin
+# dv-admin · Dayverse Roleplay
 
-Staffmenu in de stijl van txAdmin, in dezelfde look als `wk-hud`. Werkt standalone, met extra ondersteuning voor QBCore en ESX (revive).
+Staffmenu in de stijl van txAdmin, in dezelfde look als `dv-hud`. Werkt standalone, met extra ondersteuning voor QBCore en ESX (revive).
 
 ## Installatie
 
-1. Zet de map `wk-admin` in je resources, bv. `resources/[scripts]/[main]/[admin]/wk-admin`.
+1. Zet de map `dv-admin` in je resources, bv. `resources/[scripts]/[main]/[admin]/dv-admin`.
 2. Voeg toe aan `server.cfg`:
 
 ```cfg
-ensure wk-admin
+ensure dv-admin
 
 # Rangen
-add_ace group.mod   wkadmin.mod   allow
-add_ace group.admin wkadmin.admin allow
-add_ace group.admin wkadmin.mod   allow
-add_ace group.owner wkadmin.owner allow
-add_ace group.owner wkadmin.admin allow
-add_ace group.owner wkadmin.mod   allow
+add_ace group.mod   dvadmin.mod   allow
+add_ace group.admin dvadmin.admin allow
+add_ace group.admin dvadmin.mod   allow
+add_ace group.owner dvadmin.owner allow
+add_ace group.owner dvadmin.admin allow
+add_ace group.owner dvadmin.mod   allow
 
 # Staffleden (license vind je in txAdmin of in het staffmenu zelf)
 add_principal identifier.license:JOUW_LICENSE group.owner
 
 # Optioneel: Discord-logs
-set wkadmin_webhook "https://discord.com/api/webhooks/..."
+set dvadmin_webhook "https://discord.com/api/webhooks/..."
 ```
 
 3. Zorg dat de map `data/` schrijfbaar is (bans en warns worden daar opgeslagen).
@@ -30,19 +30,11 @@ set wkadmin_webhook "https://discord.com/api/webhooks/..."
 ## Openen
 
 - `/staff` of **F10** (aan te passen in GTA-instellingen → Toetsen → FiveM)
-- `/reports` opent het staffmenu direct op het tabblad Reports
 - `/noclip` zet noclip direct aan/uit
 
 ## Reports
 
-Spelers typen `/report` (of `/report <bericht>`) en krijgen een venster:
-
-1. Onderwerp kiezen (Speler melden, Bug, Vraag, Vastgelopen, Anders), eventueel het ID van de speler die ze melden, en een beschrijving.
-2. Alle online staff krijgt direct een melding met geluid; de teller bij **Reports** in het menu loopt op.
-3. Staff pakt de report op, kan chatten met de speler, naar de speler (of de gemelde speler) teleporteren, hem halen of spectaten, en sluit de report met een notitie.
-4. De speler ziet live wie hem helpt en krijgt antwoorden als melding. Met `/report` opent hij het gesprek weer.
-
-Eén open report per speler, met een cooldown (`Config.Reports.cooldown`). Gesloten reports blijven 6 uur zichtbaar onder *Gesloten*. Alles komt in de logs (en in Discord als je een webhook hebt ingesteld).
+Het reportsysteem is een aparte resource: **dv-reports**. Staat die aan, dan zit er in het staffmenu een knop *Reports* die het reportpaneel opent.
 
 ## Functies
 
@@ -52,7 +44,7 @@ Eén open report per speler, met een cooldown (`Config.Reports.cooldown`). Geslo
 
 **Server:** aankondiging naar iedereen, iedereen genezen of reviven, gebied opruimen (lege voertuigen en NPC's).
 
-**Bans:** alle actieve bans met zoekfunctie en unban. Bans werken op alle identifiers én hardware-tokens, dus een nieuwe Steam/Discord helpt niet. Unban kan ook vanaf de console: `wkunban WK-1234`.
+**Bans:** alle actieve bans met zoekfunctie en unban. Bans werken op alle identifiers én hardware-tokens, dus een nieuwe Steam/Discord helpt niet. Unban kan ook vanaf de console: `dvunban DV-1234`.
 
 **Logs:** alle staff-acties sinds de laatste herstart, ook in de serverconsole en optioneel in Discord.
 
