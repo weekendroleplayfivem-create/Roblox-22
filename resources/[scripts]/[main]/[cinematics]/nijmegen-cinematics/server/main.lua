@@ -53,7 +53,28 @@ local function sanitize(scene)
         time = math.max(-1, math.min(23, math.floor(tonumber(s.time) or -1))),
         weather = clean(s.weather, 20),
         fade = s.fade ~= false,
+        dof = s.dof == true,
+        dofFocus = math.max(0.5, math.min(200, tonumber(s.dofFocus) or 8)),
+        dofStrength = math.max(0, math.min(1, tonumber(s.dofStrength) or 0.8)),
     }
+
+    -- teksten in beeld
+    local POS = { ['bottom-center'] = 1, ['bottom-left'] = 1, ['bottom-right'] = 1, ['middle-center'] = 1, ['top-center'] = 1 }
+    local SIZE = { s = 1, m = 1, l = 1, xl = 1 }
+    out.texts = {}
+    for i, t in ipairs(type(scene.texts) == 'table' and scene.texts or {}) do
+        if i > 20 then break end
+        if type(t) == 'table' then
+            out.texts[#out.texts + 1] = {
+                title = clean(t.title, 120),
+                sub = clean(t.sub, 160),
+                start = math.max(0, math.min(600, tonumber(t.start) or 0)),
+                dur = math.max(0.5, math.min(120, tonumber(t.dur) or 4)),
+                pos = POS[t.pos] and t.pos or 'bottom-center',
+                size = SIZE[t.size] and t.size or 'l',
+            }
+        end
+    end
     return out
 end
 

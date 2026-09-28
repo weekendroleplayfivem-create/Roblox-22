@@ -36,6 +36,14 @@ const LANG = {
         bcTitle: 'Voor iedereen afspelen?', bcText: 'Alle spelers op de server zien deze cinematic.', pointUpdated: 'Punt bijgewerkt',
         selectFirst: 'Selecteer eerst een keyframe', exportServer: '-- Server: opgeslagen scène afspelen voor een speler',
         exportClient: '-- Client: direct afspelen zonder opslaan', closeTitle: 'Editor sluiten?',
+        tabTexts: 'Tekst', scrub: 'Voorvertoning', undo: 'Ongedaan maken', addText: 'Tekst toevoegen',
+        textHint: 'Tekst verschijnt tijdens de cinematic. Nieuwe tekst start op de tijd van de voorvertoning-balk.',
+        emptyTexts: 'Nog geen tekst. Voeg een titel of ondertitel toe.', gDof: 'Scherptediepte', dof: 'Onscherpe achtergrond (DOF)',
+        dofFocus: 'Scherp op afstand', dofStrength: 'Sterkte', showPath: 'Pad en keyframes in 3D tonen',
+        tTitle: 'Titel', tSub: 'Ondertitel', tStart: 'Start (s)', tDur: 'Duur (s)', tPos: 'Positie', tSize: 'Grootte',
+        posBC: 'Onder midden', posBL: 'Onder links', posBR: 'Onder rechts', posMC: 'Midden', posTC: 'Boven',
+        sizeS: 'Klein', sizeM: 'Middel', sizeL: 'Groot', sizeXL: 'Extra groot', previewText: 'Bekijken', nothingUndo: 'Niets om ongedaan te maken',
+        titlePh: 'Bijv. NIJMEGEN', subPh: 'Bijv. Welkom in de stad',
     },
     en: {
         cameraMode: 'Camera mode', kMove: 'move', kUpDown: 'down / up', kLook: 'look around', kZoom: 'zoom (FOV)',
@@ -58,6 +66,14 @@ const LANG = {
         bcTitle: 'Play for everyone?', bcText: 'All players on the server will see this cinematic.', pointUpdated: 'Point updated',
         selectFirst: 'Select a keyframe first', exportServer: '-- Server: play a saved scene for a player',
         exportClient: '-- Client: play directly without saving', closeTitle: 'Close editor?',
+        tabTexts: 'Text', scrub: 'Preview', undo: 'Undo', addText: 'Add text',
+        textHint: 'Text appears during the cinematic. New text starts at the time of the preview slider.',
+        emptyTexts: 'No text yet. Add a title or subtitle.', gDof: 'Depth of field', dof: 'Blurred background (DOF)',
+        dofFocus: 'Focus distance', dofStrength: 'Strength', showPath: 'Show path and keyframes in 3D',
+        tTitle: 'Title', tSub: 'Subtitle', tStart: 'Start (s)', tDur: 'Time (s)', tPos: 'Position', tSize: 'Size',
+        posBC: 'Bottom centre', posBL: 'Bottom left', posBR: 'Bottom right', posMC: 'Middle', posTC: 'Top',
+        sizeS: 'Small', sizeM: 'Medium', sizeL: 'Large', sizeXL: 'Extra large', previewText: 'Preview', nothingUndo: 'Nothing to undo',
+        titlePh: 'e.g. NIJMEGEN', subPh: 'e.g. Welcome to the city',
     },
 };
 
@@ -77,12 +93,14 @@ function applyLang(code) {
 const DEFAULT_SETTINGS = {
     bars: 0.12, filter: '', strength: 1, shake: '', shakeAmp: 0, smooth: true, loop: false,
     fade: true, hideHud: true, hidePlayer: false, time: -1, weather: '', previewBars: true,
+    dof: false, dofFocus: 8, dofStrength: 0.8, showPath: true,
 };
 
 const state = {
     open: false,
     mode: 'camera',
-    scene: { name: '', points: [], settings: { ...DEFAULT_SETTINGS } },
+    scene: { name: '', points: [], texts: [], settings: { ...DEFAULT_SETTINGS } },
+    scrub: 0,
     selected: null,
     defaults: { dur: 4, ease: 'inout' },
     broadcast: false,
@@ -148,10 +166,74 @@ function loadDraft() {
     try {
         const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
         if (d && Array.isArray(d.points)) {
-            state.scene = { name: d.name || '', points: d.points, settings: { ...DEFAULT_SETTINGS, ...(d.settings || {}) } };
+            state.scene = { name: d.name || '', points: d.points, texts: Array.isArray(d.texts) ? d.texts : [], settings: { ...DEFAULT_SETTINGS, ...(d.settings || {}) } };
         }
     } catch (e) { /* negeren */ }
 }
+
+/* ------------------------------------------------------------
+   Ongedaan maken
+   ------------------------------------------------------------ */
+
+const history = [];
+
+/** Aanroepen vóór een wijziging, zodat die ongedaan gemaakt kan worden. */
+function snapshot() {
+    history.push(JSON.stringify(state.scene));
+    if (history.length > 60) history.shift();
+    $('#btn-undo').disabled = false;
+}
+
+function undo() {
+    const prev = history.pop();
+    if (!prev) return toast(T.nothingUndo);
+    state.scene = JSON.parse(prev);
+    state.selected = null;
+    $('#scene-name').value = state.scene.name;
+    $('#btn-undo').disabled = history.length === 0;
+    saveDraft();
+    renderAll();
+    pushPreview();
+}
+
+/* ------------------------------------------------------------
+   Scène naar Lua (3D-pad, voorvertoning)
+   ------------------------------------------------------------ */
+
+let syncTimer;
+function syncScene() {
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => post('scene', { scene: sceneForExport(), selected: state.selected }), 60);
+}
+
+/** Begintijd van elk keyframe op de tijdlijn. */
+function pointTimes() {
+    const pts = state.scene.points;
+    const times = [];
+    let t = 0;
+    pts.forEach((p) => { times.push(t); t += (+p.hold || 0) + (+p.dur || 0); });
+    return times;
+}
+
+function renderScrub() {
+    const total = totalTime();
+    const el = $('#scrub');
+    el.max = total.toFixed(2);
+    if (state.scrub > total) state.scrub = total;
+    el.value = state.scrub;
+    $('#scrub-time').textContent = `${state.scrub.toFixed(1)} / ${total.toFixed(1)} s`;
+    const times = pointTimes();
+    $('#scrub-marks').innerHTML = total > 0 ? times.map((t, i) =>
+        `<span class="${i === state.selected ? 'sel' : ''}" style="left:${Math.min(100, (t / total) * 100)}%"></span>`).join('') : '';
+}
+
+$('#scrub').addEventListener('input', (e) => {
+    state.scrub = parseFloat(e.target.value) || 0;
+    renderScrub();
+    post('scrub', { t: state.scrub });
+    showCaptionsAt(state.scrub, true);
+    markLiveTexts();
+});
 
 /* ------------------------------------------------------------
    Modus (camera / menu)
@@ -175,6 +257,10 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault();
         setMode('camera');
         post('mode', { mode: 'camera' });
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')) {
+        e.preventDefault();
+        undo();
     }
 });
 
@@ -241,6 +327,8 @@ function renderPoints() {
             </div>
         </div>`).join('');
     renderExport();
+    renderScrub();
+    syncScene();
 }
 
 $('#points').addEventListener('click', async (e) => {
@@ -250,8 +338,13 @@ $('#points').addEventListener('click', async (e) => {
     const act = e.target.closest('[data-act]')?.dataset.act;
     const pts = state.scene.points;
     if (!act) return;
+    if (act !== 'select' && act !== 'goto') snapshot();
     if (act === 'select') {
         state.selected = state.selected === i ? null : i;
+        if (state.selected !== null) {
+            state.scrub = pointTimes()[i] || 0;
+            post('goto', pts[i]);
+        }
     } else if (act === 'goto') {
         state.selected = i;
         post('goto', pts[i]);
@@ -279,6 +372,7 @@ $('#points').addEventListener('change', (e) => {
     const f = e.target.dataset.f;
     const card = e.target.closest('.point');
     if (!f || !card) return;
+    snapshot();
     const p = state.scene.points[+card.dataset.i];
     p[f] = f === 'ease' ? e.target.value : Math.max(f === 'dur' ? 0.1 : 0, parseFloat(e.target.value) || 0);
     saveDraft();
@@ -286,6 +380,7 @@ $('#points').addEventListener('change', (e) => {
 });
 
 function addPoint(p) {
+    snapshot();
     const point = {
         x: p.x, y: p.y, z: p.z, rx: p.rx, ry: p.ry || 0, rz: p.rz, fov: p.fov,
         dur: p.dur ?? state.defaults.dur, hold: p.hold ?? 0, ease: p.ease || state.defaults.ease,
@@ -339,7 +434,11 @@ function renderSettings() {
     $('#s-time').value = s.time;
     $('#v-time').textContent = s.time < 0 ? T.server : `${String(s.time).padStart(2, '0')}:00`;
     $('#s-weather').value = s.weather;
-    ['smooth', 'loop', 'fade', 'hideHud', 'hidePlayer', 'previewBars'].forEach((k) => { $(`#s-${k}`).checked = !!s[k]; });
+    ['smooth', 'loop', 'fade', 'hideHud', 'hidePlayer', 'previewBars', 'dof', 'showPath'].forEach((k) => { $(`#s-${k}`).checked = !!s[k]; });
+    $('#s-dofFocus').value = s.dofFocus;
+    $('#v-dofFocus').textContent = `${s.dofFocus} m`;
+    $('#s-dofStrength').value = Math.round(s.dofStrength * 100);
+    $('#v-dofStrength').textContent = `${Math.round(s.dofStrength * 100)}%`;
     updateBars();
 }
 
@@ -358,8 +457,10 @@ function pushPreview() {
 const SETTING_INPUTS = {
     bars: (v) => v / 100, strength: (v) => v / 100, shakeAmp: (v) => v / 10, time: (v) => parseInt(v, 10),
     filter: (v) => v, shake: (v) => v, weather: (v) => v,
+    dofFocus: (v) => parseInt(v, 10), dofStrength: (v) => v / 100,
 };
 Object.entries(SETTING_INPUTS).forEach(([k, conv]) => {
+    $(`#s-${k}`).addEventListener('pointerdown', snapshot);
     $(`#s-${k}`).addEventListener('input', (e) => {
         state.scene.settings[k] = conv(e.target.value);
         renderSettings();
@@ -368,14 +469,130 @@ Object.entries(SETTING_INPUTS).forEach(([k, conv]) => {
         pushPreview();
     });
 });
-['smooth', 'loop', 'fade', 'hideHud', 'hidePlayer', 'previewBars'].forEach((k) => {
+['smooth', 'loop', 'fade', 'hideHud', 'hidePlayer', 'previewBars', 'dof', 'showPath'].forEach((k) => {
     $(`#s-${k}`).addEventListener('change', (e) => {
+        snapshot();
         state.scene.settings[k] = e.target.checked;
+        pushPreview();
         saveDraft();
         renderSettings();
         renderPoints();
     });
 });
+
+/* ------------------------------------------------------------
+   Tekst
+   ------------------------------------------------------------ */
+
+const POSITIONS = () => [['bottom-center', T.posBC], ['bottom-left', T.posBL], ['bottom-right', T.posBR], ['middle-center', T.posMC], ['top-center', T.posTC]];
+const SIZES = () => [['s', T.sizeS], ['m', T.sizeM], ['l', T.sizeL], ['xl', T.sizeXL]];
+
+function renderTexts() {
+    const texts = state.scene.texts;
+    $('#text-count').textContent = texts.length;
+    $('#texts-empty').classList.toggle('off', texts.length > 0);
+    const opts = (list, v) => list.map(([k, l]) => `<option value="${k}"${k === v ? ' selected' : ''}>${l}</option>`).join('');
+    $('#texts').innerHTML = texts.map((t, i) => `
+        <div class="text-card${state.scrub >= t.start && state.scrub < t.start + t.dur ? ' live' : ''}" data-i="${i}">
+            <div class="row">
+                <input data-f="title" value="${esc(t.title)}" placeholder="${T.titlePh}" maxlength="120">
+                <button class="icon-btn accent" data-act="view" title="${T.previewText}">${ICON.eye}</button>
+                <button class="icon-btn danger" data-act="remove" title="${T.remove}">${ICON.del}</button>
+            </div>
+            <input data-f="sub" value="${esc(t.sub)}" placeholder="${T.subPh}" maxlength="160">
+            <div class="grid4">
+                <label>${T.tStart}<input type="number" step="0.1" min="0" data-f="start" value="${t.start}"></label>
+                <label>${T.tDur}<input type="number" step="0.1" min="0.5" data-f="dur" value="${t.dur}"></label>
+                <label>${T.tPos}<select data-f="pos">${opts(POSITIONS(), t.pos)}</select></label>
+                <label>${T.tSize}<select data-f="size">${opts(SIZES(), t.size)}</select></label>
+            </div>
+        </div>`).join('');
+    renderExport();
+    syncScene();
+}
+
+$('#btn-add-text').addEventListener('click', () => {
+    snapshot();
+    state.scene.texts.push({ title: '', sub: '', start: +state.scrub.toFixed(1), dur: 4, pos: 'bottom-center', size: 'l' });
+    saveDraft();
+    renderTexts();
+    const inputs = $$('#texts [data-f="title"]');
+    inputs[inputs.length - 1]?.focus();
+});
+
+$('#texts').addEventListener('click', (e) => {
+    const card = e.target.closest('.text-card');
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (!card || !act) return;
+    const i = +card.dataset.i;
+    if (act === 'remove') {
+        snapshot();
+        state.scene.texts.splice(i, 1);
+        saveDraft();
+        renderTexts();
+        showCaptionsAt(state.scrub, true);
+    }
+    if (act === 'view') {
+        state.scrub = state.scene.texts[i].start + 0.05;
+        renderScrub();
+        post('scrub', { t: state.scrub });
+        showCaptionsAt(state.scrub, true);
+        renderTexts();
+    }
+});
+
+$('#texts').addEventListener('focusin', (e) => { if (e.target.dataset.f) snapshot(); });
+$('#texts').addEventListener('input', (e) => {
+    const f = e.target.dataset.f;
+    const card = e.target.closest('.text-card');
+    if (!f || !card) return;
+    const t = state.scene.texts[+card.dataset.i];
+    if (f === 'start') t.start = Math.max(0, parseFloat(e.target.value) || 0);
+    else if (f === 'dur') t.dur = Math.max(0.5, parseFloat(e.target.value) || 0.5);
+    else t[f] = e.target.value;
+    saveDraft();
+    renderExport();
+    syncScene();
+    markLiveTexts();
+    showCaptionsAt(state.scrub, true);
+});
+
+/** Oranje rand om teksten die op de huidige voorvertoning-tijd zichtbaar zijn. */
+function markLiveTexts() {
+    $$('#texts .text-card').forEach((card) => {
+        const t = state.scene.texts[+card.dataset.i];
+        card.classList.toggle('live', !!t && state.scrub >= t.start && state.scrub < t.start + t.dur);
+    });
+}
+
+/* ------------------------------------------------------------
+   Tekst in beeld
+   ------------------------------------------------------------ */
+
+let capTexts = [];
+
+function buildCaptions(texts) {
+    capTexts = texts || [];
+    $('#captions').innerHTML = capTexts.map((t, i) => `
+        <div class="cap pos-${esc(t.pos || 'bottom-center')} size-${esc(t.size || 'l')}" data-i="${i}">
+            ${t.title ? `<div class="cap-title">${esc(t.title)}</div>` : ''}
+            ${t.title && t.sub ? '<div class="cap-line"></div>' : ''}
+            ${t.sub ? `<div class="cap-sub">${esc(t.sub)}</div>` : ''}
+        </div>`).join('');
+}
+
+function updateCaptions(t) {
+    $$('#captions .cap').forEach((el) => {
+        const c = capTexts[+el.dataset.i];
+        el.classList.toggle('show', !!c && t >= c.start && t < c.start + c.dur);
+    });
+}
+
+/** In de editor: laat de teksten zien die op tijdstip t actief zijn. */
+function showCaptionsAt(t, rebuild) {
+    if (rebuild || capTexts !== state.scene.texts) buildCaptions(state.scene.texts);
+    requestAnimationFrame(() => updateCaptions(t));
+}
 
 /* ------------------------------------------------------------
    Scènes
@@ -390,6 +607,7 @@ function sceneForExport() {
             fov: round(p.fov, 1), dur: +p.dur, hold: +p.hold || 0, ease: p.ease,
         })),
         settings: { ...state.scene.settings },
+        texts: state.scene.texts.map((t) => ({ ...t })),
     };
 }
 
@@ -416,8 +634,11 @@ $('#scene-list').addEventListener('click', async (e) => {
     if (load) {
         const res = await serverCall('load', { name: load });
         if (res.ok) {
-            state.scene = { name: res.scene.name, points: res.scene.points, settings: { ...DEFAULT_SETTINGS, ...res.scene.settings } };
+            snapshot();
+            state.scene = { name: res.scene.name, points: res.scene.points, texts: res.scene.texts || [], settings: { ...DEFAULT_SETTINGS, ...res.scene.settings } };
             state.selected = null;
+            state.scrub = 0;
+            renderTexts();
             saveDraft();
             $('#scene-name').value = state.scene.name;
             renderPoints();
@@ -445,9 +666,12 @@ $('#btn-save').addEventListener('click', async () => {
 
 $('#btn-new').addEventListener('click', async () => {
     if (state.scene.points.length && !(await confirmBox(T.newTitle, T.newText))) return;
-    state.scene = { name: '', points: [], settings: { ...DEFAULT_SETTINGS } };
+    snapshot();
+    state.scene = { name: '', points: [], texts: [], settings: { ...DEFAULT_SETTINGS } };
     state.selected = null;
+    state.scrub = 0;
     $('#scene-name').value = '';
+    renderTexts();
     saveDraft();
     renderPoints();
     renderSettings();
@@ -468,11 +692,20 @@ $('#btn-copy').addEventListener('click', () => {
     toast(T.copied, 'success');
 });
 
+$('#scene-name').addEventListener('focus', snapshot);
 $('#scene-name').addEventListener('input', (e) => {
     state.scene.name = e.target.value;
     saveDraft();
     renderExport();
 });
+
+$('#btn-undo').addEventListener('click', undo);
+
+function renderAll() {
+    renderPoints();
+    renderTexts();
+    renderSettings();
+}
 
 $('#btn-close').addEventListener('click', async () => {
     post('close');
@@ -493,17 +726,20 @@ function playStart(d) {
     $('#timeline').classList.remove('hidden');
     $('#timeline').classList.toggle('viewer', !d.editor);
     state.total = d.total;
+    buildCaptions(d.texts || []);
     updateBars();
 }
 
 function playStop() {
     state.playing = false;
+    buildCaptions([]);
     $('#timeline').classList.add('hidden');
     if (state.open) $('#editor').classList.remove('hidden');
     updateBars();
 }
 
 function progress(d) {
+    updateCaptions(d.t);
     $('#tl-fill').style.width = `${Math.min(100, (d.t / d.total) * 100)}%`;
     $('#tl-time').textContent = `${d.t.toFixed(1)} / ${d.total.toFixed(1)} s`;
 }
@@ -533,8 +769,8 @@ const handlers = {
         $('#scene-name').value = state.scene.name;
         state.open = true;
         $('#editor').classList.remove('hidden');
-        renderPoints();
-        renderSettings();
+        $('#btn-undo').disabled = history.length === 0;
+        renderAll();
         pushPreview();
     },
     close() {
@@ -542,11 +778,14 @@ const handlers = {
         $('#editor').classList.add('hidden');
         $('#hint').classList.add('hidden');
         closeModal(false);
+        buildCaptions([]);
         updateBars();
     },
     mode: (d) => setMode(d.mode),
     addPoint,
     removeLast() {
+        if (!state.scene.points.length) return;
+        snapshot();
         state.scene.points.pop();
         state.selected = null;
         saveDraft();
@@ -604,8 +843,11 @@ if (!IS_FIVEM) {
             { x: 150.8, y: -870.2, z: 34.1, rx: -4, rz: 220, fov: 40, dur: 6, hold: 0, ease: 'linear' },
             { x: 118.2, y: -902.7, z: 52.6, rx: -20, rz: 250, fov: 60, dur: 4, hold: 2, ease: 'out' },
         ].forEach((p) => state.scene.points.push({ ry: 0, ...p }));
+        state.scene.texts = [
+            { title: 'Nijmegen', sub: 'Welkom in de oudste stad van Nederland', start: 1, dur: 5, pos: 'bottom-center', size: 'l' },
+        ];
         state.selected = 1;
-        renderPoints();
+        renderAll();
     }
     setMode(location.hash === '#camera' ? 'camera' : 'mouse');
     handlers.camInfo({ fov: 50, speed: 0.35, roll: 0, dist: 42 });

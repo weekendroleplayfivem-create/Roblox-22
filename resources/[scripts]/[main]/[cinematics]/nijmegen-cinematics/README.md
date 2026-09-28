@@ -43,7 +43,11 @@ add_ace group.admin nijmegen.cinematics.broadcast allow
 **Menu mode** (TAB or ESC switches back to the camera):
 
 - **Keyframes:** per keyframe the travel time to the next point, a hold (wait) time, FOV and curve (smooth, linear, ease in, ease out). Move the camera to a keyframe, overwrite a keyframe with the current camera, reorder or delete. Select a keyframe and new ones are inserted after it. *Play from #* starts at the selected keyframe.
-- **Effects:** letterbox bars, filter + strength, camera shake + strength, smooth spline path, loop, fade in/out, time and weather (only for you), hide HUD, hide your own character. Filter, time and weather are previewed live while editing.
+- **Preview slider:** scrub through the whole cinematic in the editor; the camera and on-screen text follow along.
+- **3D in the world:** every keyframe is shown as a numbered marker with its view direction, and the full camera path is drawn as a line (toggle in Effects).
+- **Text:** titles and subtitles with a 3D look, fade/rise animation and an accent line. Default position is bottom centre; also bottom left/right, middle and top, in four sizes, with a start time and duration.
+- **Undo:** the undo button or Ctrl+Z (in menu mode) reverts the last change.
+- **Effects:** depth of field (blurred background with focus distance and strength), letterbox bars, filter + strength, camera shake + strength, smooth spline path, loop, fade in/out, time and weather (only for you), hide HUD, hide your own character. Filter, time and weather are previewed live while editing.
 - **Scenes:** save, load and delete scenes (stored server-side in `data/scenes.json`), play the current scene for everyone, and copy ready-made code to use a scene in another script.
 
 Your unsaved work is kept automatically, even if you close the editor.

@@ -253,17 +253,17 @@ local function freecamFrame()
     SetCamRot(fc.cam, fc.rot.x, fc.rot.y, fc.rot.z, 2)
     SetCamFov(fc.cam, fc.fov)
     SetFocusPosAndVel(fc.pos.x, fc.pos.y, fc.pos.z, 0.0, 0.0, 0.0)
+    if preview.dof then SetUseHiDof() end
 end
 
 -- ------------------------------------------------------------
---  Afspelen
+--  Pad (gedeeld door afspelen, voorvertoning en 3D-weergave)
 -- ------------------------------------------------------------
 
---- Speelt een scène af. Blokkeert tot het klaar of gestopt is.
-local function playScene(scene, startIndex)
-    if playing then return end
+--- Bouwt de tijdlijn van een scène. Geeft nil bij minder dan 2 punten.
+local function buildPath(scene, startIndex)
     local points = copyPoints(scene.points or {})
-    if #points < 2 then return notify(L('need_points'), 'error') end
+    if #points < 2 then return nil end
     local s = scene.settings or {}
     startIndex = math.max(1, math.min(#points - 1, tonumber(startIndex) or 1))
 
@@ -274,13 +274,62 @@ local function playScene(scene, startIndex)
     end
     unwrap(points)
 
-    -- tijdlijn: per stuk eerst 'hold' op het punt, dan 'dur' reizen naar het volgende
+    -- per stuk eerst 'hold' op het punt, dan 'dur' reizen naar het volgende
     local segs, total = {}, 0.0
     for i = startIndex, #points - 1 do
         segs[#segs + 1] = { a = i, b = i + 1, start = total, hold = points[i].hold, dur = points[i].dur }
         total = total + points[i].hold + points[i].dur
     end
     if not s.loop then total = total + points[#points].hold end
+    return { points = points, segs = segs, total = total, s = s }
+end
+
+--- Camera-positie op tijdstip t (seconden) langs het pad.
+local function stateAt(path, t)
+    local points, segs, s = path.points, path.segs, path.s
+    local seg = segs[#segs]
+    for _, sg in ipairs(segs) do
+        if t < sg.start + sg.hold + sg.dur then seg = sg break end
+    end
+    local localT = t - seg.start
+    local a, b = points[seg.a], points[seg.b]
+    if localT <= seg.hold then return a end
+    local k = EASE[a.ease](math.min(1.0, (localT - seg.hold) / seg.dur))
+    local out = {}
+    if s.smooth ~= false and #points > 2 then
+        local n = #points
+        local p0, p3 = points[math.max(1, seg.a - 1)], points[math.min(n, seg.b + 1)]
+        for _, key in ipairs(KEYS) do out[key] = catmull(p0[key], a[key], b[key], p3[key], k) end
+    else
+        for _, key in ipairs(KEYS) do out[key] = lerp(a[key], b[key], k) end
+    end
+    return out
+end
+
+--- Scherptediepte (onscherpe achtergrond) op een camera.
+local function applyDof(cam, s)
+    if s and s.dof then
+        local focus = math.max(0.5, tonumber(s.dofFocus) or 8.0)
+        SetCamUseShallowDofMode(cam, true)
+        SetCamNearDof(cam, focus * 0.55)
+        SetCamFarDof(cam, focus * 1.6)
+        SetCamDofStrength(cam, math.max(0.0, math.min(1.0, tonumber(s.dofStrength) or 0.8)))
+        return true
+    end
+    SetCamUseShallowDofMode(cam, false)
+    return false
+end
+
+-- ------------------------------------------------------------
+--  Afspelen
+-- ------------------------------------------------------------
+
+--- Speelt een scène af. Blokkeert tot het klaar of gestopt is.
+local function playScene(scene, startIndex)
+    if playing then return end
+    local path = buildPath(scene, startIndex)
+    if not path then return notify(L('need_points'), 'error') end
+    local s, total = path.s, path.total
 
     playing = true
     stopRequested = false
@@ -296,6 +345,7 @@ local function playScene(scene, startIndex)
     SetCamActive(cam, true)
     RenderScriptCams(true, false, 0, true, true)
     if s.shake and s.shake ~= '' and (s.shakeAmp or 0) > 0 then ShakeCam(cam, s.shake, s.shakeAmp + 0.0) end
+    local dof = applyDof(cam, s)
     applyEffects(s)
     if s.hidePlayer then SetEntityVisible(ped, false, false) end
     FreezeEntityPosition(ped, true)
@@ -303,32 +353,10 @@ local function playScene(scene, startIndex)
     Config.OnStart()
     TriggerEvent('nijmegen-cinematics:started', scene.name)
     local marks = {}
-    for _, sg in ipairs(segs) do marks[#marks + 1] = sg.start / math.max(total, 0.01) end
-    nui('playStart', { bars = s.bars or 0, total = total, marks = marks, name = scene.name, editor = wasEditor })
+    for _, sg in ipairs(path.segs) do marks[#marks + 1] = sg.start / math.max(total, 0.01) end
+    nui('playStart', { bars = s.bars or 0, total = total, marks = marks, name = scene.name, editor = wasEditor, texts = scene.texts or {}, loop = s.loop })
 
-    local function stateAt(t)
-        local seg = segs[#segs]
-        for _, sg in ipairs(segs) do
-            if t < sg.start + sg.hold + sg.dur then seg = sg break end
-        end
-        local local_t = t - seg.start
-        local a, b = points[seg.a], points[seg.b]
-        if local_t <= seg.hold then return a end
-        local k = math.min(1.0, (local_t - seg.hold) / seg.dur)
-        k = EASE[a.ease](k)
-        local out = {}
-        if s.smooth ~= false and #points > 2 then
-            local n = #points
-            local function idx(i) return math.max(1, math.min(n, i)) end
-            local p0, p3 = points[idx(seg.a - 1)], points[idx(seg.b + 1)]
-            for _, key in ipairs(KEYS) do out[key] = catmull(p0[key], a[key], b[key], p3[key], k) end
-        else
-            for _, key in ipairs(KEYS) do out[key] = lerp(a[key], b[key], k) end
-        end
-        return out
-    end
-
-    local first = stateAt(0.0)
+    local first = stateAt(path, 0.0)
     SetCamCoord(cam, first.x, first.y, first.z)
     SetCamRot(cam, first.rx, first.ry, first.rz, 2)
     SetCamFov(cam, first.fov)
@@ -348,11 +376,12 @@ local function playScene(scene, startIndex)
                 break
             end
         end
-        local st = stateAt(t)
+        local st = stateAt(path, t)
         SetCamCoord(cam, st.x, st.y, st.z)
         SetCamRot(cam, st.rx, st.ry, st.rz, 2)
         SetCamFov(cam, st.fov)
         SetFocusPosAndVel(st.x, st.y, st.z, 0.0, 0.0, 0.0)
+        if dof then SetUseHiDof() end
 
         DisableAllControlActions(0)
         EnableControlAction(0, 249, true)
@@ -360,7 +389,7 @@ local function playScene(scene, startIndex)
         if IsDisabledControlJustPressed(0, 177) or IsDisabledControlJustPressed(0, 200) or IsDisabledControlJustPressed(0, 322) then
             stopRequested = true
         end
-        if GetGameTimer() - lastUi > 80 then
+        if GetGameTimer() - lastUi > 50 then
             lastUi = GetGameTimer()
             nui('progress', { t = t, total = total })
         end
@@ -391,6 +420,70 @@ local function playScene(scene, startIndex)
     if s.fade ~= false then DoScreenFadeIn(500) end
     playing = false
 end
+
+-- ------------------------------------------------------------
+--  3D-weergave in de editor: keyframes en pad in de wereld
+-- ------------------------------------------------------------
+
+local editorScene = nil      -- laatste scène uit de editor
+local editorPath = nil       -- tijdlijn daarvan (voor pad en schuifbalk)
+local selectedPoint = nil
+
+local function hexToRgb(hex)
+    local n = tonumber((hex or '#ff8c1a'):sub(2), 16) or 0xff8c1a
+    return (n >> 16) & 255, (n >> 8) & 255, n & 255
+end
+local AR, AG, AB = hexToRgb(Config.Accent)
+
+local function draw3DText(x, y, z, text, scale, r, g, b)
+    SetDrawOrigin(x, y, z, 0)
+    SetTextScale(0.0, scale)
+    SetTextFont(4)
+    SetTextProportional(true)
+    SetTextColour(r, g, b, 255)
+    SetTextOutline()
+    SetTextCentre(true)
+    BeginTextCommandDisplayText('STRING')
+    AddTextComponentSubstringPlayerName(text)
+    EndTextCommandDisplayText(0.0, 0.0)
+    ClearDrawOrigin()
+end
+
+CreateThread(function()
+    while true do
+        if editorOpen and not playing and editorScene and (editorScene.settings or {}).showPath ~= false then
+            local pts = editorScene.points or {}
+            local rad = math.pi / 180
+            for i, p in ipairs(pts) do
+                local sel = selectedPoint == i
+                local r, g, b = AR, AG, AB
+                if sel then r, g, b = 255, 255, 255 end
+                DrawMarker(28, p.x, p.y, p.z, 0, 0, 0, 0, 0, 0, 0.12, 0.12, 0.12, r, g, b, 200, false, false, 2, false, nil, nil, false)
+                -- kijkrichting van de camera
+                local cx = math.cos(p.rx * rad)
+                local fx, fy, fz = -math.sin(p.rz * rad) * math.abs(cx), math.cos(p.rz * rad) * math.abs(cx), math.sin(p.rx * rad)
+                DrawLine(p.x, p.y, p.z, p.x + fx * 1.5, p.y + fy * 1.5, p.z + fz * 1.5, r, g, b, 255)
+                draw3DText(p.x, p.y, p.z + 0.35, ('%d'):format(i), sel and 0.55 or 0.45, r, g, b)
+                if sel then
+                    draw3DText(p.x, p.y, p.z + 0.18, ('%.1fs · FOV %d'):format(p.dur or 0, math.floor(p.fov or 50)), 0.3, 255, 255, 255)
+                end
+            end
+            -- het pad zelf
+            if editorPath then
+                local steps = math.min(400, math.max(20, math.floor(editorPath.total * 12)))
+                local prev = stateAt(editorPath, 0.0)
+                for i = 1, steps do
+                    local cur = stateAt(editorPath, editorPath.total * i / steps)
+                    DrawLine(prev.x, prev.y, prev.z, cur.x, cur.y, cur.z, AR, AG, AB, 170)
+                    prev = cur
+                end
+            end
+            Wait(0)
+        else
+            Wait(300)
+        end
+    end
+end)
 
 -- ------------------------------------------------------------
 --  Editor openen / sluiten
@@ -475,7 +568,27 @@ end)
 
 RegisterNUICallback('preview', function(s, cb)
     preview = s or {}
-    if editorOpen and not playing then applyEffects(preview) end
+    if editorOpen and not playing then
+        applyEffects(preview)
+        if fc.cam then applyDof(fc.cam, preview) end
+    end
+    cb('ok')
+end)
+
+-- editor stuurt de scène bij elke wijziging (voor 3D-weergave en schuifbalk)
+RegisterNUICallback('scene', function(d, cb)
+    editorScene = d.scene
+    selectedPoint = d.selected and (d.selected + 1) or nil
+    editorPath = editorScene and buildPath(editorScene, 1) or nil
+    cb({ total = editorPath and editorPath.total or 0 })
+end)
+
+-- schuifbalk: camera naar tijdstip t op het pad
+RegisterNUICallback('scrub', function(d, cb)
+    if editorOpen and not playing and editorPath and fc.cam then
+        local st = stateAt(editorPath, math.max(0.0, math.min(editorPath.total, tonumber(d.t) or 0.0)))
+        setFreecam(st)
+    end
     cb('ok')
 end)
 
