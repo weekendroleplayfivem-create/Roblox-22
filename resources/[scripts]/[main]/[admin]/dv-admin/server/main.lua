@@ -18,12 +18,26 @@ local frozen = {}
 local function saveBans() SaveResourceFile(RES, 'data/bans.json', json.encode(bans), -1) end
 local function saveWarns() SaveResourceFile(RES, 'data/warns.json', json.encode(warns), -1) end
 
+local ESX
+CreateThread(function()
+    if GetResourceState('es_extended') == 'started' then
+        ESX = exports['es_extended']:getSharedObject()
+    end
+end)
+
+--- Rang: hoogste van ACE-rechten en ESX-groep (Config.EsxGroups).
 local function getLevel(src)
     if src == 0 then return 3 end
-    if IsPlayerAceAllowed(src, 'dvadmin.owner') then return 3 end
-    if IsPlayerAceAllowed(src, 'dvadmin.admin') then return 2 end
-    if IsPlayerAceAllowed(src, 'dvadmin.mod') then return 1 end
-    return 0
+    local level = 0
+    if IsPlayerAceAllowed(src, 'dvadmin.owner') then level = 3
+    elseif IsPlayerAceAllowed(src, 'dvadmin.admin') then level = 2
+    elseif IsPlayerAceAllowed(src, 'dvadmin.mod') then level = 1 end
+    local xPlayer = ESX and ESX.GetPlayerFromId(src)
+    if xPlayer then
+        local g = Config.EsxGroups[xPlayer.getGroup()] or 0
+        if g > level then level = g end
+    end
+    return level
 end
 
 local function name(src)
@@ -215,6 +229,21 @@ Actions.players = function(src)
             frozen = frozen[id] or false,
             playtime = joinedAt[id] and (os.time() - joinedAt[id]) or 0,
             self = id == src,
+            esx = (function()
+                local x = ESX and ESX.GetPlayerFromId(id)
+                if not x then return nil end
+                local job = x.getJob() or {}
+                local cash, bank, black = 0, 0, 0
+                for _, a in ipairs(x.getAccounts() or {}) do
+                    if a.name == 'money' then cash = a.money elseif a.name == 'bank' then bank = a.money elseif a.name == 'black_money' then black = a.money end
+                end
+                return {
+                    name = x.getName and x.getName() or nil,
+                    job = (job.label or job.name or '?') .. (job.grade_label and (' · ' .. job.grade_label) or ''),
+                    cash = math.floor(cash), bank = math.floor(bank), black = math.floor(black),
+                    group = x.getGroup(),
+                }
+            end)(),
         }
     end
     table.sort(list, function(a, b) return a.id < b.id end)
@@ -394,6 +423,48 @@ Actions.spawnVehicle = function(src, d)
     if model == '' then return { ok = false, msg = 'Geef een modelnaam op' } end
     log(src, 'Voertuig gespawnd', nil, model)
     return { ok = true }
+end
+
+-- ESX: geld geven en baan instellen
+Actions.giveMoney = function(src, d)
+    if not ESX then return { ok = false, msg = 'ESX is niet gestart' } end
+    local target, err = checkTarget(src, d.target, true)
+    if not target then return { ok = false, msg = err } end
+    local x = ESX.GetPlayerFromId(target)
+    if not x then return { ok = false, msg = 'Speler is nog niet geladen' } end
+    local account = ({ money = true, bank = true, black_money = true })[d.account] and d.account or 'money'
+    local amount = math.floor(tonumber(d.amount) or 0)
+    if amount < 1 or amount > 10000000 then return { ok = false, msg = 'Ongeldig bedrag' } end
+    x.addAccountMoney(account, amount, 'dv-admin door ' .. name(src))
+    log(src, 'Geld gegeven', target, ('%s %d'):format(account, amount))
+    return { ok = true, msg = ('€ %d (%s) gegeven aan %s'):format(amount, account, name(target)) }
+end
+
+Actions.setJob = function(src, d)
+    if not ESX then return { ok = false, msg = 'ESX is niet gestart' } end
+    local target, err = checkTarget(src, d.target, true)
+    if not target then return { ok = false, msg = err } end
+    local x = ESX.GetPlayerFromId(target)
+    if not x then return { ok = false, msg = 'Speler is nog niet geladen' } end
+    local job = tostring(d.job or ''):lower():gsub('[^%w_]', '')
+    local grade = math.floor(tonumber(d.grade) or 0)
+    if not ESX.DoesJobExist(job, grade) then return { ok = false, msg = ('Baan "%s" met rang %d bestaat niet'):format(job, grade) } end
+    x.setJob(job, grade)
+    log(src, 'Baan ingesteld', target, ('%s %d'):format(job, grade))
+    return { ok = true, msg = name(target) .. ' is nu ' .. job .. ' (' .. grade .. ')' }
+end
+
+Actions.jobs = function()
+    if not ESX then return { ok = true, jobs = {} } end
+    local list = {}
+    for jname, j in pairs(ESX.GetJobs() or {}) do
+        local grades = {}
+        for g, gd in pairs(j.grades or {}) do grades[#grades + 1] = { grade = tonumber(g), label = gd.label } end
+        table.sort(grades, function(a, b) return a.grade < b.grade end)
+        list[#list + 1] = { name = jname, label = j.label, grades = grades }
+    end
+    table.sort(list, function(a, b) return a.label < b.label end)
+    return { ok = true, jobs = list }
 end
 
 Actions.announce = function(src, d)

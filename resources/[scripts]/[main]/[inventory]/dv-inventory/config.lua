@@ -1,5 +1,43 @@
 Config = {}
 
+-- Framework: 'esx' (standaard), 'auto', 'qb' of 'standalone'
+-- Bij ESX blijft ESX de baas over items, wapens en geld: alle ESX-scripts (winkels, banen,
+-- esx_basicneeds, ambulance, ...) blijven gewoon werken via xPlayer.addInventoryItem enz.
+Config.Framework = 'esx'
+
+Config.Esx = {
+    -- ESX-gewicht is in kg (Config.MaxWeight = 24, items weight = 1). 1 ESX-eenheid = 1000 gram.
+    WeightUnit = 1000,
+    -- Gewicht van een wapen in een kofferbak/op de grond (ESX telt wapens niet mee voor de speler)
+    WeaponWeight = 1500,
+    -- Contant geld en zwart geld als item tonen (verplaatsen naar kofferbak, geven, weggooien)
+    MoneyAsItem = true,
+    MoneyLabel = 'Contant geld',
+    MoneyDesc = 'Je ESX-contant geld.',
+    BlackMoneyLabel = 'Zwart geld',
+    -- ESX-groepen die /giveitem en /clearinv mogen gebruiken
+    AdminGroups = { admin = true, superadmin = true, owner = true },
+    -- Plaatjes voor ESX-items die niet in Config.Items staan
+    Icons = {
+        bread = '🍞', water = '💧', phone = '📱', radio = '📻', bandage = '🩹', medikit = '🧰',
+        fixkit = '🔧', fixtool = '🔧', carokit = '🧽', carotool = '🧽', blowpipe = '🔥', gazbottle = '🛢️',
+        alive_chicken = '🐔', slaughtered_chicken = '🍗', packaged_chicken = '🍗', fish = '🐟',
+        stone = '🪨', washed_stone = '🪨', copper = '🟫', iron = '⚙️', gold = '🥇', diamond = '💎',
+        wood = '🪵', cutted_wood = '🪵', packaged_plank = '🪵', petrol = '⛽', petrol_raffin = '⛽', essence = '⛽',
+        wool = '🧶', fabric = '🧵', clothe = '👕', cannabis = '🌿', marijuana = '🌿', coke = '❄️', meth = '🧪', opium = '🌺',
+        lockpick = '🗝️', weed = '🌿', beer = '🍺', wine = '🍷', vodka = '🍸', whisky = '🥃', tequila = '🥃',
+        cigarett = '🚬', cigarette = '🚬', lighter = '🔥', chips = '🥔', sandwich = '🥪', burger = '🍔', hamburger = '🍔',
+        chocolate = '🍫', coffee = '☕', icetea = '🧋', cola = '🥤', soda = '🥤', apple = '🍎', banana = '🍌',
+    },
+    IconPatterns = {
+        ['^weapon_knife'] = '🔪', ['^weapon_dagger'] = '🗡️', ['^weapon_bat'] = '🏏', ['^weapon_flashlight'] = '🔦',
+        ['^weapon_hammer'] = '🔨', ['^weapon_wrench'] = '🔧', ['^weapon_crowbar'] = '🪛', ['^weapon_petrolcan'] = '⛽',
+        ['^weapon_stungun'] = '⚡', ['^weapon_fireextinguisher'] = '🧯', ['^weapon_'] = '🔫',
+        ['ammo'] = '📦', ['drink'] = '🥤', ['food'] = '🍔', ['key'] = '🔑', ['card'] = '💳',
+    },
+    DefaultIcon = '📦',
+}
+
 -- Openen (spelers kunnen de toets aanpassen in GTA > Instellingen > Toetsen > FiveM)
 Config.OpenKey = 'I'
 

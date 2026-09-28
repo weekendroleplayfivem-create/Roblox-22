@@ -9,12 +9,31 @@ local function save()
     SaveResourceFile(RES, 'data/scenes.json', json.encode(scenes), -1)
 end
 
+local ESX
+CreateThread(function()
+    if GetResourceState('es_extended') == 'started' then
+        ESX = exports['es_extended']:getSharedObject()
+    end
+end)
+
+local function esxGroup(src)
+    local xPlayer = ESX and ESX.GetPlayerFromId(src)
+    return xPlayer and xPlayer.getGroup() or nil
+end
+
 local function hasAccess(src)
     if Config.Everyone then return true end
     for _, ace in ipairs(Config.Aces) do
         if IsPlayerAceAllowed(src, ace) then return true end
     end
-    return false
+    local g = esxGroup(src)
+    return g ~= nil and Config.EsxGroups[g] == true
+end
+
+local function canBroadcast(src)
+    if IsPlayerAceAllowed(src, Config.BroadcastAce) then return true end
+    local g = esxGroup(src)
+    return g ~= nil and Config.EsxBroadcastGroups[g] == true
 end
 
 local function clean(v, max)
@@ -85,7 +104,7 @@ end
 local Actions = {}
 
 Actions.open = function(src)
-    return { ok = true, broadcast = IsPlayerAceAllowed(src, Config.BroadcastAce) }
+    return { ok = true, broadcast = canBroadcast(src) }
 end
 
 Actions.list = function()
@@ -124,7 +143,7 @@ Actions.delete = function(src, d)
 end
 
 Actions.broadcast = function(src, d)
-    if not IsPlayerAceAllowed(src, Config.BroadcastAce) then return { ok = false, msg = L('no_access') } end
+    if not canBroadcast(src) then return { ok = false, msg = L('no_access') } end
     local s = sanitize(d.scene)
     if not s then return { ok = false, msg = L('need_points') } end
     TriggerClientEvent('nijmegen-cinematics:client:play', -1, s)

@@ -1,14 +1,22 @@
 # dv-inventory · Dayverse Roleplay
 
-Inventory in dezelfde oranje stijl als `dv-hud`, `dv-admin` en `dv-reports`. Werkt standalone, met QBCore of met ESX. Er is geen database nodig: alles wordt opgeslagen in `data/inventories.json`.
+Inventory in dezelfde oranje stijl als `dv-hud`, `dv-admin` en `dv-reports`, gemaakt voor **ESX** (`Config.Framework = 'esx'`).
 
-> **Let op:** gebruik maar één inventory tegelijk. Zet `qb-inventory`, `ox_inventory`, `esx_inventoryhud` of een vergelijkbaar script uit. Andere scripts die items geven via die oude inventory moet je ombouwen naar de exports hieronder.
+**ESX blijft de baas.** Je items, wapens (loadout), contant en zwart geld komen uit `xPlayer`, en alles wat je in de inventory doet wordt via ESX uitgevoerd (`addInventoryItem`, `removeInventoryItem`, `addWeapon`, `removeWeapon`, `addAccountMoney`, ...). Daardoor blijven winkels, banen, `esx_basicneeds`, ambulance enz. gewoon werken, zonder iets om te bouwen.
+
+- Items met een ESX-gebruik (`ESX.RegisterUsableItem`, bv. bread/water) worden via `ESX.UseItem` gebruikt.
+- Items die niet in ESX bruikbaar zijn maar wel een effect in `Config.Items` hebben (verband, EHBO, vest, ...) gebruiken dat effect.
+- Items met `can_remove = 0` kun je niet weggeven of weggooien.
+- Kofferbak, dashboardkastje, grond en stashes bewaart dv-inventory zelf in `data/inventories.json`.
+- Importeer `esx_items.sql` voor de extra items. ESX-gewicht: 1 eenheid = 1 kg (`Config.Esx.WeightUnit`).
+- Zet `ox_inventory` of een ander inventory-script uit; de F2-inventory van ESX mag blijven.
 
 ## Installatie
 
 1. Zet de map `dv-inventory` in je resources, bv. `resources/[scripts]/[main]/[inventory]/dv-inventory`.
-2. In `server.cfg` (of `dayverse.cfg`): `ensure dv-inventory` (na je framework).
-3. Zorg dat de server mag schrijven in `data/`.
+2. Importeer `esx_items.sql` in je database.
+3. In `server.cfg` (of `dayverse.cfg`): `ensure dv-inventory` **na** `ensure es_extended`.
+4. Zorg dat de server mag schrijven in `data/`.
 
 ## Gebruik
 

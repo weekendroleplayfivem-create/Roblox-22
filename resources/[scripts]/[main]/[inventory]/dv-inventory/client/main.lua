@@ -9,6 +9,8 @@ local equipped = nil             -- { slot, name, hash }
 local drops = {}                 -- [id] = { coords, obj }
 local openedTrunk = nil          -- voertuig waarvan de kofferbak open staat
 local UNARMED = GetHashKey('WEAPON_UNARMED')
+local Defs = Config.Items          -- itemlijst; bij ESX gestuurd door de server (ESX-items, wapens, geld)
+local isEsx = false                -- ESX beheert wapens zelf (loadout)
 
 -- ------------------------------------------------------------
 --  Server-aanroepen met antwoord
@@ -159,9 +161,11 @@ local function openInventory()
         openedTrunk = nil
     end
     playerItems = res.player.items
+    if res.defs then Defs = res.defs end
+    if res.esx ~= nil then isEsx = res.esx end
     isOpen = true
     SetNuiFocus(true, true)
-    nui('open', { player = res.player, secondary = res.secondary, items = Config.Items, hotbar = Config.Hotbar })
+    nui('open', { player = res.player, secondary = res.secondary, items = Defs, hotbar = Config.Hotbar })
 end
 
 local function closeInventory()
@@ -186,9 +190,10 @@ RegisterNetEvent('dv-inventory:client:openServer', function(data)
         return
     end
     playerItems = data.player.items
+    if data.defs then Defs = data.defs end
     isOpen = true
     SetNuiFocus(true, true)
-    nui('open', { player = data.player, secondary = data.secondary, items = Config.Items, hotbar = Config.Hotbar })
+    nui('open', { player = data.player, secondary = data.secondary, items = Defs, hotbar = Config.Hotbar })
 end)
 
 -- ------------------------------------------------------------
@@ -197,7 +202,8 @@ end)
 
 local function holster()
     local ped = PlayerPedId()
-    if equipped then
+    -- bij ESX blijft het wapen in je loadout; alleen wegstoppen
+    if equipped and not isEsx then
         RemoveWeaponFromPed(ped, equipped.hash)
     end
     SetCurrentPedWeapon(ped, UNARMED, true)
@@ -212,7 +218,7 @@ RegisterNetEvent('dv-inventory:client:weapon', function(slot, name, weapon)
     end
     if equipped then holster() end
     local ped = PlayerPedId()
-    GiveWeaponToPed(ped, hash, 0, false, true)
+    if not isEsx then GiveWeaponToPed(ped, hash, 0, false, true) end
     SetCurrentPedWeapon(ped, hash, true)
     equipped = { slot = slot, name = name, hash = hash }
     nui('equipped', { slot = slot })
@@ -281,8 +287,10 @@ RegisterNetEvent('dv-inventory:client:special', function(slot, name, ammo, actio
         if weapon == UNARMED or GetPedAmmoTypeFromWeapon(ped, weapon) ~= GetHashKey(ammo.type) then
             return notify('Pak eerst het juiste wapen', 'error')
         end
-        local res = call('consume', { slot = slot, name = name })
-        if res.ok then AddAmmoToPed(ped, weapon, ammo.amount) end
+        local res = call('consume', { slot = slot, name = name, weaponHash = weapon })
+        -- bij ESX zet de server de kogels (ESX onthoudt ze in je loadout)
+        if res.ok and not res.esx then AddAmmoToPed(ped, weapon, ammo.amount) end
+        if not res.ok and res.msg then notify(res.msg, 'error') end
     elseif action == 'repair' then
         local veh = closestVehicle(5.0)
         if veh == 0 or IsPedInAnyVehicle(ped, false) then
@@ -350,6 +358,8 @@ end
 -- ------------------------------------------------------------
 
 RegisterNetEvent('dv-inventory:client:update', function(data)
+    if data.defs then Defs = data.defs end
+    if data.esx ~= nil then isEsx = data.esx end
     if data.player then
         playerItems = data.player.items
         checkEquipped()
@@ -362,7 +372,7 @@ RegisterNetEvent('dv-inventory:client:update', function(data)
 end)
 
 RegisterNetEvent('dv-inventory:client:itembox', function(name, delta)
-    local def = Config.Items[name]
+    local def = Defs[name]
     if def then nui('itembox', { label = def.label, icon = def.icon, delta = delta }) end
 end)
 
@@ -465,6 +475,28 @@ end)
 -- nieuw karakter geladen (QBCore / ESX): drops en inventory opnieuw ophalen
 RegisterNetEvent('QBCore:Client:OnPlayerLoaded', function() TriggerServerEvent('dv-inventory:server:ready') end)
 RegisterNetEvent('esx:playerLoaded', function() TriggerServerEvent('dv-inventory:server:ready') end)
+
+-- ESX: als een ander script items, wapens of geld verandert, halen we de inventory opnieuw op
+local refreshPending = false
+local function refreshSoon()
+    if refreshPending then return end
+    refreshPending = true
+    SetTimeout(200, function()
+        refreshPending = false
+        CreateThread(function()
+            local res = call('get')
+            if res.ok and res.player then
+                playerItems = res.player.items
+                if res.defs then Defs = res.defs end
+                checkEquipped()
+                nui('update', { player = res.player })
+            end
+        end)
+    end)
+end
+for _, ev in ipairs({ 'esx:addInventoryItem', 'esx:removeInventoryItem', 'esx:setAccountMoney', 'esx:addLoadoutItem', 'esx:removeLoadoutItem', 'esx:addWeapon', 'esx:removeWeapon' }) do
+    RegisterNetEvent(ev, refreshSoon)
+end
 
 AddEventHandler('onResourceStop', function(res)
     if res ~= GetCurrentResourceName() then return end

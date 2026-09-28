@@ -32,7 +32,14 @@ Config.Permissions = {
 
     -- server
     announce = 2, healAll = 2, reviveAll = 2, clearArea = 2,
+
+    -- ESX
+    giveMoney = 3, setJob = 2, jobs = 1,
 }
+
+-- ESX-groepen als staff-rang (1 = moderator, 2 = admin, 3 = eigenaar).
+-- Zet iemands groep in ESX met /setgroup <id> admin (of in de database).
+Config.EsxGroups = { mod = 1, moderator = 1, helper = 1, admin = 2, superadmin = 3, owner = 3 }
 
 Config.RankNames = { [1] = 'Moderator', [2] = 'Admin', [3] = 'Eigenaar' }
 

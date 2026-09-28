@@ -731,5 +731,11 @@ code {
 .dot.live { background: var(--danger); box-shadow: 0 0 8px var(--danger); animation: blink 1.2s infinite; }
 @keyframes blink { 50% { opacity: .3; } }
 
+/* ESX-gegevens in spelerdetail */
+.esx-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.esx-grid div { padding: 7px 9px; border-radius: 8px; background: var(--bg); }
+.esx-grid span { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-mute); font-weight: 600; }
+.esx-grid b { font-weight: 600; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+
 /* Voorbeeld in de browser */
 body.preview { background: radial-gradient(ellipse at 30% 20%, #3b4a5e 0%, #1a222d 55%, #0d1117 100%); }

@@ -1,82 +1,85 @@
-DAYVERSE ROLEPLAY - INSTALLATIE
-================================
+DAYVERSE ROLEPLAY (ESX) - INSTALLATIE
+======================================
+
+Gemaakt voor ESX (es_extended, getest tegen ESX Legacy 1.15). Werkt ook met oudere
+ESX Legacy-versies (1.9+), omdat alleen de standaard xPlayer-functies gebruikt worden.
 
 Inhoud van deze zip
 -------------------
-  resources/                                       Alles kant-en-klaar in de juiste mappen (makkelijkst)
-    [scripts]/[main]/[hud]/dv-hud                  HUD (status, snelheidsmeter, kompas, /hud instellingen)
-    [scripts]/[main]/[inventory]/dv-inventory      Inventory (I, hotbar 1-5, kofferbak, grond)
-    [scripts]/[main]/[admin]/dv-admin              Staffmenu (/staff of F10)
-    [scripts]/[main]/[admin]/dv-reports            Reportsysteem (/report, /reports)
+  resources/                                           Alles kant-en-klaar in de juiste mappen
+    [scripts]/[main]/[hud]/dv-hud                      HUD (/hud)
+    [scripts]/[main]/[inventory]/dv-inventory          Inventory (I, hotbar 1-5)
+    [scripts]/[main]/[admin]/dv-admin                  Staffmenu (/staff of F10)
+    [scripts]/[main]/[admin]/dv-reports                Reports (/report, /reports)
     [scripts]/[main]/[cinematics]/nijmegen-cinematics  Cinematic maker (/cinematic)
-  zips/                                            Dezelfde resources als losse zip-bestanden
-    dv-hud.zip, dv-inventory.zip, dv-admin.zip, dv-reports.zip, nijmegen-cinematics.zip
-  dayverse.cfg                                     Alles wat in je server-config moet
-  INSTALLATIE.txt                                  Dit bestand
+  zips/                                                Dezelfde resources als losse zips
+  esx_items.sql                                        Extra items voor ESX (verband, EHBO, vest, ...)
+  dayverse.cfg                                         Alles voor je server-config
+  INSTALLATIE.txt                                      Dit bestand
 
 Je hebt OF de map "resources" OF de losse zips nodig, niet allebei.
 
 
 Stap 1 - Oude versies weghalen
 ------------------------------
-Stop je server. Verwijder (als ze bestaan) de oude mappen:
-  resources/[scripts]/[main]/[hud]/wk-hud
-  resources/[scripts]/[main]/[admin]/wk-admin
-Had je al bans/warns? Kopieer eerst wk-admin/data/bans.json en warns.json,
-en zet ze na stap 2 in dv-admin/data/ (overschrijven).
+Stop je server. Verwijder oude mappen wk-hud / wk-admin als die er nog staan.
+Had je al bans/warns in wk-admin? Kopieer data/bans.json en data/warns.json naar dv-admin/data/.
 
-Heb je nog een andere HUD aanstaan (bv. qb-hud, esx_hud)? Zet die uit,
-anders zie je twee HUD's.
-
-Gebruik je nu qb-inventory, ox_inventory of esx_inventoryhud? Zet die uit
-(# voor de ensure-regel). Er kan maar één inventory tegelijk actief zijn.
-Let op: spullen uit je oude inventory worden niet overgezet.
+Zet uit (# voor de ensure-regel in server.cfg):
+  - een andere HUD (bv. esx_hud)
+  - ox_inventory of een ander inventory-script (dv-inventory gebruikt de standaard ESX-inventory)
 
 
-Stap 2 - Bestanden neerzetten
------------------------------
-Kopieer de map "resources" uit deze zip over de "resources"-map van je server heen.
-Kopieer dayverse.cfg naar dezelfde map als je server.cfg.
+Stap 2 - Bestanden en database
+------------------------------
+1. Kopieer de map "resources" over de "resources"-map van je server.
+2. Importeer esx_items.sql in je ESX-database (HeidiSQL / phpMyAdmin).
+   Dit voegt de extra items toe; bestaande items (bread, water) blijven zoals ze zijn.
+3. Kopieer dayverse.cfg naast je server.cfg.
 
 
 Stap 3 - Config
 ---------------
-1. Open dayverse.cfg en vervang VERVANG_MIJ door jouw license
-   (bv. identifier.license:3f9a1c7e2b...). Voeg een regel toe voor elk staflid.
-2. Open server.cfg en zet onderaan (na je framework, bv. na "ensure qb-core"):
+1. In server.cfg, NA "ensure es_extended" en je andere ESX-scripts:
        exec dayverse.cfg
-3. Optioneel: zet je Discord-webhook in dayverse.cfg.
+2. Geef jezelf een staff-groep via de serverconsole:
+       setgroup <jouw-id> owner      (bij oudere ESX: superadmin)
+   Moderators: setgroup <id> mod  -  Admins: setgroup <id> admin
 
 
 Stap 4 - Starten en testen
 --------------------------
-Start de server en join.
-  - HUD verschijnt linksonder/rechtsonder.   /hud = instellingen
-  - Inventory: I (hotbar met 1-5)
-  - Staffmenu: /staff of F10                   (alleen met een staff-rang)
-  - Reports:   /report als speler, /reports als staff
+Start de server, kies je karakter en test:
+  - HUD: geld, baan en honger/dorst (esx_status) linksboven/-onder
+  - I: inventory met je ESX-items, wapens, contant en zwart geld
+  - Brood/water gebruiken -> esx_basicneeds doet de rest
+  - /staff of F10: staffmenu (ESX-naam, baan, geld per speler; geld geven, baan instellen)
+  - /report en /reports, /cinematic
 
-Werkt /staff niet? Controleer in de serverconsole:
-  - staat "dv-admin" gestart? (typ: ensure dv-admin)
-  - klopt je license in dayverse.cfg? Typ in de serverconsole:  list_principals
-  - de rechten gelden pas na opnieuw joinen.
+Werkt iets niet? Kijk in de F8-console (client) en de serverconsole naar regels met
+[dv-hud], [dv-inventory], [dv-admin], [dv-reports] of [nijmegen-cinematics].
+Staat er "es_extended is niet gestart"? Dan staat "exec dayverse.cfg" te hoog in server.cfg.
+
+
+Hoe de inventory met ESX samenwerkt
+-----------------------------------
+- ESX blijft de baas: items, wapens (loadout), contant en zwart geld komen uit xPlayer.
+- Alles wat je in de inventory doet (verplaatsen, geven, weggooien, kofferbak) wordt via
+  ESX uitgevoerd (addInventoryItem, removeWeapon, addAccountMoney, ...).
+  Daardoor blijven winkels, banen, esx_basicneeds, ambulance enz. gewoon werken.
+- Items met een ESX-gebruik (bv. bread/water van esx_basicneeds) worden via ESX gebruikt.
+- Items met can_remove = 0 in de database kun je niet weggeven of weggooien.
+- ESX-gewicht: 1 eenheid in de items-tabel = 1 kg (Config.Esx.WeightUnit).
+- De F2-inventory van ESX blijft ook werken en laat hetzelfde zien.
 
 
 Commando's
 ----------
-  /hud          HUD-instellingen (grootte, kleur, km/u of mph, onderdelen aan/uit)
-  /cinema       filmmodus aan/uit
-  /togglehud    HUD aan/uit
-  B             gordel om/af (aan te passen in GTA > Instellingen > Toetsen > FiveM)
-  I             inventory (achter een auto: kofferbak, in een auto: dashboardkastje)
-  1 - 5         hotbar
-  /giveitem <id> <item> [aantal]   item geven (admin)
-  /clearinv <id>                   inventory leegmaken (admin)
-  /staff, F10   staffmenu
-  /noclip       noclip aan/uit (staff)
-  /report       report maken of je lopende report openen
-  /reports      reportpaneel (staff)
+  /hud          HUD-instellingen          /cinema      filmmodus        /togglehud   HUD aan/uit
+  B             gordel                    I            inventory        1 - 5        hotbar
+  /staff, F10   staffmenu                 /noclip      noclip (staff)
+  /report       report maken              /reports     reportpaneel (staff)
   /cinematic    cinematic maker (staff)
-  dvunban DV-1234   (serverconsole) ban opheffen
-
-Meer uitleg staat in de README.md in elke resource-map.
+  /giveitem <id> <item> [aantal]          item geven (ESX admin)
+  /clearinv <id>                          inventory leegmaken (ESX admin)
+  dvunban DV-1234                         (serverconsole) ban opheffen

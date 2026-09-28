@@ -1,7 +1,8 @@
 Config = {}
 
--- 'auto' detecteert qb-core / qbx_core / es_extended. Of kies: 'qb', 'qbx', 'esx', 'standalone'
-Config.Framework = 'auto'
+-- Framework: 'esx' (standaard). Of 'auto', 'qb', 'qbx', 'standalone'
+-- ESX: geld (contant/bank), baan en honger/dorst (esx_status) worden automatisch getoond.
+Config.Framework = 'esx'
 
 -- 'auto' detecteert het brandstofscript. Of kies: 'native', 'LegacyFuel', 'ox_fuel', 'ps-fuel', 'cdn-fuel', 'lj-fuel'
 Config.FuelSystem = 'auto'

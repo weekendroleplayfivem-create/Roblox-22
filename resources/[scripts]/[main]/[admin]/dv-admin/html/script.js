@@ -115,6 +115,10 @@ function modal({ title, text = '', fields = [], ok = 'Bevestigen', danger = fals
         if (f.label) wrap.insertAdjacentHTML('beforeend', `<div class="field-label">${esc(f.label)}</div>`);
         if (f.type === 'textarea') {
             wrap.insertAdjacentHTML('beforeend', `<textarea name="${f.name}" rows="3" maxlength="500" placeholder="${esc(f.placeholder || '')}" required></textarea>`);
+        } else if (f.type === 'select') {
+            wrap.insertAdjacentHTML('beforeend', `<select name="${f.name}">${f.options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}</select>`);
+        } else if (f.type === 'number') {
+            wrap.insertAdjacentHTML('beforeend', `<input name="${f.name}" type="number" min="${f.min ?? 0}" placeholder="${esc(f.placeholder || '')}" required autocomplete="off">`);
         } else if (f.type === 'chips') {
             const chips = f.options.map((o, i) =>
                 `<button type="button" class="chip${i === (f.default ?? 0) ? ' active' : ''}" data-v="${esc(o.value)}">${esc(o.label)}</button>`).join('');
@@ -301,7 +305,7 @@ function renderPlayers() {
             <span class="p-id">${p.id}</span>
             <span class="p-name">
                 <b><span class="nm">${esc(p.name)}</span>${p.self ? '<span class="badge you">jij</span>' : ''}${p.staff ? `<span class="badge staff">${esc(p.staff)}</span>` : ''}${p.frozen ? '<span class="badge frozen">bevroren</span>' : ''}${p.warns?.length ? `<span class="badge warns">${p.warns.length} warn</span>` : ''}</b>
-                <small>${fmtTime(p.playtime)} online${p.distance != null ? ` · ${p.distance}m` : ''}</small>
+                <small>${p.esx && p.esx.name ? `${esc(p.esx.name)} · ` : ''}${fmtTime(p.playtime)} online${p.distance != null ? ` · ${p.distance}m` : ''}</small>
             </span>
             <span class="hp">
                 <span class="hp-bar"><i style="width:${p.health}%"></i></span>
@@ -329,6 +333,8 @@ const PLAYER_ACTIONS = [
     ['freeze', 'Bevriezen', 'soft'],
     ['dm', 'Bericht', 'soft'],
     ['warn', 'Waarschuw', 'soft warn-soft'],
+    ['giveMoney', 'Geld geven', 'soft'],
+    ['setJob', 'Baan', 'soft'],
     ['kill', 'Doden', 'soft danger-soft'],
     ['kick', 'Kick', 'soft danger-soft'],
     ['ban', 'Ban', 'danger'],
@@ -360,7 +366,8 @@ function renderDetail(force = false) {
     const ids = [['license', p.license], ['discord', p.discord], ['steam', p.steam], ['fivem', p.fivem]].filter(([, v]) => v);
     const actions = PLAYER_ACTIONS
         .filter(([a]) => state.perms[a])
-        .filter(([a]) => !p.self || ['heal', 'revive', 'dm'].includes(a))
+        .filter(([a]) => !p.self || ['heal', 'revive', 'dm', 'giveMoney', 'setJob'].includes(a))
+        .filter(([a]) => p.esx || !['giveMoney', 'setJob'].includes(a))
         .map(([a, label, cls]) => `<button class="btn ${cls}" data-a="${a}">${a === 'freeze' && p.frozen ? 'Ontdooien' : label}</button>`)
         .join('');
 
@@ -379,6 +386,14 @@ function renderDetail(force = false) {
                 <div class="stat"><b data-stat="ping">${p.ping}</b><span>Ping</span></div>
                 <div class="stat"><b data-stat="dist">${p.distance != null ? `${p.distance}m` : '—'}</b><span>Afstand</span></div>
             </div>
+            ${p.esx ? `<div class="pd-section"><h3>ESX</h3><div class="esx-grid">
+                <div><span>Karakter</span><b>${esc(p.esx.name || '—')}</b></div>
+                <div><span>Baan</span><b>${esc(p.esx.job)}</b></div>
+                <div><span>Contant</span><b>€ ${Number(p.esx.cash).toLocaleString('nl-NL')}</b></div>
+                <div><span>Bank</span><b>€ ${Number(p.esx.bank).toLocaleString('nl-NL')}</b></div>
+                ${p.esx.black ? `<div><span>Zwart geld</span><b>€ ${Number(p.esx.black).toLocaleString('nl-NL')}</b></div>` : ''}
+                <div><span>Groep</span><b>${esc(p.esx.group || 'user')}</b></div>
+            </div></div>` : ''}
             ${actions ? `<div class="pd-section"><h3>Acties</h3><div class="pd-actions">${actions}</div></div>` : ''}
             <div class="pd-section">
                 <h3>Identifiers <small style="text-transform:none;letter-spacing:0">(klik om te kopiëren)</small></h3>
@@ -425,6 +440,28 @@ async function playerAction(a, p) {
         const r = await modal({ title: `Bericht aan ${p.name}`, fields: [{ name: 'message', type: 'textarea', placeholder: 'Je bericht…' }], ok: 'Versturen' });
         if (!r) return;
         data.message = r.message;
+    } else if (a === 'giveMoney') {
+        const r = await modal({
+            title: `Geld geven aan ${p.name}`,
+            fields: [
+                { name: 'account', label: 'Rekening', type: 'chips', options: [{ label: 'Contant', value: 'money' }, { label: 'Bank', value: 'bank' }, { label: 'Zwart geld', value: 'black_money' }] },
+                { name: 'amount', label: 'Bedrag (€)', type: 'number', min: 1, placeholder: 'Bijv. 5000' },
+            ],
+            ok: 'Geven',
+        });
+        if (!r) return;
+        data.account = r.account;
+        data.amount = +r.amount;
+    } else if (a === 'setJob') {
+        const res = await post('action', { name: 'jobs' });
+        const jobs = res?.jobs || [];
+        if (!jobs.length) return toast('Geen banen gevonden in ESX', 'error');
+        const options = [];
+        jobs.forEach((j) => (j.grades.length ? j.grades : [{ grade: 0, label: '' }]).forEach((g) => options.push({ value: `${j.name}|${g.grade}`, label: `${j.label}${g.label ? ` · ${g.label}` : ''}` })));
+        const r = await modal({ title: `Baan van ${p.name}`, text: p.esx ? `Nu: ${p.esx.job}` : '', fields: [{ name: 'job', label: 'Nieuwe baan', type: 'select', options }], ok: 'Instellen' });
+        if (!r) return;
+        [data.job, data.grade] = r.job.split('|');
+        data.grade = +data.grade;
     } else if (a === 'kill') {
         if (!await confirmBox(`${p.name} doden?`, '', true)) return;
     }
@@ -580,9 +617,9 @@ const preview = {
     flags: {},
     players: [
         { id: 1, name: 'Dayverse', ping: 24, health: 100, armor: 50, distance: 0, license: 'license:3f9a1c7e2b', discord: 'discord:28371923', warns: [], staff: 'Eigenaar', playtime: 8420, self: true },
-        { id: 4, name: 'Jayden_V', ping: 61, health: 72, armor: 0, distance: 143, license: 'license:a81cc0d2', steam: 'steam:1100001', warns: [{ reason: 'RDM bij de garage', by: 'Dayverse', date: '21-09-2026 20:14' }], playtime: 3600 },
+        { id: 4, esx: { name: 'Jayden Visser', job: 'Monteur · Leerling', cash: 1250, bank: 18400, black: 0, group: 'user' }, name: 'Jayden_V', ping: 61, health: 72, armor: 0, distance: 143, license: 'license:a81cc0d2', steam: 'steam:1100001', warns: [{ reason: 'RDM bij de garage', by: 'Dayverse', date: '21-09-2026 20:14' }], playtime: 3600 },
         { id: 7, name: 'Sanne de Boer', ping: 38, health: 100, armor: 100, distance: 1204, license: 'license:77bd21', discord: 'discord:99120', warns: [], staff: 'Moderator', playtime: 12240 },
-        { id: 12, name: 'xXSniperXx', ping: 188, health: 31, armor: 0, distance: 402, license: 'license:bb11', warns: [{ reason: 'FailRP', by: 'Sanne de Boer', date: '25-09-2026 22:01' }, { reason: 'Combat logging', by: 'Dayverse', date: '26-09-2026 19:40' }], frozen: true, playtime: 900 },
+        { id: 12, esx: { name: 'Kevin de Groot', job: 'Werkloos', cash: 90, bank: 250, black: 4200, group: 'user' }, name: 'xXSniperXx', ping: 188, health: 31, armor: 0, distance: 402, license: 'license:bb11', warns: [{ reason: 'FailRP', by: 'Sanne de Boer', date: '25-09-2026 22:01' }, { reason: 'Combat logging', by: 'Dayverse', date: '26-09-2026 19:40' }], frozen: true, playtime: 900 },
         { id: 15, name: 'Mo Bakker', ping: 92, health: 88, armor: 20, distance: 87, license: 'license:cc02', warns: [], playtime: 5400 },
     ],
     handle(name, data) {
@@ -590,6 +627,7 @@ const preview = {
         const a = data.name;
         const d = data.data || {};
         if (a === 'players') return { ok: true, players: this.players };
+        if (a === 'jobs') return { ok: true, jobs: [{ name: 'police', label: 'Politie', grades: [{ grade: 0, label: 'Aspirant' }, { grade: 1, label: 'Agent' }] }, { name: 'mechanic', label: 'Monteur', grades: [{ grade: 0, label: 'Leerling' }] }] };
         if (a === 'bans') return { ok: true, bans: [
             { id: 'DV-4821', name: 'Cheater123', reason: 'Modmenu / godmode', by: 'Dayverse', created: '20-09-2026 21:12', expires: 'Permanent' },
             { id: 'DV-0937', name: 'Kevin_R', reason: 'Meerdere keren VDM na waarschuwing', by: 'Sanne de Boer', created: '26-09-2026 18:03', expires: '03-10-2026 18:03' },

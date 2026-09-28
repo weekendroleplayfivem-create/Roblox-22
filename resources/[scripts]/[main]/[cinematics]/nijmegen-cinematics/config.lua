@@ -15,8 +15,12 @@ Config.Accent = '#ff8c1a'
 Config.Everyone = false
 Config.Aces = { 'nijmegen.cinematics', 'dvadmin.admin' }
 
+-- ESX-groepen die de editor mogen gebruiken
+Config.EsxGroups = { admin = true, superadmin = true, owner = true }
+
 -- Wie mag een scène voor ALLE spelers afspelen
 Config.BroadcastAce = 'nijmegen.cinematics.broadcast'
+Config.EsxBroadcastGroups = { superadmin = true, owner = true }
 
 -- Freecam
 Config.MaxDistance = 1500.0     -- max. afstand van je personage (0 = onbeperkt)

@@ -99,6 +99,10 @@ local function applyESXData(pd)
 end
 
 local function detectFramework()
+    if Config.Framework == 'esx' and GetResourceState('es_extended') ~= 'started' then
+        print('^1[dv-hud] Config.Framework = esx, maar es_extended is niet gestart. Zet "ensure dv-hud" NA "ensure es_extended".^0')
+        return 'standalone'
+    end
     if Config.Framework ~= 'auto' then return Config.Framework end
     if started('qbx_core') then return 'qbx' end
     if started('qb-core') then return 'qb' end
@@ -158,6 +162,15 @@ RegisterNetEvent('esx:onPlayerLogout', function() playerLoaded = false end)
 RegisterNetEvent('esx:setAccountMoney', function(account)
     if account.name == 'money' then info.cash = account.money end
     if account.name == 'bank' then info.bank = account.money end
+end)
+
+-- ESX zet dit lokaal bij elke wijziging van geld of baan (betrouwbaarder dan losse events)
+AddEventHandler('esx:setPlayerData', function(key, val)
+    if key == 'accounts' and type(val) == 'table' then
+        applyESXData({ accounts = val })
+    elseif key == 'job' and type(val) == 'table' then
+        applyESXData({ job = val })
+    end
 end)
 
 RegisterNetEvent('esx:setJob', function(job)

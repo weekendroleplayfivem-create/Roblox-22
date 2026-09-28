@@ -60,7 +60,7 @@ function itemHTML(it) {
     const d = state.defs[it.name] || { label: it.name, icon: '❔' };
     return `<div class="item" data-name="${esc(it.name)}">
         <span class="icon">${esc(d.icon || '❔')}</span>
-        ${it.count > 1 || d.stack ? `<span class="count">${it.count}x</span>` : ''}
+        ${d.account ? `<span class="count">€ ${Number(it.count).toLocaleString('nl-NL')}</span>` : (it.count > 1 || d.stack ? `<span class="count">${it.count}x</span>` : '')}
         <span class="label">${esc(d.label)}</span>
     </div>`;
 }
@@ -284,7 +284,7 @@ document.addEventListener('mousemove', (e) => {
         <h3><i>${esc(d.icon || '❔')}</i>${esc(d.label || it.name)}</h3>
         ${d.desc ? `<p>${esc(d.desc)}</p>` : ''}
         <div class="meta">
-            <span>Aantal <b>${it.count}</b></span>
+            <span>${d.account ? 'Bedrag' : 'Aantal'} <b>${d.account ? '€ ' + Number(it.count).toLocaleString('nl-NL') : it.count}</b></span>
             <span>Gewicht <b>${kg((d.weight || 0) * it.count)} kg</b></span>
         </div>
         ${d.weapon ? '<span class="tag">Wapen</span>' : d.usable ? '<span class="tag">Te gebruiken</span>' : ''}`;

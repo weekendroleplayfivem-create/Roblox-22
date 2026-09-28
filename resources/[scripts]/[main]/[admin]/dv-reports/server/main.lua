@@ -16,16 +16,36 @@ local rate = {}           -- [src] = { tijd, aantal }
 --  Helpers
 -- ------------------------------------------------------------
 
+local ESX
+CreateThread(function()
+    if GetResourceState('es_extended') == 'started' then
+        ESX = exports['es_extended']:getSharedObject()
+    end
+end)
+
+--- Rang: hoogste van ACE-rechten en ESX-groep (Config.EsxGroups).
 local function getLevel(src)
-    if IsPlayerAceAllowed(src, 'dvadmin.owner') then return 3 end
-    if IsPlayerAceAllowed(src, 'dvadmin.admin') then return 2 end
-    if IsPlayerAceAllowed(src, 'dvadmin.mod') then return 1 end
-    return 0
+    local level = 0
+    if IsPlayerAceAllowed(src, 'dvadmin.owner') then level = 3
+    elseif IsPlayerAceAllowed(src, 'dvadmin.admin') then level = 2
+    elseif IsPlayerAceAllowed(src, 'dvadmin.mod') then level = 1 end
+    local xPlayer = ESX and ESX.GetPlayerFromId(src)
+    if xPlayer then
+        local g = Config.EsxGroups[xPlayer.getGroup()] or 0
+        if g > level then level = g end
+    end
+    return level
 end
 
 local function isStaff(src) return getLevel(src) >= Config.StaffLevel end
 
-local function name(src) return GetPlayerName(src) or ('ID ' .. tostring(src)) end
+local function name(src)
+    local xPlayer = ESX and ESX.GetPlayerFromId(src)
+    local char = xPlayer and xPlayer.getName and xPlayer.getName()
+    local steam = GetPlayerName(src)
+    if char and steam and char ~= steam then return ('%s (%s)'):format(char, steam) end
+    return char or steam or ('ID ' .. tostring(src))
+end
 local function isOnline(id) return id and GetPlayerName(id) ~= nil end
 
 local function cleanText(v, max)

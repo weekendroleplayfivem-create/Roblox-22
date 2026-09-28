@@ -16,6 +16,9 @@ Config.StaffKey = ''
 ]]
 Config.StaffLevel = 1
 
+-- ESX-groepen als staff-rang (zelfde als dv-admin)
+Config.EsxGroups = { mod = 1, moderator = 1, helper = 1, admin = 2, superadmin = 3, owner = 3 }
+
 Config.Cooldown = 60          -- seconden tussen twee reports van dezelfde speler
 Config.KeepClosedHours = 6    -- hoe lang gesloten reports zichtbaar blijven
 

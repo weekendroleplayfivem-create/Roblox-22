@@ -140,6 +140,10 @@ local function doHeal()
     if GetResourceState('qb-ambulancejob') == 'started' then
         TriggerEvent('hospital:client:HealInjuries', 'full')
     end
+    -- ESX: honger en dorst ook weer vol
+    if GetResourceState('esx_basicneeds') == 'started' then
+        TriggerEvent('esx_basicneeds:healPlayer')
+    end
 end
 
 -- ------------------------------------------------------------

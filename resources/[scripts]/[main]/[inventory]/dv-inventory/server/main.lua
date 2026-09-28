@@ -4,7 +4,8 @@
 -- ============================================================
 
 local RES = GetCurrentResourceName()
-local Items = Config.Items
+local Items = {}                                   -- alle itemdefinities (Config.Items + ESX-items + wapens)
+for k, v in pairs(Config.Items) do Items[k] = v end
 
 local Invs = {}            -- [invId] = inventory (in geheugen)
 local saved = json.decode(LoadResourceFile(RES, 'data/inventories.json') or '{}') or {}
@@ -17,11 +18,76 @@ local Usable = {}          -- [itemName] = function(src, item, slot)
 local rate = {}
 
 local QBCore, ESX
+local ACCOUNTS = { money = true, black_money = true }
+local layoutDirty = false
+
+local function fw()
+    if Config.Framework == 'esx' and GetResourceState('es_extended') ~= 'started' then
+        print('^1[dv-inventory] Config.Framework = esx, maar es_extended is niet gestart. Zet "ensure dv-inventory" NA "ensure es_extended" in je server.cfg.^0')
+        return 'standalone'
+    end
+    if Config.Framework ~= 'auto' then return Config.Framework end
+    if GetResourceState('es_extended') == 'started' then return 'esx' end
+    if GetResourceState('qb-core') == 'started' then return 'qb' end
+    return 'standalone'
+end
+
+--- Plaatje voor ESX-items die niet in Config.Items staan.
+local function iconFor(name)
+    if Config.Esx.Icons[name] then return Config.Esx.Icons[name] end
+    for pattern, icon in pairs(Config.Esx.IconPatterns) do
+        if name:find(pattern) then return icon end
+    end
+    return Config.Esx.DefaultIcon
+end
+
+--- Voegt alle ESX-items, ESX-wapens en geld toe aan de itemlijst.
+local function loadEsxItems()
+    local unit = Config.Esx.WeightUnit
+    for name, it in pairs(ESX.GetItems() or {}) do
+        local own = Config.Items[name] or {}
+        local d = {}
+        for k, v in pairs(own) do d[k] = v end
+        d.label = it.label or own.label or name
+        d.weight = (tonumber(it.weight) or 0) * unit
+        d.stack = true
+        d.max = 100000
+        d.icon = own.icon or iconFor(name)
+        d.canRemove = it.canRemove ~= false and it.canRemove ~= 0
+        Items[name] = d
+    end
+    for _, w in ipairs(ESX.GetWeaponList() or {}) do
+        local lname = w.name:lower()
+        Items[w.name] = {
+            label = w.label or w.name, weight = Config.Esx.WeaponWeight, stack = false, usable = true,
+            weapon = w.name, icon = (Config.Items[lname] and Config.Items[lname].icon) or iconFor(lname),
+            desc = Config.Items[lname] and Config.Items[lname].desc or nil,
+        }
+    end
+    Items.money = { label = Config.Esx.MoneyLabel, icon = '💶', weight = 0, stack = true, max = 1e12, account = true, desc = Config.Esx.MoneyDesc }
+    Items.black_money = { label = Config.Esx.BlackMoneyLabel, icon = '💰', weight = 0, stack = true, max = 1e12, account = true }
+    -- wapens uit Config.Items (kleine letters) zijn in ESX vervangen door de ESX-wapens
+    for name, d in pairs(Items) do
+        if d.weapon and name ~= d.weapon then Items[name] = nil end
+    end
+    local n = 0
+    for _ in pairs(Items) do n = n + 1 end
+    print(('[dv-inventory] ESX gekoppeld: %d items (incl. wapens en geld)'):format(n))
+end
+
 CreateThread(function()
-    if GetResourceState('qb-core') == 'started' then
-        QBCore = exports['qb-core']:GetCoreObject()
-    elseif GetResourceState('es_extended') == 'started' then
+    local f = fw()
+    if f == 'esx' then
         ESX = exports['es_extended']:getSharedObject()
+        -- ESX laadt items uit de database: even wachten tot ze er zijn
+        local tries = 0
+        while (not ESX.GetItems() or next(ESX.GetItems()) == nil) and tries < 50 do
+            Wait(200)
+            tries = tries + 1
+        end
+        loadEsxItems()
+    elseif f == 'qb' then
+        QBCore = exports['qb-core']:GetCoreObject()
     end
 end)
 
@@ -54,7 +120,8 @@ local function weightOf(inv)
     local w = 0
     for _, it in pairs(inv.items) do
         local d = Items[it.name]
-        if d then w = w + (d.weight or 0) * it.count end
+        -- ESX rekent wapens en geld niet mee in het spelergewicht
+        if d and not (inv.esx and (d.weapon or d.account)) then w = w + (d.weight or 0) * it.count end
     end
     return w
 end
@@ -109,6 +176,7 @@ local function saveAll()
         any = true
     end
     dirty = {}
+    if layoutDirty then any = true; layoutDirty = false end
     if any then SaveResourceFile(RES, 'data/inventories.json', json.encode(saved), -1) end
 end
 
@@ -159,7 +227,117 @@ end
 
 local addItem  -- vooruit gedeclareerd
 
+--- ESX: bouwt de inventory van een speler op uit xPlayer (items, wapens, geld).
+--- ESX blijft de baas; de volgorde van de vakjes bewaren wij.
+local function loadEsxPlayer(src)
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return nil end
+    local key = 'player:' .. xPlayer.identifier
+    local layout = saved['layout:' .. key] or {}
+
+    local entries = {}
+    for _, it in ipairs(xPlayer.getInventory() or {}) do
+        if (it.count or 0) > 0 and Items[it.name] then
+            entries[#entries + 1] = { name = it.name, count = it.count, meta = {} }
+        end
+    end
+    for _, w in ipairs(xPlayer.getLoadout() or {}) do
+        if Items[w.name] then
+            entries[#entries + 1] = { name = w.name, count = 1, meta = { ammo = w.ammo or 0, components = w.components, tint = w.tintIndex } }
+        end
+    end
+    if Config.Esx.MoneyAsItem then
+        for acc in pairs(ACCOUNTS) do
+            local a = xPlayer.getAccount(acc)
+            if a and (a.money or 0) > 0 then entries[#entries + 1] = { name = acc, count = math.floor(a.money), meta = {} } end
+        end
+    end
+
+    local slots = math.max(Config.PlayerSlots, math.ceil(#entries / 5) * 5)
+    local inv = Invs[key] or { id = key, type = 'player', persist = false, esx = true }
+    inv.label = xPlayer.getName and xPlayer.getName() or GetPlayerName(src)
+    inv.slots = slots
+    inv.maxWeight = (xPlayer.getMaxWeight() or 24) * Config.Esx.WeightUnit
+    inv.owner = src
+    inv.items = {}
+
+    -- eerst op de bewaarde plek, dan de rest op de eerste vrije plek
+    local rest = {}
+    for _, e in ipairs(entries) do
+        local want = tonumber(layout[e.name])
+        if want and want >= 1 and want <= slots and not inv.items[want] then inv.items[want] = e
+        else rest[#rest + 1] = e end
+    end
+    for _, e in ipairs(rest) do
+        for sl = 1, slots do
+            if not inv.items[sl] then inv.items[sl] = e break end
+        end
+    end
+    Invs[key] = inv
+    playerInv[src] = key
+    return inv
+end
+
+local function counts(inv)
+    local c = {}
+    for _, it in pairs(inv.items) do c[it.name] = (c[it.name] or 0) + it.count end
+    return c
+end
+
+--- ESX: voert het verschil (voor/na) uit via xPlayer en bewaart de volgorde.
+local function esxApply(inv, before)
+    local xPlayer = ESX.GetPlayerFromId(inv.owner)
+    if not xPlayer then return end
+    local after = counts(inv)
+    local names = {}
+    for n in pairs(before) do names[n] = true end
+    for n in pairs(after) do names[n] = true end
+
+    for name in pairs(names) do
+        local delta = (after[name] or 0) - (before[name] or 0)
+        local d = Items[name] or {}
+        if delta ~= 0 then
+            if d.weapon then
+                if delta > 0 then
+                    local meta = {}
+                    for _, it in pairs(inv.items) do if it.name == name then meta = it.meta or {} break end end
+                    xPlayer.addWeapon(name, tonumber(meta.ammo) or 0)
+                    for _, comp in ipairs(type(meta.components) == 'table' and meta.components or {}) do
+                        if comp ~= 'clip_default' then xPlayer.addWeaponComponent(name, comp) end
+                    end
+                    if (tonumber(meta.tint) or 0) > 0 then xPlayer.setWeaponTint(name, meta.tint) end
+                else
+                    xPlayer.removeWeapon(name)
+                end
+            elseif d.account then
+                if delta > 0 then xPlayer.addAccountMoney(name, delta, 'dv-inventory')
+                else xPlayer.removeAccountMoney(name, -delta, 'dv-inventory') end
+            else
+                if delta > 0 then xPlayer.addInventoryItem(name, delta)
+                else xPlayer.removeInventoryItem(name, -delta) end
+            end
+        end
+    end
+
+    local layout = {}
+    for slot, it in pairs(inv.items) do layout[it.name] = slot end
+    saved['layout:' .. inv.id] = layout
+    layoutDirty = true
+end
+
+--- Houdt ESX-inventories bij tijdens een wijziging: roep de terug-functie aan als je klaar bent.
+local function track(...)
+    local snaps = {}
+    for _, inv in ipairs({ ... }) do
+        if inv and inv.esx and not snaps[inv] then snaps[inv] = counts(inv) end
+    end
+    return function()
+        for inv, before in pairs(snaps) do esxApply(inv, before) end
+    end
+end
+
 local function loadPlayer(src)
+    if ESX then return loadEsxPlayer(src) end
     local id = playerInv[src]
     if id and Invs[id] then return Invs[id] end
     local key = playerKey(src)
@@ -180,6 +358,13 @@ end
 
 local function unloadPlayer(src)
     local id = playerInv[src]
+    if ESX then
+        if id then Invs[id] = nil end
+        playerInv[src] = nil
+        openWith[src] = nil
+        saveAll()
+        return
+    end
     if id and Invs[id] then
         saved[id] = toList(Invs[id])
         dirty[id] = true
@@ -208,7 +393,13 @@ AddEventHandler('esx:playerDropped', function(src) unloadPlayer(src) end)
 local function canAdd(inv, name, count)
     local d = Items[name]
     if not d then return false, 'Onbekend item' end
-    if weightOf(inv) + (d.weight or 0) * count > inv.maxWeight then return false, 'Te zwaar' end
+    if inv.esx and d.weapon then
+        for _, it in pairs(inv.items) do
+            if it.name == name then return false, 'Je hebt dit wapen al' end
+        end
+    end
+    local counted = not (inv.esx and (d.weapon or d.account))
+    if counted and weightOf(inv) + (d.weight or 0) * count > inv.maxWeight then return false, 'Te zwaar' end
     local max, room = stackMax(name), 0
     for slot = 1, inv.slots do
         local it = inv.items[slot]
@@ -344,7 +535,8 @@ end)
 
 local function access(src, id)
     if not id then return nil end
-    if id == playerInv[src] then return Invs[id] end
+    -- ESX: altijd vers uit xPlayer, zodat wijzigingen van andere scripts meetellen
+    if id == playerInv[src] then return ESX and loadPlayer(src) or Invs[id] end
     if id == openWith[src] then return Invs[id] end
     return nil
 end
@@ -392,7 +584,7 @@ Actions.open = function(src, d)
         TriggerClientEvent('dv-inventory:client:notify', src, 'De kofferbak zit op slot', 'error')
     end
     openWith[src] = sec and sec.id or nil
-    return { ok = true, player = payload(inv), secondary = sec and payload(sec) or nil }
+    return { ok = true, player = payload(inv), secondary = sec and payload(sec) or nil, defs = Items, esx = ESX ~= nil }
 end
 
 Actions.close = function(src)
@@ -402,7 +594,7 @@ end
 
 Actions.get = function(src)
     local inv = loadPlayer(src)
-    return { ok = inv ~= nil, player = payload(inv) }
+    return { ok = inv ~= nil, player = payload(inv), defs = Items, esx = ESX ~= nil }
 end
 
 Actions.move = function(src, d)
@@ -436,6 +628,18 @@ Actions.move = function(src, d)
     local def = Items[it.name]
     local dest = to.items[toSlot]
     local w = (def.weight or 0)
+    if to.esx and (def.weapon or def.account) then w = 0 end
+
+    if from ~= to then
+        -- ESX: niet te verwijderen items (can_remove = 0) blijven bij de speler
+        if from.esx and def.canRemove == false then return { ok = false, msg = def.label .. ' kun je niet weggeven' } end
+        if to.esx and def.weapon then
+            for _, other in pairs(to.items) do
+                if other.name == it.name then return { ok = false, msg = 'Je hebt dit wapen al' } end
+            end
+        end
+    end
+    local done = track(from, to)
 
     if not dest then
         if from ~= to and weightOf(to) + w * count > to.maxWeight then return { ok = false, msg = 'Te zwaar' } end
@@ -460,6 +664,7 @@ Actions.move = function(src, d)
         from.items[fromSlot], to.items[toSlot] = dest, it
     end
 
+    done()
     markDirty(from)
     markDirty(to)
     sync(from)
@@ -484,11 +689,14 @@ Actions.give = function(src, d)
     local count = math.floor(tonumber(d.count) or 0)
     if count <= 0 or count > it.count then count = it.count end
 
+    if inv.esx and Items[it.name].canRemove == false then return { ok = false, msg = Items[it.name].label .. ' kun je niet weggeven' } end
     local ok, err = canAdd(tinv, it.name, count)
     if not ok then return { ok = false, msg = 'De ander kan dit niet dragen (' .. err .. ')' } end
     local name, meta = it.name, copy(it.meta)
+    local done = track(inv, tinv)
     removeItem(inv, name, count, slot)
     addItem(tinv, name, count, meta)
+    done()
     sync(inv)
     sync(tinv)
     itembox(src, name, -count)
@@ -503,6 +711,13 @@ Actions.use = function(src, d)
     local it = inv and slot and inv.items[slot]
     if not it then return { ok = false } end
     local def = Items[it.name]
+
+    -- ESX: items met een ESX-gebruik (esx_basicneeds, ambulance, ...) laat ESX afhandelen
+    if ESX and not def.weapon and ESX.GetUsableItems()[it.name] then
+        ESX.UseItem(src, it.name)
+        TriggerEvent('dv-inventory:server:itemUsed', src, it.name, slot)
+        return { ok = true, close = def.close ~= false }
+    end
 
     if Usable[it.name] then
         local ok, err = pcall(Usable[it.name], src, { name = it.name, count = it.count, meta = copy(it.meta), slot = slot }, slot)
@@ -523,7 +738,9 @@ Actions.use = function(src, d)
     end
 
     if def.consume then
+        local done = track(inv)
         removeItem(inv, it.name, 1, slot)
+        done()
         sync(inv)
         itembox(src, it.name, -1)
     end
@@ -559,10 +776,22 @@ Actions.consume = function(src, d)
     local slot = tonumber(d.slot)
     local it = inv and slot and inv.items[slot]
     if not it or it.name ~= d.name then return { ok = false } end
+    local def = Items[it.name] or {}
+    local weapon
+    if ESX and def.ammo then
+        -- munitie: ESX zet de kogels in het wapen (en onthoudt ze)
+        local w = ESX.GetWeaponFromHash(tonumber(d.weaponHash) or 0)
+        local xPlayer = ESX.GetPlayerFromId(src)
+        if not w or not xPlayer or not xPlayer.hasWeapon(w.name) then return { ok = false, msg = 'Pak eerst het juiste wapen' } end
+        weapon = w.name
+    end
+    local done = track(inv)
     removeItem(inv, it.name, 1, slot)
+    done()
+    if weapon then ESX.GetPlayerFromId(src).addWeaponAmmo(weapon, def.ammo.amount) end
     sync(inv)
     itembox(src, d.name, -1)
-    return { ok = true }
+    return { ok = true, esx = weapon ~= nil }
 end
 
 -- ------------------------------------------------------------
@@ -596,7 +825,13 @@ RegisterNetEvent('dv-inventory:server:ready', function()
     for id, d in pairs(drops) do list[#list + 1] = { id = id, x = d.coords.x, y = d.coords.y, z = d.coords.z } end
     TriggerClientEvent('dv-inventory:client:drops', src, list)
     local inv = loadPlayer(src)
-    if inv then TriggerClientEvent('dv-inventory:client:update', src, { player = payload(inv) }) end
+    if inv then TriggerClientEvent('dv-inventory:client:update', src, { player = payload(inv), defs = Items, esx = ESX ~= nil }) end
+end)
+
+-- ESX: speler is geladen (karakter gekozen)
+AddEventHandler('esx:playerLoaded', function(playerId)
+    local inv = loadPlayer(playerId)
+    if inv then TriggerClientEvent('dv-inventory:client:update', playerId, { player = payload(inv), defs = Items, esx = true }) end
 end)
 
 -- ------------------------------------------------------------
@@ -606,7 +841,9 @@ end)
 exports('AddItem', function(src, name, count, meta)
     local inv = loadPlayer(src)
     if not inv then return false end
+    local done = track(inv)
     local ok = addItem(inv, name, count or 1, meta)
+    done()
     if ok then sync(inv); itembox(src, name, count or 1) end
     return ok
 end)
@@ -614,7 +851,9 @@ end)
 exports('RemoveItem', function(src, name, count, slot)
     local inv = loadPlayer(src)
     if not inv then return false end
+    local done = track(inv)
     local ok = removeItem(inv, name, count or 1, slot)
+    done()
     if ok then sync(inv); itembox(src, name, -(count or 1)) end
     return ok
 end)
@@ -650,7 +889,7 @@ exports('OpenStash', function(src, id, label, slots, maxWeight)
     if not inv then return false end
     local stash = getInv('stash:' .. id, { type = 'stash', label = label or id, slots = slots or 50, maxWeight = maxWeight or 100000 })
     openWith[src] = stash.id
-    TriggerClientEvent('dv-inventory:client:openServer', src, { player = payload(inv), secondary = payload(stash) })
+    TriggerClientEvent('dv-inventory:client:openServer', src, { player = payload(inv), secondary = payload(stash), defs = Items })
     return true
 end)
 
@@ -658,7 +897,11 @@ end)
 --  Admin-commando's
 -- ------------------------------------------------------------
 
-local function isAdmin(src) return src == 0 or IsPlayerAceAllowed(src, Config.AdminAce) end
+local function isAdmin(src)
+    if src == 0 or IsPlayerAceAllowed(src, Config.AdminAce) then return true end
+    local xPlayer = ESX and ESX.GetPlayerFromId(src)
+    return xPlayer ~= nil and Config.Esx.AdminGroups[xPlayer.getGroup()] == true
+end
 
 local function reply(src, msg)
     if src == 0 then print('[dv-inventory] ' .. msg)
@@ -672,7 +915,9 @@ RegisterCommand('giveitem', function(src, args)
     if not isOnline(target) or not Items[name] then return reply(src, 'Gebruik: /giveitem <id> <item> [aantal]') end
     local inv = loadPlayer(target)
     if not inv then return reply(src, 'Speler is nog niet geladen') end
+    local done = track(inv)
     local ok, err = addItem(inv, name, count)
+    done()
     if not ok then return reply(src, 'Mislukt: ' .. err) end
     sync(inv)
     itembox(target, name, count)
@@ -687,7 +932,9 @@ RegisterCommand('clearinv', function(src, args)
     if not isOnline(target) then return reply(src, 'Gebruik: /clearinv <id>') end
     local inv = loadPlayer(target)
     if not inv then return end
+    local done = track(inv)
     inv.items = {}
+    done()
     markDirty(inv)
     sync(inv)
     reply(src, 'Inventory van ' .. GetPlayerName(target) .. ' is leeggemaakt')
