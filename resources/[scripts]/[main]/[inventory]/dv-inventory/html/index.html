@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dayverse Inventory</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="toasts" class="toasts"></div>
+
+<!-- ============ Inventory ============ -->
+<div id="inv" class="inv hidden">
+    <div class="inv-wrap">
+        <section class="pane" id="pane-player">
+            <header class="pane-head">
+                <div class="pane-title">
+                    <div class="logo">DV</div>
+                    <div>
+                        <h1>Inventaris</h1>
+                        <p id="player-name">Dayverse Roleplay</p>
+                    </div>
+                </div>
+                <div class="weight">
+                    <div class="weight-text"><b id="player-weight">0</b> / <span id="player-max">30</span> kg</div>
+                    <div class="weight-bar"><i id="player-bar"></i></div>
+                </div>
+            </header>
+            <div class="grid" id="grid-player"></div>
+        </section>
+
+        <aside class="center">
+            <label class="amount">
+                <span>Aantal</span>
+                <input id="amount" type="number" min="0" placeholder="Alles">
+            </label>
+            <div class="zone" data-zone="use">
+                <svg viewBox="0 0 24 24"><path d="M12 2v6M12 22v-4M4.9 4.9l4.2 4.2M14.9 14.9l4.2 4.2M2 12h6M22 12h-4"/></svg>
+                <span>Gebruiken</span>
+            </div>
+            <div class="zone" data-zone="give">
+                <svg viewBox="0 0 24 24"><path d="M20 12v9H4v-9M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 1 1 0-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 1 0 0-5C13 2 12 7 12 7z"/></svg>
+                <span>Geven</span>
+            </div>
+            <div class="help">
+                <p><span class="kbd">Slepen</span> verplaatsen</p>
+                <p><span class="kbd">Shift</span> + slepen: helft</p>
+                <p><span class="kbd">Dubbelklik</span> gebruiken</p>
+                <p><span class="kbd">Rechtsklik</span> meer opties</p>
+                <p><span class="kbd">1-5</span> hotbar</p>
+            </div>
+            <button class="btn ghost" id="close">Sluiten <span class="kbd">ESC</span></button>
+        </aside>
+
+        <section class="pane" id="pane-second">
+            <header class="pane-head">
+                <div class="pane-title">
+                    <div class="logo soft" id="second-icon">
+                        <svg viewBox="0 0 24 24"><path d="M3 20h18M5 20V10l7-6 7 6v10"/></svg>
+                    </div>
+                    <div>
+                        <h1 id="second-label">Grond</h1>
+                        <p id="second-sub">Sleep items hierheen om ze neer te leggen</p>
+                    </div>
+                </div>
+                <div class="weight" id="second-weight-wrap">
+                    <div class="weight-text"><b id="second-weight">0</b> / <span id="second-max">0</span> kg</div>
+                    <div class="weight-bar"><i id="second-bar"></i></div>
+                </div>
+            </header>
+            <div class="grid" id="grid-second"></div>
+        </section>
+    </div>
+</div>
+
+<!-- Tooltip, contextmenu en sleep-plaatje -->
+<div id="tooltip" class="tooltip hidden"></div>
+<div id="ctx" class="ctx hidden"></div>
+<div id="ghost" class="drag-ghost hidden"></div>
+
+<!-- Hotbar (bij indrukken 1-5) -->
+<div id="hotbar" class="hotbar hidden"></div>
+
+<!-- Item erbij / eraf -->
+<div id="itembox" class="itembox"></div>
+
+<!-- Voortgang (eten, drinken, repareren) -->
+<div id="progress" class="progress hidden">
+    <span id="progress-label">Bezig…</span>
+    <div class="progress-bar"><i id="progress-fill"></i></div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>

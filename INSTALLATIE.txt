@@ -3,11 +3,17 @@ DAYVERSE ROLEPLAY - INSTALLATIE
 
 Inhoud van deze zip
 -------------------
-  resources/[scripts]/[main]/[hud]/dv-hud        HUD (status, snelheidsmeter, kompas, /hud instellingen)
-  resources/[scripts]/[main]/[admin]/dv-admin    Staffmenu (/staff of F10)
-  resources/[scripts]/[main]/[admin]/dv-reports  Reportsysteem (/report voor spelers, /reports voor staff)
-  dayverse.cfg                                   Alles wat in je server-config moet
-  INSTALLATIE.txt                                Dit bestand
+  resources/                                       Alles kant-en-klaar in de juiste mappen (makkelijkst)
+    [scripts]/[main]/[hud]/dv-hud                  HUD (status, snelheidsmeter, kompas, /hud instellingen)
+    [scripts]/[main]/[inventory]/dv-inventory      Inventory (I, hotbar 1-5, kofferbak, grond)
+    [scripts]/[main]/[admin]/dv-admin              Staffmenu (/staff of F10)
+    [scripts]/[main]/[admin]/dv-reports            Reportsysteem (/report, /reports)
+  zips/                                            Dezelfde resources als losse zip-bestanden
+    dv-hud.zip, dv-inventory.zip, dv-admin.zip, dv-reports.zip
+  dayverse.cfg                                     Alles wat in je server-config moet
+  INSTALLATIE.txt                                  Dit bestand
+
+Je hebt OF de map "resources" OF de losse zips nodig, niet allebei.
 
 
 Stap 1 - Oude versies weghalen
@@ -20,6 +26,10 @@ en zet ze na stap 2 in dv-admin/data/ (overschrijven).
 
 Heb je nog een andere HUD aanstaan (bv. qb-hud, esx_hud)? Zet die uit,
 anders zie je twee HUD's.
+
+Gebruik je nu qb-inventory, ox_inventory of esx_inventoryhud? Zet die uit
+(# voor de ensure-regel). Er kan maar één inventory tegelijk actief zijn.
+Let op: spullen uit je oude inventory worden niet overgezet.
 
 
 Stap 2 - Bestanden neerzetten
@@ -41,6 +51,7 @@ Stap 4 - Starten en testen
 --------------------------
 Start de server en join.
   - HUD verschijnt linksonder/rechtsonder.   /hud = instellingen
+  - Inventory: I (hotbar met 1-5)
   - Staffmenu: /staff of F10                   (alleen met een staff-rang)
   - Reports:   /report als speler, /reports als staff
 
@@ -56,6 +67,10 @@ Commando's
   /cinema       filmmodus aan/uit
   /togglehud    HUD aan/uit
   B             gordel om/af (aan te passen in GTA > Instellingen > Toetsen > FiveM)
+  I             inventory (achter een auto: kofferbak, in een auto: dashboardkastje)
+  1 - 5         hotbar
+  /giveitem <id> <item> [aantal]   item geven (admin)
+  /clearinv <id>                   inventory leegmaken (admin)
   /staff, F10   staffmenu
   /noclip       noclip aan/uit (staff)
   /report       report maken of je lopende report openen
