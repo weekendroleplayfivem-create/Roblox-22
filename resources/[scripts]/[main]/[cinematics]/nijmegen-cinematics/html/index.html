@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nijmegen Cinematics</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Letterbox -->
+<div class="bar top" id="bar-top"></div>
+<div class="bar bottom" id="bar-bottom"></div>
+
+<div id="toasts" class="toasts"></div>
+
+<!-- ============ Hulp in cameramodus ============ -->
+<div id="hint" class="hint hidden">
+    <div class="hint-head">
+        <div class="logo sm">NS</div>
+        <div>
+            <b data-i18n="cameraMode">Cameramodus</b>
+            <span id="cam-info">FOV 50 · 0.35</span>
+        </div>
+    </div>
+    <div class="keys">
+        <p><span class="kbd">W A S D</span><span data-i18n="kMove">bewegen</span></p>
+        <p><span class="kbd">Q</span><span class="kbd">E</span><span data-i18n="kUpDown">omlaag / omhoog</span></p>
+        <p><span class="kbd">Muis</span><span data-i18n="kLook">rondkijken</span></p>
+        <p><span class="kbd">Scroll</span><span data-i18n="kZoom">zoom (FOV)</span></p>
+        <p><span class="kbd">Shift</span><span class="kbd">Alt</span><span data-i18n="kSpeed">snel / langzaam</span></p>
+        <p><span class="kbd">↑</span><span class="kbd">↓</span><span data-i18n="kBaseSpeed">basissnelheid</span></p>
+        <p><span class="kbd">←</span><span class="kbd">→</span><span class="kbd">X</span><span data-i18n="kRoll">kantelen / recht</span></p>
+        <hr>
+        <p><span class="kbd accent">Spatie</span><span data-i18n="kAdd">keyframe toevoegen</span></p>
+        <p><span class="kbd">Delete</span><span data-i18n="kRemove">laatste verwijderen</span></p>
+        <p><span class="kbd">G</span><span data-i18n="kPlay">afspelen</span></p>
+        <p><span class="kbd accent">TAB</span><span data-i18n="kMenu">menu gebruiken</span></p>
+    </div>
+</div>
+
+<!-- ============ Editor ============ -->
+<aside id="editor" class="editor hidden">
+    <header class="ed-head">
+        <div class="logo">NS</div>
+        <div class="ed-title">
+            <h1>Cinematics</h1>
+            <p>Nijmegen Scripts</p>
+        </div>
+        <span class="mode-badge" id="mode-badge">MENU</span>
+        <button class="icon-btn" id="btn-close" title="Sluiten"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </header>
+
+    <div class="camera-lock" id="camera-lock">
+        <svg viewBox="0 0 24 24"><path d="M3 7h13v10H3zM16 10l5-3v10l-5-3"/></svg>
+        <span data-i18n="lockText">Je bestuurt de camera. Druk op TAB om het menu te gebruiken.</span>
+    </div>
+
+    <div class="scene-name">
+        <input id="scene-name" maxlength="40" placeholder="Naam van de scène" data-i18n-ph="scenePh">
+    </div>
+
+    <nav class="tabs">
+        <button class="tab-btn active" data-tab="points"><span data-i18n="tabPoints">Keyframes</span> <em id="point-count">0</em></button>
+        <button class="tab-btn" data-tab="effects" data-i18n="tabEffects">Effecten</button>
+        <button class="tab-btn" data-tab="scenes" data-i18n="tabScenes">Scènes</button>
+    </nav>
+
+    <!-- Keyframes -->
+    <section class="tab active" data-tab="points">
+        <div class="toolbar">
+            <button class="btn" id="btn-add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span data-i18n="addPoint">Keyframe</span></button>
+            <button class="btn soft" id="btn-play"><svg viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></svg><span data-i18n="play">Afspelen</span></button>
+            <button class="btn soft" id="btn-play-from" title=""><svg viewBox="0 0 24 24"><path d="M5 5v14M9 5l11 7-11 7z"/></svg><span data-i18n="playFrom">Vanaf #</span></button>
+        </div>
+        <div class="summary"><span data-i18n="totalTime">Totale duur</span> <b id="total-time">0.0 s</b></div>
+        <div class="points" id="points"></div>
+        <div class="empty" id="points-empty">
+            <svg viewBox="0 0 24 24"><path d="M3 7h13v10H3zM16 10l5-3v10l-5-3"/></svg>
+            <p data-i18n="emptyPoints">Nog geen keyframes. Vlieg naar een plek en druk op Spatie (of + Keyframe).</p>
+        </div>
+    </section>
+
+    <!-- Effecten -->
+    <section class="tab" data-tab="effects">
+        <div class="group">
+            <h3 data-i18n="gLook">Beeld</h3>
+            <label class="field"><span data-i18n="bars">Filmbalken</span><em id="v-bars">12%</em>
+                <input type="range" id="s-bars" min="0" max="30" step="1"></label>
+            <label class="field"><span data-i18n="filter">Filter</span>
+                <select id="s-filter"></select></label>
+            <label class="field"><span data-i18n="strength">Sterkte filter</span><em id="v-strength">100%</em>
+                <input type="range" id="s-strength" min="0" max="100" step="5"></label>
+        </div>
+        <div class="group">
+            <h3 data-i18n="gCamera">Camera</h3>
+            <label class="field"><span data-i18n="shake">Beweging</span>
+                <select id="s-shake"></select></label>
+            <label class="field"><span data-i18n="shakeAmp">Sterkte beweging</span><em id="v-shakeAmp">0.0</em>
+                <input type="range" id="s-shakeAmp" min="0" max="30" step="1"></label>
+            <label class="toggle"><span data-i18n="smooth">Vloeiend pad (spline)</span><input type="checkbox" id="s-smooth"><i></i></label>
+            <label class="toggle"><span data-i18n="loop">Herhalen (loop)</span><input type="checkbox" id="s-loop"><i></i></label>
+            <label class="toggle"><span data-i18n="fade">In- en uitfaden</span><input type="checkbox" id="s-fade"><i></i></label>
+        </div>
+        <div class="group">
+            <h3 data-i18n="gWorld">Wereld (alleen voor jou)</h3>
+            <label class="field"><span data-i18n="time">Tijd</span><em id="v-time">Server</em>
+                <input type="range" id="s-time" min="-1" max="23" step="1"></label>
+            <label class="field"><span data-i18n="weather">Weer</span>
+                <select id="s-weather"></select></label>
+        </div>
+        <div class="group">
+            <h3 data-i18n="gOther">Overig</h3>
+            <label class="toggle"><span data-i18n="hideHud">HUD verbergen</span><input type="checkbox" id="s-hideHud"><i></i></label>
+            <label class="toggle"><span data-i18n="hidePlayer">Eigen personage verbergen</span><input type="checkbox" id="s-hidePlayer"><i></i></label>
+            <label class="toggle"><span data-i18n="previewBars">Balken tonen tijdens bewerken</span><input type="checkbox" id="s-previewBars"><i></i></label>
+        </div>
+    </section>
+
+    <!-- Scènes -->
+    <section class="tab" data-tab="scenes">
+        <div class="toolbar">
+            <button class="btn" id="btn-save"><svg viewBox="0 0 24 24"><path d="M5 3h11l3 3v15H5zM8 3v6h8V3M8 21v-7h8v7"/></svg><span data-i18n="save">Opslaan</span></button>
+            <button class="btn soft" id="btn-new"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span data-i18n="new">Nieuw</span></button>
+            <button class="btn soft" id="btn-broadcast"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 16 0M7.5 12a4.5 4.5 0 0 1 9 0M12 12v8"/></svg><span data-i18n="broadcast">Voor iedereen</span></button>
+        </div>
+        <div class="scene-list" id="scene-list"></div>
+        <div class="group">
+            <h3 data-i18n="export">Gebruiken in een ander script</h3>
+            <textarea id="export" readonly rows="7"></textarea>
+            <button class="btn soft wide" id="btn-copy"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg><span data-i18n="copy">Kopiëren</span></button>
+        </div>
+    </section>
+</aside>
+
+<!-- ============ Tijdlijn tijdens afspelen ============ -->
+<div id="timeline" class="timeline hidden">
+    <div class="tl-top">
+        <b id="tl-name">Scène</b>
+        <span id="tl-time">0.0 / 0.0 s</span>
+    </div>
+    <div class="tl-bar"><i id="tl-fill"></i><div id="tl-marks"></div></div>
+    <div class="tl-hint"><span class="kbd">Backspace</span> <span data-i18n="stop">stoppen</span></div>
+</div>
+
+<!-- Bevestigen -->
+<div id="modal" class="modal hidden">
+    <div class="modal-card">
+        <h2 id="modal-title"></h2>
+        <p id="modal-text"></p>
+        <div class="modal-actions">
+            <button class="btn ghost" id="modal-no" data-i18n="cancel">Annuleren</button>
+            <button class="btn danger" id="modal-yes" data-i18n="confirm">Ja</button>
+        </div>
+    </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>

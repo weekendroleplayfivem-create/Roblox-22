@@ -8,8 +8,9 @@ Inhoud van deze zip
     [scripts]/[main]/[inventory]/dv-inventory      Inventory (I, hotbar 1-5, kofferbak, grond)
     [scripts]/[main]/[admin]/dv-admin              Staffmenu (/staff of F10)
     [scripts]/[main]/[admin]/dv-reports            Reportsysteem (/report, /reports)
+    [scripts]/[main]/[cinematics]/nijmegen-cinematics  Cinematic maker (/cinematic)
   zips/                                            Dezelfde resources als losse zip-bestanden
-    dv-hud.zip, dv-inventory.zip, dv-admin.zip, dv-reports.zip
+    dv-hud.zip, dv-inventory.zip, dv-admin.zip, dv-reports.zip, nijmegen-cinematics.zip
   dayverse.cfg                                     Alles wat in je server-config moet
   INSTALLATIE.txt                                  Dit bestand
 
@@ -75,6 +76,7 @@ Commando's
   /noclip       noclip aan/uit (staff)
   /report       report maken of je lopende report openen
   /reports      reportpaneel (staff)
+  /cinematic    cinematic maker (staff)
   dvunban DV-1234   (serverconsole) ban opheffen
 
 Meer uitleg staat in de README.md in elke resource-map.
