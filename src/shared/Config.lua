@@ -694,6 +694,85 @@ Config.Ramps = {
 	{ i = 5, j = 8, axis = "x" },
 }
 
+---------------------------------------------------------------------------
+-- City traffic + near misses (Unbound)
+---------------------------------------------------------------------------
+Config.Traffic = {
+	Count = 16, -- civilian cars driving around the city
+	Speed = { 38, 55 }, -- studs/s cruising speed range
+	LaneOffset = 8, -- distance from the centre line (drive on the right)
+	NearMissMin = 6.8, -- closer than this (centre to centre) counts as a crash, not a near miss
+	NearMissMax = 11,
+	NearMissSpeed = 55, -- minimum relative speed for a near miss
+	NearMissCash = 150,
+	NearMissNitro = 0.18,
+	Colors = {
+		Color3.fromRGB(200, 200, 205),
+		Color3.fromRGB(30, 30, 35),
+		Color3.fromRGB(120, 20, 25),
+		Color3.fromRGB(30, 60, 120),
+		Color3.fromRGB(90, 95, 100),
+		Color3.fromRGB(230, 230, 225),
+		Color3.fromRGB(60, 80, 55),
+		Color3.fromRGB(150, 120, 80),
+	},
+	Styles = { "sedan", "sedan", "coupe", "suv", "muscle" },
+}
+
+---------------------------------------------------------------------------
+-- Spike strips (Most Wanted): deployed from heat 3
+---------------------------------------------------------------------------
+Config.Spikes = {
+	MinHeat = 3,
+	FlatSeconds = 8,
+	FlatSpeedMult = 0.55,
+	FlatGripMult = 0.6,
+}
+
+---------------------------------------------------------------------------
+-- Milestones: challenges with cash rewards. `stat` is tracked in the profile.
+-- mode "sum" adds up over time, "max" keeps the best single value.
+---------------------------------------------------------------------------
+export type Milestone = { id: string, name: string, stat: string, goal: number, reward: number, mode: string }
+
+local function tiers(id: string, name: string, stat: string, mode: string, goals: { number }, rewards: { number }): { Milestone }
+	local out = {}
+	for k, g in goals do
+		table.insert(out, { id = id .. "_" .. k, name = string.format(name, g), stat = stat, goal = g, reward = rewards[k], mode = mode })
+	end
+	return out
+end
+
+Config.Milestones = {} :: { Milestone }
+for _, list in {
+	tiers("wreck", "Wreck %d cop cars", "copsWrecked", "sum", { 5, 25, 100 }, { 3000, 12000, 50000 }),
+	tiers("evade", "Escape %d pursuits", "pursuitsEvaded", "sum", { 3, 15, 50 }, { 4000, 15000, 60000 }),
+	tiers("heat", "Escape a heat %d pursuit", "maxHeatEvaded", "max", { 3, 4, 5 }, { 8000, 20000, 50000 }),
+	tiers("bounty", "Earn %d bounty in one pursuit", "bestBounty", "max", { 5000, 20000, 75000 }, { 5000, 15000, 50000 }),
+	tiers("roadblock", "Smash %d roadblocks", "roadblocksSmashed", "sum", { 3, 15 }, { 5000, 20000 }),
+	tiers("breaker", "Drop %d pursuit breakers", "breakersUsed", "sum", { 3, 15 }, { 5000, 20000 }),
+	tiers("nearmiss", "Get %d near misses", "nearMisses", "sum", { 25, 150, 500 }, { 3000, 12000, 40000 }),
+	tiers("drift", "Score a %d drift combo", "bestDrift", "max", { 5000, 20000, 60000 }, { 3000, 10000, 30000 }),
+	tiers("speedcam", "Hit %d mph on a speed camera", "bestSpeedCam", "max", { 120, 150, 180 }, { 3000, 10000, 30000 }),
+	tiers("races", "Win %d races", "racesWon", "sum", { 3, 10, 30 }, { 5000, 20000, 75000 }),
+} do
+	for _, m in list do
+		table.insert(Config.Milestones, m)
+	end
+end
+
+---------------------------------------------------------------------------
+-- Sounds. Built-in sounds work out of the box. For an engine / siren loop, paste an
+-- audio id from the Creator Store (for example "rbxassetid://1234567890"). Empty = off.
+---------------------------------------------------------------------------
+Config.Sounds = {
+	Engine = "", -- looped engine sound, pitch follows your speed
+	Siren = "", -- looped police siren
+	NearMiss = "rbxasset://sounds/swoosh.wav",
+	Checkpoint = "rbxasset://sounds/electronicpingshort.wav",
+	Banner = "rbxasset://sounds/electronicpingshort.wav",
+}
+
 Config.StartingCash = 5000
 
 return Config

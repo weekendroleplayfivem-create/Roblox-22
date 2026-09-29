@@ -149,6 +149,47 @@ function Session.Sync(s: Session)
 	end
 end
 
+function Session.Banner(player: Player, title: string, subtitle: string?, color: Color3?)
+	if not remotes then
+		return
+	end
+	local ev = (remotes :: Folder):FindFirstChild("Banner") :: RemoteEvent?
+	if ev then
+		ev:FireClient(player, title, subtitle or "", color or Color3.new(1, 1, 1))
+	end
+end
+
+function Session.StatValue(s: Session, stat: string): number
+	if stat == "racesWon" then
+		return s.profile.racesWon
+	end
+	return s.profile.stats[stat] or 0
+end
+
+-- Pay out any milestones that are now complete (reward goes straight to the bank).
+function Session.CheckMilestones(s: Session)
+	local done = s.profile.milestones
+	for _, m in Config.Milestones do
+		if not done[m.id] and Session.StatValue(s, m.stat) >= m.goal then
+			done[m.id] = true
+			s.profile.cash += m.reward
+			Session.Banner(s.player, "MILESTONE COMPLETE", m.name .. "   +$" .. m.reward, Color3.fromRGB(120, 255, 170))
+		end
+	end
+end
+
+function Session.AddStat(s: Session, stat: string, amount: number)
+	s.profile.stats[stat] = (s.profile.stats[stat] or 0) + amount
+	Session.CheckMilestones(s)
+end
+
+function Session.MaxStat(s: Session, stat: string, value: number)
+	if value > (s.profile.stats[stat] or 0) then
+		s.profile.stats[stat] = value
+		Session.CheckMilestones(s)
+	end
+end
+
 function Session.AddUnbanked(s: Session, amount: number, reason: string)
 	amount = math.floor(amount)
 	if amount <= 0 then

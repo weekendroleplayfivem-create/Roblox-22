@@ -417,6 +417,41 @@ local function renderBlacklist()
 	end
 end
 
+local function renderMilestones()
+	new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, content)
+	local stats = data.stats or {}
+	local done = data.milestones or {}
+	local total, finished = 0, 0
+	for _, m in Config.Milestones do
+		total += 1
+		if done[m.id] then
+			finished += 1
+		end
+	end
+	local head = card(40)
+	head.LayoutOrder = 0
+	text(head, { Position = UDim2.fromOffset(12, 6), Size = UDim2.new(1, -24, 0, 28), Text = string.format("MILESTONES   %d / %d complete", finished, total), Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
+	for idx, m in Config.Milestones do
+		local value = if m.stat == "racesWon" then data.racesWon else (stats[m.stat] or 0)
+		local complete = done[m.id] == true
+		local f = card(50)
+		f.LayoutOrder = if complete then 1000 + idx else idx
+		text(f, { Position = UDim2.fromOffset(12, 6), Size = UDim2.new(0.55, 0, 0, 20), Text = m.name, Font = Enum.Font.GothamBlack, TextColor3 = if complete then Color3.fromRGB(120, 255, 150) else Color3.new(1, 1, 1) })
+		local back = new("Frame", { Position = UDim2.fromOffset(12, 32), Size = UDim2.new(0.55, 0, 0, 8), BackgroundColor3 = Color3.fromRGB(50, 50, 70) }, f)
+		corner(back, 4)
+		local fill = new("Frame", { Size = UDim2.fromScale(math.clamp(value / m.goal, 0, 1), 1), BackgroundColor3 = if complete then Color3.fromRGB(120, 255, 150) else PINK }, back)
+		corner(fill, 4)
+		text(f, {
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -12, 0.5, 0),
+			Size = UDim2.new(0.38, 0, 0, 22),
+			Text = if complete then "DONE  +$" .. HUD.Commas(m.reward) else string.format("%s / %s   $%s", HUD.Commas(math.min(value, m.goal)), HUD.Commas(m.goal), HUD.Commas(m.reward)),
+			TextXAlignment = Enum.TextXAlignment.Right,
+			TextColor3 = Color3.fromRGB(255, 200, 80),
+		})
+	end
+end
+
 local TAB_RENDER = {
 	Cars = renderCars,
 	Performance = renderPerformance,
@@ -424,6 +459,7 @@ local TAB_RENDER = {
 	Visual = renderVisual,
 	Effects = renderEffects,
 	Blacklist = renderBlacklist,
+	Milestones = renderMilestones,
 }
 local tabButtons: { [string]: TextButton } = {}
 
@@ -439,8 +475,8 @@ render = function()
 	TAB_RENDER[currentTab]()
 end
 
-for _, name in { "Cars", "Performance", "Handling", "Visual", "Effects", "Blacklist" } do
-	tabButtons[name] = button(tabs, { Size = UDim2.new(1 / 6, -7, 1, 0), Text = string.upper(name), BackgroundColor3 = Color3.fromRGB(45, 45, 65) }, function()
+for _, name in { "Cars", "Performance", "Handling", "Visual", "Effects", "Blacklist", "Milestones" } do
+	tabButtons[name] = button(tabs, { Size = UDim2.new(1 / 7, -7, 1, 0), Text = string.upper(name), BackgroundColor3 = Color3.fromRGB(45, 45, 65) }, function()
 		currentTab = name
 		render()
 	end)

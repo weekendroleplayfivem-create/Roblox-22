@@ -10,9 +10,11 @@ local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local CarPhysics = require(Shared:WaitForChild("CarPhysics"))
+local Config = require(Shared:WaitForChild("Config"))
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local NitroState = Remotes:WaitForChild("NitroState") :: RemoteEvent
 local RespawnCar = Remotes:WaitForChild("RespawnCar") :: RemoteEvent
+local NearMissEvent = Remotes:WaitForChild("NearMiss") :: RemoteEvent
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -29,6 +31,12 @@ Drive.Drifting = false
 Drive.Throttle = 0
 Drive.Steer = 0
 Drive.Handbrake = false
+Drive.Flat = false
+Drive.MenuOpen = false -- the title screen drives the camera while this is true
+Drive.Shake = 0 -- camera shake impulse (crashes)
+Drive.NearMissCombo = 0
+Drive.OnNearMiss = {} :: { (combo: number) -> () }
+Drive.OnCrash = {} :: { (strength: number) -> () }
 
 local seat: VehicleSeat? = nil
 local handbrake = false
@@ -37,6 +45,9 @@ local keyThrottle = 0
 local keySteer = 0
 local sentNitro = false
 local camPos: Vector3? = nil
+local lastSpeed = 0
+local nearTrack: { [Model]: { min: number, rel: number, speed: number } } = setmetatable({}, { __mode = "k" }) :: any
+local lastNearMiss = 0
 local camLook: Vector3? = nil
 
 local function stat(car: Model, name: string, default: number): number
@@ -172,7 +183,7 @@ RunService.PreSimulation:Connect(function(dt: number)
 
 	local capacity = stat(car, "nitroCapacity", 1)
 	Drive.NitroCapacity = capacity
-	local nitroOn = nitroHeld and Drive.Nitro > 0.02 and throttle > 0
+	local nitroOn = nitroHeld and Drive.Nitro > 0.02 and throttle > 0 and car:GetAttribute("Flat") ~= true
 	if nitroOn then
 		Drive.Nitro = math.max(0, Drive.Nitro - dt * 0.3)
 	end
@@ -189,6 +200,14 @@ RunService.PreSimulation:Connect(function(dt: number)
 		driftGrip = stat(car, "driftGrip", 0.4),
 		downforce = stat(car, "downforce", 0.2),
 	}
+	-- spiked tyres: slow and slippery
+	Drive.Flat = car:GetAttribute("Flat") == true
+	if Drive.Flat then
+		stats.maxSpeed *= Config.Spikes.FlatSpeedMult
+		stats.grip *= Config.Spikes.FlatGripMult
+		stats.turn *= 0.8
+		nitroOn = false
+	end
 	Drive.Throttle = throttle
 	Drive.Steer = steer
 	Drive.Handbrake = handbrake
@@ -214,6 +233,16 @@ RunService.PreSimulation:Connect(function(dt: number)
 		Drive.Nitro = math.min(capacity, Drive.Nitro + gain * dt)
 	end
 
+	-- crash detection (sudden loss of speed) for camera shake
+	if lastSpeed - speed > 35 then
+		local strength = math.clamp((lastSpeed - speed) / 80, 0.3, 1)
+		Drive.Shake = math.max(Drive.Shake, strength)
+		for _, fn in Drive.OnCrash do
+			task.spawn(fn, strength)
+		end
+	end
+	lastSpeed = speed
+
 	local smokeAtt = state.root:FindFirstChild("Smoke")
 	local smoke = smokeAtt and smokeAtt:FindFirstChild("DriftSmoke") :: ParticleEmitter?
 	if smoke then
@@ -222,9 +251,59 @@ RunService.PreSimulation:Connect(function(dt: number)
 end)
 
 ---------------------------------------------------------------------------
+-- Near misses: pass traffic close and fast without touching it (Unbound)
+---------------------------------------------------------------------------
+local TR = Config.Traffic
+RunService.Heartbeat:Connect(function()
+	local car = Drive.Car
+	local root = car and car.PrimaryPart
+	local traffic = workspace:FindFirstChild("Traffic")
+	if not root or not traffic then
+		return
+	end
+	local myPos = root.Position
+	local myVel = root.AssemblyLinearVelocity
+	if os.clock() - lastNearMiss > 3 then
+		Drive.NearMissCombo = 0
+	end
+	for _, civ in traffic:GetChildren() do
+		if not civ:IsA("Model") or not civ.PrimaryPart then
+			continue
+		end
+		local cr = civ.PrimaryPart
+		local dist = (cr.Position - myPos).Magnitude
+		local entry = nearTrack[civ]
+		if dist < 16 then
+			local rel = (myVel - cr.AssemblyLinearVelocity).Magnitude
+			if not entry then
+				nearTrack[civ] = { min = dist, rel = rel, speed = myVel.Magnitude }
+			else
+				entry.min = math.min(entry.min, dist)
+				entry.rel = math.max(entry.rel, rel)
+			end
+		elseif entry then
+			nearTrack[civ] = nil
+			local clean = myVel.Magnitude > entry.speed * 0.75
+			if clean and entry.min >= TR.NearMissMin and entry.min <= TR.NearMissMax and entry.rel >= TR.NearMissSpeed then
+				lastNearMiss = os.clock()
+				Drive.NearMissCombo += 1
+				Drive.Nitro = math.min(Drive.NitroCapacity, Drive.Nitro + TR.NearMissNitro)
+				NearMissEvent:FireServer(civ)
+				for _, fn in Drive.OnNearMiss do
+					task.spawn(fn, Drive.NearMissCombo)
+				end
+			end
+		end
+	end
+end)
+
+---------------------------------------------------------------------------
 -- Chase camera
 ---------------------------------------------------------------------------
 RunService:BindToRenderStep("WU_ChaseCam", Enum.RenderPriority.Camera.Value + 1, function(dt)
+	if Drive.MenuOpen then
+		return
+	end
 	local car = Drive.Car
 	local root = car and car.PrimaryPart
 	if not car or not root then
@@ -256,19 +335,33 @@ RunService:BindToRenderStep("WU_ChaseCam", Enum.RenderPriority.Camera.Value + 1,
 	camPos = if camPos then (camPos :: Vector3):Lerp(desired, alpha) else desired
 	camLook = if camLook then (camLook :: Vector3):Lerp(lookAt, alpha) else lookAt
 
-	-- keep the camera out of buildings
+	-- keep the camera out of buildings (only buildings, so traffic doesn't make it jump)
 	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	local ignore: { Instance } = { car }
-	if player.Character then
-		table.insert(ignore, player.Character)
+	local map = workspace:FindFirstChild("Map")
+	local buildings = map and map:FindFirstChild("Buildings")
+	if buildings then
+		params.FilterType = Enum.RaycastFilterType.Include
+		params.FilterDescendantsInstances = { buildings }
+	else
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		local ignore: { Instance } = { car }
+		if player.Character then
+			table.insert(ignore, player.Character)
+		end
+		params.FilterDescendantsInstances = ignore
 	end
-	params.FilterDescendantsInstances = ignore
 	local from = root.Position + Vector3.new(0, 3, 0)
 	local hit = workspace:Raycast(from, (camPos :: Vector3) - from, params)
 	local finalPos = camPos :: Vector3
 	if hit then
 		finalPos = hit.Position + (from - hit.Position).Unit * 1.5
+	end
+	-- camera shake: crashes, top speed and nitro
+	Drive.Shake = math.max(0, Drive.Shake - dt * 2.5)
+	local shake = Drive.Shake * 1.2 + math.clamp((speed - 120) / 400, 0, 0.18) + (if Drive.NitroOn then 0.15 else 0)
+	if shake > 0.001 then
+		local t = os.clock() * 18
+		finalPos += Vector3.new(math.noise(t, 0.3) * shake, math.noise(0.7, t) * shake, math.noise(t, 1.9) * shake * 0.5)
 	end
 	camera.CFrame = CFrame.lookAt(finalPos, camLook :: Vector3)
 	local targetFov = 70 + math.clamp(speed / 6, 0, 22) + (if Drive.NitroOn then 10 else 0)

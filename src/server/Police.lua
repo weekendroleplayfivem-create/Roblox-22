@@ -31,6 +31,7 @@ policeFolder.Name = "Police"
 policeFolder.Parent = workspace
 
 local RED = Color3.fromRGB(255, 70, 70)
+local makeSpikeStrip: (center: Vector3, dir: Vector3, across: Vector3, width: number, parent: Instance) -> BasePart
 local BLUE = Color3.fromRGB(90, 160, 255)
 
 local function level(s: Session.Session): Config.HeatLevel
@@ -97,7 +98,7 @@ local function startPursuit(s: Session.Session, reason: string)
 	s.copsWrecked = 0
 	s.lastCopSpawn = os.clock()
 	s.lastRoadblock = os.clock()
-	Session.Notify(s.player, "PURSUIT!  " .. reason, RED)
+	Session.Banner(s.player, "PURSUIT", reason, RED)
 end
 Police.StartPursuit = startPursuit
 
@@ -148,7 +149,7 @@ Police.EndPursuit = endPursuit
 
 local function busted(s: Session.Session)
 	local lost = math.floor(s.unbanked)
-	Session.Notify(s.player, "BUSTED!  You lost $" .. lost .. " of unbanked cash", RED)
+	Session.Banner(s.player, "BUSTED", "You lost $" .. lost .. " of unbanked cash", RED)
 	s.unbanked = 0
 	s.heat = 0
 	endPursuit(s)
@@ -162,7 +163,10 @@ end
 local function escaped(s: Session.Session)
 	local reward = math.floor(s.bounty)
 	s.profile.totalBounty += reward
-	Session.Notify(s.player, "ESCAPED!  Pursuit bounty banked to your record", Color3.fromRGB(80, 255, 140))
+	Session.Banner(s.player, "ESCAPED", "Bounty +" .. reward .. "  -  bank it at the safehouse", Color3.fromRGB(80, 255, 140))
+	Session.AddStat(s, "pursuitsEvaded", 1)
+	Session.MaxStat(s, "maxHeatEvaded", Session.HeatLevel(s))
+	Session.MaxStat(s, "bestBounty", reward)
 	Session.AddUnbanked(s, reward, "Bounty cash (take it to the safehouse)")
 	endPursuit(s)
 end
@@ -176,6 +180,7 @@ local function copThink(ai: AIDriver.AI, _dt: number)
 	local mode = ai.data.mode
 	local state = ai.state
 	local pos = state.root.Position
+	ai.input.nitro = false
 	if mode == "chase" or mode == "search" then
 		local s = ai.data.session :: Session.Session?
 		if not s then
@@ -197,6 +202,8 @@ local function copThink(ai: AIDriver.AI, _dt: number)
 			state.speedMult = mult
 			local lead = math.clamp(dist / 200, 0.1, 0.6)
 			AIDriver.DriveTo(ai, target + vel * lead, dist < 60)
+			-- hit the nitro to catch up on long straights
+			ai.input.nitro = dist > 180 and math.abs(ai.input.steer) < 0.3
 		else
 			local goal = ai.data.searchGoal or s.lastSeen or pos
 			if (goal - pos).Magnitude < 35 then
@@ -330,6 +337,7 @@ wreck = function(ai: AIDriver.AI, by: Session.Session?)
 	Debris:AddItem(model, 6)
 	if by and by.mode ~= "idle" then
 		by.copsWrecked += 1
+		Session.AddStat(by, "copsWrecked", 1)
 		by.bounty += Config.Bounty.CopWrecked * Session.NightMult()
 		by.heat = math.min(5, by.heat + 0.12)
 		Session.Notify(by.player, "COP WRECKED  +" .. Config.Bounty.CopWrecked .. " bounty", Color3.fromRGB(255, 160, 60))
@@ -359,6 +367,73 @@ local function spawnCopFor(s: Session.Session)
 	local heavy = lvl.heavy and math.random() < 0.4
 	local ai = spawnCop(p, target - p, heavy, if s.mode == "pursuit" then "chase" else "search", s)
 	table.insert(s.cops, ai)
+end
+
+---------------------------------------------------------------------------
+-- Spike strips: flatten the tyres of any player car that drives over them
+---------------------------------------------------------------------------
+local function flatten(owner: Session.Session)
+	local car = owner.car
+	if not car or car:GetAttribute("Flat") then
+		return
+	end
+	car:SetAttribute("Flat", true)
+	local root = car.PrimaryPart
+	local smokeAtt = root and root:FindFirstChild("Smoke")
+	if smokeAtt then
+		local sparks = Instance.new("ParticleEmitter")
+		sparks.Name = "Sparks"
+		sparks.Color = ColorSequence.new(Color3.fromRGB(255, 200, 80), Color3.fromRGB(255, 90, 20))
+		sparks.LightEmission = 1
+		sparks.Size = NumberSequence.new(0.25, 0)
+		sparks.Lifetime = NumberRange.new(0.2, 0.45)
+		sparks.Speed = NumberRange.new(15, 30)
+		sparks.SpreadAngle = Vector2.new(35, 35)
+		sparks.Rate = 90
+		sparks.Acceleration = Vector3.new(0, -60, 0)
+		sparks.Parent = smokeAtt
+		Debris:AddItem(sparks, Config.Spikes.FlatSeconds)
+	end
+	Session.Banner(owner.player, "SPIKED!", "Flat tyres - slow and slippery for " .. Config.Spikes.FlatSeconds .. "s", RED)
+	task.delay(Config.Spikes.FlatSeconds, function()
+		if car.Parent then
+			car:SetAttribute("Flat", false)
+		end
+	end)
+end
+
+makeSpikeStrip = function(center: Vector3, dir: Vector3, across: Vector3, width: number, parent: Instance): BasePart
+	local strip = Instance.new("Part")
+	strip.Name = "SpikeStrip"
+	strip.Anchored = true
+	strip.CanCollide = false
+	strip.Size = Vector3.new(width, 0.35, 2.2)
+	strip.CFrame = CFrame.lookAt(center + Vector3.new(0, Grid.RoadY + 0.18, 0), center + Vector3.new(0, Grid.RoadY + 0.18, 0) + dir) * CFrame.Angles(0, 0, 0)
+	-- the strip's long side runs across the road
+	strip.CFrame = CFrame.fromMatrix(center + Vector3.new(0, Grid.RoadY + 0.18, 0), across, Vector3.yAxis)
+	strip.Color = Color3.fromRGB(60, 60, 65)
+	strip.Material = Enum.Material.DiamondPlate
+	strip.Parent = parent
+	local teeth = math.floor(width / 1.5)
+	for k = 0, teeth - 1 do
+		local tooth = Instance.new("WedgePart")
+		tooth.Anchored = true
+		tooth.CanCollide = false
+		tooth.CanTouch = false
+		tooth.CanQuery = false
+		tooth.Size = Vector3.new(0.3, 0.6, 0.6)
+		tooth.Color = Color3.fromRGB(200, 200, 210)
+		tooth.Material = Enum.Material.Metal
+		tooth.CFrame = strip.CFrame * CFrame.new(-width / 2 + 0.75 + k * 1.5, 0.45, 0)
+		tooth.Parent = parent
+	end
+	strip.Touched:Connect(function(hit)
+		local _, owner = playerCarFromPart(hit)
+		if owner then
+			flatten(owner)
+		end
+	end)
+	return strip
 end
 
 ---------------------------------------------------------------------------
@@ -393,6 +468,30 @@ local function spawnRoadblock(s: Session.Session)
 	local center = Grid.Intersection(ti, tj) - dir * 45
 	local model = Instance.new("Model")
 	model.Name = "Roadblock"
+	local heatLvl = Session.HeatLevel(s)
+	local spikes = heatLvl >= Config.Spikes.MinHeat
+	-- from heat 4, some "roadblocks" are just a long spike strip with one open lane
+	if heatLvl >= 4 and math.random() < 0.4 then
+		local openSide = if math.random() < 0.5 then -1 else 1
+		makeSpikeStrip(center - openSide * across * 6, dir, across, 42, model)
+		for k = -3, 3 do
+			local cone = Instance.new("Part")
+			cone.Name = "Cone"
+			cone.Size = Vector3.new(1.5, 2.5, 1.5)
+			cone.Color = Color3.fromRGB(255, 120, 0)
+			cone.Material = Enum.Material.Neon
+			cone.CFrame = CFrame.new(center - dir * 25 - openSide * across * (6 + k * 5) + Vector3.new(0, Grid.RoadY + 1.25, 0))
+			cone.Parent = model
+		end
+		model.Parent = policeFolder
+		local list = roadblocks[s.player] or {}
+		table.insert(list, model)
+		roadblocks[s.player] = list
+		Debris:AddItem(model, 40)
+		Session.Notify(s.player, "SPIKE STRIP AHEAD!", RED)
+		return
+	end
+	local counted = false
 	for _, off in { -24, -12, 12, 24 } do
 		local cop = CarBuilder.Build({ style = "coupe", color = Color3.fromRGB(15, 15, 20), name = "RoadblockCar", police = true })
 		cop:SetAttribute("Siren", true)
@@ -418,11 +517,17 @@ local function spawnRoadblock(s: Session.Session)
 			croot.Anchored = false
 			croot.AssemblyLinearVelocity = dir * 50 + Vector3.new(0, 25, 0)
 			croot.AssemblyAngularVelocity = Vector3.new(3, 2, 1)
-			if owner.mode ~= "idle" then
+			if owner.mode ~= "idle" and not counted then
+				counted = true
 				owner.bounty += Config.Bounty.RoadblockSmashed * Session.NightMult()
+				Session.AddStat(owner, "roadblocksSmashed", 1)
 				Session.Notify(owner.player, "ROADBLOCK SMASHED  +" .. Config.Bounty.RoadblockSmashed .. " bounty", Color3.fromRGB(255, 160, 60))
 			end
 		end)
+	end
+	if spikes then
+		-- spike strip in the gap between the cars
+		makeSpikeStrip(center - dir * 10, dir, across, 12, model)
 	end
 	for k = -2, 2 do
 		local cone = Instance.new("Part")
@@ -583,7 +688,7 @@ local function updatePursuit(s: Session.Session, pos: Vector3, dt: number)
 		local before = Session.HeatLevel(s)
 		s.heat = math.min(5, s.heat + dt * P.HeatPerMinute / 60 * night)
 		if Session.HeatLevel(s) > before then
-			Session.Notify(s.player, "HEAT LEVEL " .. Session.HeatLevel(s) .. "!", RED)
+			Session.Banner(s.player, "HEAT LEVEL " .. Session.HeatLevel(s), "More cops, faster units", RED)
 		end
 		s.bounty += lvl.bountyPerSecond * dt * night
 		if seen then
@@ -728,7 +833,9 @@ local function checkBreakers(s: Session.Session, pos: Vector3)
 			s.bounty += Config.Bounty.PursuitBreaker * Session.NightMult()
 			s.copsWrecked += taken
 			s.bounty += taken * Config.Bounty.CopWrecked
-			Session.Notify(s.player, "PURSUIT BREAKER!  " .. taken .. " cops taken out", Color3.fromRGB(255, 160, 60))
+			Session.Banner(s.player, "PURSUIT BREAKER", taken .. " cops taken out", Color3.fromRGB(255, 160, 60))
+			Session.AddStat(s, "breakersUsed", 1)
+			Session.AddStat(s, "copsWrecked", taken)
 			task.delay(90, function()
 				MapBuilder.ResetBreaker(b)
 			end)

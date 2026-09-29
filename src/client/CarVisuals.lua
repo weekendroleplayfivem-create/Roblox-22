@@ -151,6 +151,7 @@ RunService.RenderStepped:Connect(function(dt)
 	eachCar(workspace:FindFirstChild("Cars"), fn)
 	eachCar(workspace:FindFirstChild("Police"), fn)
 	eachCar(workspace:FindFirstChild("Races"), fn)
+	eachCar(workspace:FindFirstChild("Traffic"), fn)
 end)
 
 return CarVisuals

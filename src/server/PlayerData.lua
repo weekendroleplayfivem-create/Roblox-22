@@ -20,6 +20,8 @@ export type Profile = {
 	totalBounty: number,
 	racesWon: number,
 	blacklistBeaten: number, -- how many rivals beaten (rank 5 first)
+	stats: { [string]: number }, -- milestone stats
+	milestones: { [string]: boolean }, -- completed milestone ids
 }
 
 local STORE_NAME = "WantedUnbound_v1"
@@ -49,6 +51,8 @@ local function default(): Profile
 		totalBounty = 0,
 		racesWon = 0,
 		blacklistBeaten = 0,
+		stats = {},
+		milestones = {},
 	}
 end
 

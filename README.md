@@ -28,6 +28,27 @@ in code, so you don't need any models, meshes or assets.
 5. **Climb the Blacklist.** Earn total bounty and race wins, then challenge Blacklist rivals #5 → #1
    from the garage. Beat one and you win their car's **pink slip**.
 
+### New in this version
+- **Title screen** with a camera flight over the city, plus a "How to play" screen.
+- **City traffic:** civilian cars stay in the right lane, turn at intersections and brake for
+  cars ahead.
+- **Near misses:** pass traffic close and fast without touching it to earn cash and nitro. Chain
+  them for a combo.
+- **Spike strips** from heat 3: flat tyres make your car slow and slippery for 8 seconds, with
+  sparks. From heat 4 some roadblocks are one long spike strip with a single open lane.
+- **Smarter cops:** they use nitro on long straights to catch up.
+- **Milestones:** 27 challenges with cash rewards (wreck cops, escape pursuits, near misses,
+  drift combos, speed cameras, race wins and more). There's a Milestones tab in the garage.
+- **Speed effects:** camera shake (speed, nitro and crashes), speed lines, nitro blur and colour
+  grading, and a flash when you crash.
+- **Animated banners:** PURSUIT, BUSTED, ESCAPED, HEAT LEVEL, SPIKED!, 1ST PLACE, BLACKLIST
+  DEFEATED, MILESTONE COMPLETE.
+- **GPS arrow** floating above your car that points to the next checkpoint, the nearest hiding
+  spot (during cooldown) or the safehouse (when you're carrying unbanked cash).
+- **Live race standings** in the race panel, and traffic shown on the minimap.
+- **Sounds:** near miss, checkpoint and banner sounds. You can add engine and siren loops by
+  pasting audio ids into `Config.Sounds` in `src/shared/Config.lua`.
+
 ### Features
 - **Most Wanted:** heat levels 1–5, patrols, pursuits with evade + cooldown meters, bust meter,
   bounty, wrecking cops, **roadblocks** (heat 3+), heavy SUV units (heat 4+), a **helicopter**
@@ -99,7 +120,8 @@ src/server/   (ServerScriptService.Server)
   DayNight.lua      day/night lighting, sky, clouds, street lamps
   Vehicles.lua      spawning / resetting player cars
   AIDriver.lua      road-grid navigation + unstick logic for AI cars
-  Police.lua        heat, pursuits, cops, roadblocks, helicopter, pursuit breakers, busts
+  Police.lua        heat, pursuits, cops, roadblocks, spike strips, helicopter, pursuit breakers, busts
+  Traffic.lua       civilian traffic
   Races.lua         races, drift events and Blacklist challenges
   Session.lua       per-player runtime state and money helpers
   PlayerData.lua    DataStore save / load
@@ -109,6 +131,8 @@ src/client/   (StarterPlayerScripts.Client)
   HUD.lua           all on-screen UI + minimap
   Garage.lua        garage: cars, performance parts, handling, visuals, Blacklist
   CarVisuals.lua    spinning / steering wheels, headlights at night, brake lights
+  Effects.lua       banners, speed lines, blur, near-miss popups, sounds, GPS arrow
+  Menu.lua          title screen
 ```
 
 You can change almost everything in `src/shared/Config.lua`, including car stats, prices, heat

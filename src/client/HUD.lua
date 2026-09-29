@@ -153,7 +153,7 @@ local timeLabel = label({ Position = UDim2.fromOffset(12, 82), Size = UDim2.new(
 local racePanel = new("Frame", {
 	AnchorPoint = Vector2.new(1, 0),
 	Position = UDim2.new(1, -16, 0, 250),
-	Size = UDim2.fromOffset(230, 150),
+	Size = UDim2.fromOffset(230, 250),
 	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
 	BackgroundTransparency = 0.35,
 	Visible = false,
@@ -164,6 +164,17 @@ local raceName = label({ Position = UDim2.fromOffset(10, 6), Size = UDim2.new(1,
 local racePos = label({ Position = UDim2.fromOffset(10, 30), Size = UDim2.new(1, -20, 0, 50), Text = "" }, racePanel)
 local raceInfo = label({ Position = UDim2.fromOffset(10, 84), Size = UDim2.new(1, -20, 0, 22), Text = "", Font = FONT2 }, racePanel)
 local raceTime = label({ Position = UDim2.fromOffset(10, 110), Size = UDim2.new(1, -20, 0, 22), Text = "", Font = FONT2, TextColor3 = Color3.fromRGB(200, 200, 220) }, racePanel)
+local standings = label({
+	Position = UDim2.fromOffset(14, 140),
+	Size = UDim2.new(1, -28, 0, 100),
+	Text = "",
+	Font = FONT2,
+	TextScaled = false,
+	TextSize = 17,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	TextColor3 = Color3.fromRGB(230, 230, 240),
+}, racePanel)
 
 local countdown = label({
 	AnchorPoint = Vector2.new(0.5, 0.5),
@@ -453,6 +464,7 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 			racePos.Text = commas(num("RaceScore"))
 			raceInfo.Text = "Target: " .. commas(num("RaceTarget"))
 			raceTime.Text = string.format("Time left: %.1fs", math.max(0, num("RaceTimeLeft")))
+			standings.Text = ""
 		else
 			racePos.Text = string.format("%d / %d", num("RacePos"), num("RaceRacers"))
 			local laps = num("RaceLaps")
@@ -460,6 +472,7 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 				then string.format("Lap %d/%d   CP %d/%d", num("RaceLap"), laps, num("RaceCP"), num("RaceCPTotal"))
 				else string.format("Checkpoint %d/%d", num("RaceCP"), num("RaceCPTotal"))
 			raceTime.Text = string.format("Time: %.1fs", num("RaceTime"))
+			standings.Text = tostring(player:GetAttribute("RaceStandings") or "")
 		end
 	end
 	local cd = num("RaceCountdown")
@@ -489,6 +502,14 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 		for _, m in cars:GetChildren() do
 			if m:IsA("Model") and m ~= car and m.PrimaryPart then
 				dot(m.PrimaryPart.Position, Color3.new(1, 1, 1), 7)
+			end
+		end
+	end
+	local traffic = workspace:FindFirstChild("Traffic")
+	if traffic then
+		for _, m in traffic:GetChildren() do
+			if m:IsA("Model") and m.PrimaryPart then
+				dot(m.PrimaryPart.Position, Color3.fromRGB(130, 130, 145), 4)
 			end
 		end
 	end

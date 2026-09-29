@@ -66,6 +66,7 @@ local function clearAttrs(player: Player)
 		RaceNext = Vector3.zero,
 		RaceScore = 0,
 		RaceTarget = 0,
+		RaceStandings = "",
 	})
 end
 
@@ -135,10 +136,10 @@ local function finishPlayer(race: Race, place: number?)
 			local ratio = math.min(race.driftScore / target, 2)
 			local payout = def.reward * ratio * night * heatMult
 			s.profile.racesWon += 1
-			Session.Notify(s.player, "DRIFT EVENT COMPLETE!  Score " .. math.floor(race.driftScore), GOLD)
+			Session.Banner(s.player, "DRIFT EVENT COMPLETE", "Score " .. math.floor(race.driftScore), GOLD)
 			Session.AddUnbanked(s, payout, def.name .. " winnings")
 		else
-			Session.Notify(s.player, "Drift target missed (" .. math.floor(race.driftScore) .. "/" .. target .. ")", Color3.fromRGB(255, 90, 90))
+			Session.Banner(s.player, "TARGET MISSED", math.floor(race.driftScore) .. " / " .. target, Color3.fromRGB(255, 90, 90))
 		end
 	elseif place then
 		local frac = Config.PlacePayout[place] or 0
@@ -149,18 +150,18 @@ local function finishPlayer(race: Race, place: number?)
 				s.profile.racesWon += 1
 				s.profile.owned[rival.carId] = true
 				local carDef = Config.GetCar(rival.carId)
-				Session.Notify(s.player, "BLACKLIST #" .. rival.rank .. " " .. string.upper(rival.name) .. " DEFEATED!", GOLD)
+				Session.Banner(s.player, "BLACKLIST #" .. rival.rank .. " DEFEATED", string.upper(rival.name) .. " is off the list", GOLD)
 				Session.Notify(s.player, "PINK SLIP: " .. (if carDef then carDef.name else rival.carId) .. " is now in your garage", GOLD)
 				Session.AddUnbanked(s, rival.reward, "Blacklist reward")
 			else
-				Session.Notify(s.player, string.upper(rival.name) .. " beat you. Try again!", Color3.fromRGB(255, 90, 90))
+				Session.Banner(s.player, "YOU LOST", string.upper(rival.name) .. " beat you. Try again!", Color3.fromRGB(255, 90, 90))
 			end
 		else
 			if place == 1 then
 				s.profile.racesWon += 1
-				Session.Notify(s.player, "1ST PLACE!  " .. def.name, GOLD)
+				Session.Banner(s.player, "1ST PLACE", def.name, GOLD)
 			else
-				Session.Notify(s.player, "Finished " .. place .. (if place == 2 then "nd" elseif place == 3 then "rd" else "th"), Color3.new(1, 1, 1))
+				Session.Banner(s.player, place .. (if place == 2 then "ND" elseif place == 3 then "RD" else "TH") .. " PLACE", def.name, Color3.new(1, 1, 1))
 			end
 			if frac > 0 then
 				Session.AddUnbanked(s, (def.reward + def.buyIn) * frac * night * heatMult, def.name .. " winnings")
@@ -176,6 +177,7 @@ local function finishPlayer(race: Race, place: number?)
 			Session.Notify(s.player, "Your HEAT is now level " .. Session.HeatLevel(s) .. " - bigger payouts, angrier cops", Color3.fromRGB(255, 70, 70))
 		end
 	end
+	Session.CheckMilestones(s)
 	cleanup(race)
 end
 
@@ -421,6 +423,23 @@ function Races.Update(s: Session.Session, driftGain: number)
 			end
 		end
 		player:SetAttribute("RacePos", place)
+
+		-- live standings list for the HUD
+		local rows = {}
+		for _, r in race.racers do
+			local p = if r == race.player then ppos else racerPos(race, r)
+			if p then
+				table.insert(rows, { name = if r == race.player then "YOU" else r.name, score = progress(race, r, p) })
+			end
+		end
+		table.sort(rows, function(x, y)
+			return x.score > y.score
+		end)
+		local lines = {}
+		for k, row in rows do
+			table.insert(lines, k .. ".  " .. row.name)
+		end
+		player:SetAttribute("RaceStandings", table.concat(lines, "\n"))
 	end
 	player:SetAttribute("RaceCP", race.player.cp - 1)
 	player:SetAttribute("RaceLap", math.min(math.floor((race.player.cp - 1) / race.perLap) + 1, player:GetAttribute("RaceLaps") :: number))

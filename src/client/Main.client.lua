@@ -18,6 +18,8 @@ local Drive = require(script.Parent.DriveController)
 local HUD = require(script.Parent.HUD)
 local Garage = require(script.Parent.Garage)
 require(script.Parent.CarVisuals)
+require(script.Parent.Effects)
+require(script.Parent.Menu)
 
 local player = Players.LocalPlayer
 
@@ -187,6 +189,7 @@ local promptTimer = 0
 local sirenTimer = 0
 RunService.RenderStepped:Connect(function(dt)
 	local car = Drive.Car
+	HUD.Gui.Enabled = not Drive.MenuOpen
 	HUD.Update(dt, Drive.Speed, Drive.Nitro, Drive.NitroCapacity, Drive.NitroOn, car)
 	promptTimer += dt
 	if promptTimer > 0.2 then

@@ -15,6 +15,7 @@ local PlayerData = require(script.Parent.PlayerData)
 local Session = require(script.Parent.Session)
 local Vehicles = require(script.Parent.Vehicles)
 local Police = require(script.Parent.Police)
+local Traffic = require(script.Parent.Traffic)
 local Races = require(script.Parent.Races)
 
 ---------------------------------------------------------------------------
@@ -29,6 +30,8 @@ local function remote(className: string, name: string): Instance
 	return r
 end
 remote("RemoteEvent", "Notify")
+remote("RemoteEvent", "Banner")
+local nearMissEvent = remote("RemoteEvent", "NearMiss") :: RemoteEvent
 local nitroEvent = remote("RemoteEvent", "NitroState") :: RemoteEvent
 local raceEvent = remote("RemoteEvent", "RequestRace") :: RemoteEvent
 local respawnEvent = remote("RemoteEvent", "RespawnCar") :: RemoteEvent
@@ -44,6 +47,7 @@ Session.SetRemotes(remotes)
 local mapInfo = MapBuilder.Build()
 Vehicles.SetSpawns(mapInfo.safehouseSpawns)
 Police.Init(mapInfo)
+Traffic.Init()
 Police.SetBustedCallback(function(s)
 	Races.Cancel(s)
 end)
@@ -246,6 +250,28 @@ rivalEvent.OnServerEvent:Connect(function(player, rank)
 	end
 end)
 
+-- Near misses are detected on the driver's client (it owns the car physics); the server
+-- checks the claim against the traffic car's position and rate-limits it.
+local lastNearMiss: { [Player]: number } = {}
+nearMissEvent.OnServerEvent:Connect(function(player, civ)
+	local s = Session.Get(player)
+	if not s or typeof(civ) ~= "Instance" or not civ:IsA("Model") or civ.Parent ~= Traffic.Folder then
+		return
+	end
+	local now = os.clock()
+	if now - (lastNearMiss[player] or 0) < 0.6 then
+		return
+	end
+	local pos = Session.CarPosition(s)
+	local civRoot = (civ :: Model).PrimaryPart
+	if not pos or not civRoot or (civRoot.Position - pos).Magnitude > 40 then
+		return
+	end
+	lastNearMiss[player] = now
+	Session.AddStat(s, "nearMisses", 1)
+	s.unbanked += Config.Traffic.NearMissCash * Session.NightMult()
+end)
+
 local function snapshot(s: Session.Session)
 	local p = s.profile
 	return {
@@ -259,6 +285,8 @@ local function snapshot(s: Session.Session)
 		totalBounty = p.totalBounty,
 		racesWon = p.racesWon,
 		blacklistBeaten = p.blacklistBeaten,
+		stats = p.stats,
+		milestones = p.milestones,
 	}
 end
 
@@ -433,6 +461,7 @@ task.spawn(function()
 				s.driftIdle += dt
 				if s.driftIdle > 1.2 and s.driftCombo > 0 then
 					local combo = s.driftCombo
+					Session.MaxStat(s, "bestDrift", math.floor(combo))
 					s.driftCombo = 0
 					if combo > 400 and not s.race then
 						Session.AddUnbanked(s, combo / 25 * Session.NightMult(), "DRIFT x" .. math.floor(combo))
@@ -445,6 +474,7 @@ task.spawn(function()
 				if (Vector3.new(pos.X, cam.Y, pos.Z) - cam).Magnitude < 34 and os.clock() > (s.camCooldown[idx] or 0) then
 					s.camCooldown[idx] = os.clock() + 20
 					local mph = math.floor(speed * Config.MphPerStud)
+					Session.MaxStat(s, "bestSpeedCam", mph)
 					if mph > 60 then
 						Session.AddUnbanked(s, (mph - 60) * Config.SpeedCameraCashPerMph * Session.NightMult(), "SPEED CAMERA " .. mph .. " MPH")
 						if s.mode ~= "idle" then
