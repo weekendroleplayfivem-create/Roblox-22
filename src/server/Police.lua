@@ -600,7 +600,10 @@ local function updatePursuit(s: Session.Session, pos: Vector3, dt: number)
 				Session.Notify(s.player, "Out of sight - lie low for COOLDOWN", BLUE)
 			end
 		end
-		if #s.cops < lvl.maxCops and now - s.lastCopSpawn > lvl.spawnInterval then
+		local isNight = Session.IsNight()
+		local maxCops = lvl.maxCops + (if isNight then P.NightExtraCops else 0)
+		local interval = lvl.spawnInterval * (if isNight then P.NightSpawnMult else 1)
+		if #s.cops < maxCops and now - s.lastCopSpawn > interval then
 			s.lastCopSpawn = now
 			spawnCopFor(s)
 		end
@@ -634,8 +637,31 @@ local function maintainPatrols()
 			table.remove(patrols, idx)
 		end
 	end
-	local want = P.PatrolCount + math.floor(#Players:GetPlayers() / 2)
-	if #patrols >= want then
+	-- more patrols roam the city at night
+	local want = P.PatrolCount + math.floor(#Players:GetPlayers() / 2) + (if Session.IsNight() then P.NightExtraPatrols else 0)
+	if #patrols > want then
+		-- daybreak: send surplus patrols home once nobody can see them
+		for idx = #patrols, 1, -1 do
+			local ai = patrols[idx]
+			local pos = ai.state.root.Position
+			local seen = false
+			for _, s in Session.All() do
+				local cp = Session.CarPosition(s)
+				if cp and (cp - pos).Magnitude < 350 then
+					seen = true
+					break
+				end
+			end
+			if not seen then
+				table.remove(patrols, idx)
+				AIDriver.Remove(ai)
+				ai.model:Destroy()
+				return
+			end
+		end
+		return
+	end
+	if #patrols == want then
 		return
 	end
 	-- spawn away from every player

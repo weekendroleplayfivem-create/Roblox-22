@@ -24,6 +24,8 @@ export type MapInfo = {
 	breakers: { Breaker },
 	speedCams: { Vector3 },
 	buildings: Folder,
+	nightLights: { Light },
+	nightNeon: { BasePart },
 }
 
 local rng = Random.new(22)
@@ -80,9 +82,32 @@ local NEON_COLORS = {
 }
 local SIGN_TEXTS = { "WANTED", "UNBOUND", "NEON BAY", "NITRO", "24/7", "MOTEL", "GARAGE", "HOTEL", "CLUB", "RAMEN" }
 
+-- Painted road markings: double yellow centre line and white edge lines.
+local function markings(mid: Vector3, alongX: boolean, segLen: number, folder: Folder)
+	local function line(offset: number, width: number, color: Color3)
+		local size = if alongX then Vector3.new(segLen - 6, 0.04, width) else Vector3.new(width, 0.04, segLen - 6)
+		local off = if alongX then Vector3.new(0, 0, offset) else Vector3.new(offset, 0, 0)
+		anchored({
+			Name = "Line",
+			Size = size,
+			CFrame = CFrame.new(mid.X + off.X, SURFACE + 0.02, mid.Z + off.Z),
+			Color = color,
+			Material = Enum.Material.SmoothPlastic,
+			CanCollide = false,
+			CanQuery = false,
+		}, folder)
+	end
+	local yellow = Color3.fromRGB(235, 190, 40)
+	local white = Color3.fromRGB(225, 225, 225)
+	line(-0.55, 0.45, yellow)
+	line(0.55, 0.45, yellow)
+	line(-(ROAD / 2 - 2.5), 0.5, white)
+	line(ROAD / 2 - 2.5, 0.5, white)
+end
+
 local function buildRoads(folder: Folder)
 	local N = Grid.Size
-	local asphalt = Color3.fromRGB(38, 38, 42)
+	local asphalt = Color3.fromRGB(34, 34, 37)
 	local segLen = Grid.Cell - ROAD
 	for i = 0, N do
 		for j = 0, N do
@@ -103,15 +128,7 @@ local function buildRoads(folder: Folder)
 					Color = asphalt,
 					Material = Enum.Material.Asphalt,
 				}, folder)
-				anchored({
-					Name = "Line",
-					Size = Vector3.new(segLen - 10, 0.05, 0.8),
-					CFrame = CFrame.new(mid.X, SURFACE + 0.02, mid.Z),
-					Color = Color3.fromRGB(255, 200, 40),
-					Material = Enum.Material.Neon,
-					CanCollide = false,
-					CanQuery = false,
-				}, folder)
+				markings(mid, true, segLen, folder)
 			end
 			if j < N then
 				local mid = Grid.SegmentMid(i, j, "z")
@@ -122,42 +139,55 @@ local function buildRoads(folder: Folder)
 					Color = asphalt,
 					Material = Enum.Material.Asphalt,
 				}, folder)
-				anchored({
-					Name = "Line",
-					Size = Vector3.new(0.8, 0.05, segLen - 10),
-					CFrame = CFrame.new(mid.X, SURFACE + 0.02, mid.Z),
-					Color = Color3.fromRGB(255, 200, 40),
-					Material = Enum.Material.Neon,
-					CanCollide = false,
-					CanQuery = false,
-				}, folder)
+				markings(mid, false, segLen, folder)
 			end
 		end
 	end
 end
 
-local function streetLight(pos: Vector3, props: Folder)
+-- Night-time lights the day/night cycle switches on and off
+local nightLights: { Light } = {}
+local nightNeon: { BasePart } = {}
+
+-- Street lamp with an arm reaching over the road (`toRoad` is a unit direction).
+local function streetLight(pos: Vector3, toRoad: Vector3, props: Folder)
+	local metal = Color3.fromRGB(55, 58, 62)
 	anchored({
 		Name = "Pole",
-		Size = Vector3.new(0.8, 22, 0.8),
-		CFrame = CFrame.new(pos + Vector3.new(0, 11, 0)),
-		Color = Color3.fromRGB(60, 60, 65),
+		Size = Vector3.new(0.7, 24, 0.7),
+		CFrame = CFrame.new(pos + Vector3.new(0, 12, 0)),
+		Color = metal,
 		Material = Enum.Material.Metal,
 		CanCollide = false,
 	}, props)
-	local lamp = anchored({
-		Name = "Lamp",
-		Size = Vector3.new(2.5, 0.6, 2.5),
-		CFrame = CFrame.new(pos + Vector3.new(0, 22, 0)),
-		Color = Color3.fromRGB(255, 220, 160),
-		Material = Enum.Material.Neon,
+	local armCenter = pos + toRoad * 3 + Vector3.new(0, 24, 0)
+	anchored({
+		Name = "Arm",
+		Size = Vector3.new(0.5, 0.5, 6.5),
+		CFrame = CFrame.lookAt(armCenter, armCenter + toRoad),
+		Color = metal,
+		Material = Enum.Material.Metal,
 		CanCollide = false,
 	}, props)
-	local light = Instance.new("PointLight")
-	light.Range = 45
-	light.Brightness = 1.4
-	light.Color = Color3.fromRGB(255, 200, 140)
+	local headPos = pos + toRoad * 6 + Vector3.new(0, 23.6, 0)
+	local lamp = anchored({
+		Name = "Lamp",
+		Size = Vector3.new(1.6, 0.35, 3),
+		CFrame = CFrame.lookAt(headPos, headPos + toRoad),
+		Color = Color3.fromRGB(255, 214, 150),
+		Material = Enum.Material.Neon,
+		CanCollide = false,
+		CanQuery = false,
+	}, props)
+	local light = Instance.new("SpotLight")
+	light.Face = Enum.NormalId.Bottom
+	light.Range = 58
+	light.Angle = 120
+	light.Brightness = 3
+	light.Color = Color3.fromRGB(255, 196, 130)
 	light.Parent = lamp
+	table.insert(nightLights, light)
+	table.insert(nightNeon, lamp)
 end
 
 local function building(center: Vector3, footprint: Vector3, height: number, buildings: Folder, props: Folder)
@@ -184,7 +214,7 @@ local function building(center: Vector3, footprint: Vector3, height: number, bui
 	local bands = math.floor(height / 24)
 	for k = 1, bands do
 		if rng:NextNumber() < 0.55 then
-			anchored({
+			local win = anchored({
 				Name = "Windows",
 				Size = Vector3.new(footprint.X + 0.4, 2, footprint.Z + 0.4),
 				CFrame = CFrame.new(center.X, SURFACE + k * 24 - 6, center.Z),
@@ -194,6 +224,7 @@ local function building(center: Vector3, footprint: Vector3, height: number, bui
 				CanCollide = false,
 				CanQuery = false,
 			}, props)
+			table.insert(nightNeon, win)
 		end
 	end
 	-- occasional rooftop sign
@@ -245,9 +276,11 @@ local function cityBlock(bx: number, bz: number, buildings: Folder, props: Folde
 			end
 		end
 	end
-	for _, o in { -1, 1 } do
-		streetLight(c + Vector3.new(o * (BLOCK / 2 - 4), 0, o * (BLOCK / 2 - 4)), props)
-	end
+	local edge = BLOCK / 2 - 3
+	streetLight(c + Vector3.new(0, 0, -edge), -Vector3.zAxis, props)
+	streetLight(c + Vector3.new(0, 0, edge), Vector3.zAxis, props)
+	streetLight(c + Vector3.new(-edge, 0, 0), -Vector3.xAxis, props)
+	streetLight(c + Vector3.new(edge, 0, 0), Vector3.xAxis, props)
 end
 
 local function safehouse(bx: number, bz: number, buildings: Folder, props: Folder, ground: Folder): (Vector3, { CFrame })
@@ -558,6 +591,8 @@ function MapBuilder.Build(): MapInfo
 		breakers = {},
 		speedCams = {},
 		buildings = buildings,
+		nightLights = nightLights,
+		nightNeon = nightNeon,
 	}
 
 	local function isSpecial(bx: number, bz: number): string?

@@ -210,17 +210,117 @@ function Config.GetCar(id: string): CarDef?
 end
 
 ---------------------------------------------------------------------------
--- Upgrades (per car). Each level multiplies stats.
+-- Tuning (Unbound style). Per car you get:
+--   * performance parts in tiers Stock -> Sport -> Pro -> Elite -> Elite+
+--   * handling sliders (drift <-> grip, downforce, steering, ride height)
+--   * visual customisation (rims, tint, spoiler, body kit, underglow)
+-- Everything feeds a Performance Rating (PI) and class, C up to S+.
 ---------------------------------------------------------------------------
-Config.Upgrades = {
-	engine = { name = "Engine", maxLevel = 3, cost = { 4000, 12000, 30000 } },
-	nitro = { name = "Nitrous", maxLevel = 3, cost = { 3000, 9000, 22000 } },
-	handling = { name = "Handling", maxLevel = 3, cost = { 3000, 9000, 22000 } },
-}
-Config.UpgradeOrder = { "engine", "nitro", "handling" }
+Config.PartTiers = { "Stock", "Sport", "Pro", "Elite", "Elite+" }
+Config.PartTierCost = { 1, 2.5, 5, 9 } -- multiplier for tier 1..4 on the part base price
 
--- Class multiplier for upgrade prices
+export type PartDef = {
+	id: string,
+	name: string,
+	desc: string,
+	base: number,
+	-- bonus per tier (fractions, except nitro/cap which are absolute)
+	maxSpeed: number?,
+	accel: number?,
+	turn: number?,
+	grip: number?,
+	brake: number?,
+	nitro: number?,
+	cap: number?,
+}
+
+Config.Parts = {
+	{ id = "engine", name = "Engine", desc = "Top speed + acceleration", base = 3000, maxSpeed = 0.03, accel = 0.05 },
+	{ id = "turbo", name = "Forced Induction", desc = "Turbo / supercharger: acceleration", base = 3500, maxSpeed = 0.015, accel = 0.06 },
+	{ id = "exhaust", name = "Exhaust", desc = "Free-flow exhaust", base = 1500, maxSpeed = 0.01, accel = 0.02 },
+	{ id = "ecu", name = "ECU", desc = "Engine map: top speed", base = 2000, maxSpeed = 0.02, accel = 0.01 },
+	{ id = "transmission", name = "Transmission", desc = "Faster shifts: speed + acceleration", base = 2500, maxSpeed = 0.02, accel = 0.03 },
+	{ id = "suspension", name = "Suspension", desc = "Cornering + stability", base = 2000, turn = 0.03, grip = 0.03 },
+	{ id = "brakes", name = "Brakes", desc = "Stopping power", base = 1500, brake = 0.1 },
+	{ id = "tires", name = "Tires", desc = "Grip", base = 2000, grip = 0.05, turn = 0.01 },
+	{ id = "nitrous", name = "Nitrous", desc = "Boost power + tank size", base = 2500, nitro = 0.03, cap = 0.2 },
+} :: { PartDef }
+
+function Config.GetPart(id: string): PartDef?
+	for _, p in Config.Parts do
+		if p.id == id then
+			return p
+		end
+	end
+	return nil
+end
+
+export type Slider = { id: string, name: string, left: string, right: string, min: number, max: number, default: number }
+
+Config.HandlingSliders = {
+	{ id = "drift", name = "Handling", left = "DRIFT", right = "GRIP", min = -5, max = 5, default = 0 },
+	{ id = "downforce", name = "Downforce", left = "LOW", right = "HIGH", min = 0, max = 5, default = 1 },
+	{ id = "steering", name = "Steering", left = "SLOW", right = "FAST", min = -3, max = 3, default = 0 },
+	{ id = "ride", name = "Ride Height", left = "LOW", right = "HIGH", min = -2, max = 2, default = 0 },
+} :: { Slider }
+
+Config.Visual = {
+	rim = { "Classic 5-Spoke", "Sport 6-Spoke", "Mesh", "Deep Dish", "Turbine" },
+	rimColor = {
+		{ name = "Silver", color = Color3.fromRGB(200, 200, 210) },
+		{ name = "Gunmetal", color = Color3.fromRGB(70, 72, 80) },
+		{ name = "Black", color = Color3.fromRGB(25, 25, 28) },
+		{ name = "Gold", color = Color3.fromRGB(215, 175, 60) },
+		{ name = "Bronze", color = Color3.fromRGB(150, 100, 55) },
+		{ name = "White", color = Color3.fromRGB(240, 240, 240) },
+		{ name = "Neon Pink", color = Color3.fromRGB(255, 60, 170) },
+	},
+	tint = {
+		{ name = "Clear", transparency = 0.65 },
+		{ name = "Light", transparency = 0.45 },
+		{ name = "Dark", transparency = 0.25 },
+		{ name = "Limo", transparency = 0.1 },
+	},
+	spoiler = { "None", "Ducktail Lip", "Street Wing", "GT Wing" },
+	kit = { "Stock", "Street Kit", "Widebody" },
+	glow = {
+		{ name = "Off", color = nil :: Color3? },
+		{ name = "Effect Colour", color = nil :: Color3? },
+		{ name = "Cyan", color = Color3.fromRGB(0, 240, 255) :: Color3? },
+		{ name = "Pink", color = Color3.fromRGB(255, 40, 170) :: Color3? },
+		{ name = "Purple", color = Color3.fromRGB(160, 60, 255) :: Color3? },
+		{ name = "Green", color = Color3.fromRGB(60, 255, 100) :: Color3? },
+		{ name = "Orange", color = Color3.fromRGB(255, 140, 20) :: Color3? },
+	},
+}
+Config.VisualOrder = { "rim", "rimColor", "tint", "spoiler", "kit", "glow" }
+Config.VisualNames = { rim = "Rims", rimColor = "Rim Colour", tint = "Window Tint", spoiler = "Spoiler", kit = "Body Kit", glow = "Underglow" }
+
+export type Tune = {
+	parts: { [string]: number },
+	handling: { [string]: number },
+	visual: { [string]: number },
+}
+
+function Config.DefaultTune(): Tune
+	local parts = {}
+	for _, p in Config.Parts do
+		parts[p.id] = 0
+	end
+	local handling = {}
+	for _, sl in Config.HandlingSliders do
+		handling[sl.id] = sl.default
+	end
+	local visual = { rim = 1, rimColor = 1, tint = 2, spoiler = 1, kit = 1, glow = 2 }
+	return { parts = parts, handling = handling, visual = visual }
+end
+
+-- Class multiplier for tuning prices
 Config.ClassCostMult = { D = 1, C = 1.3, B = 1.7, A = 2.2, S = 3, ["S+"] = 3.5 }
+
+function Config.PartCost(car: CarDef, part: PartDef, tier: number): number
+	return math.floor(part.base * (Config.PartTierCost[tier] or 99) * (Config.ClassCostMult[car.class] or 1))
+end
 
 export type Stats = {
 	maxSpeed: number,
@@ -230,21 +330,63 @@ export type Stats = {
 	grip: number,
 	nitroMult: number,
 	nitroCapacity: number,
+	driftGrip: number,
+	downforce: number,
+	rating: number,
 }
 
-function Config.ComputeStats(car: CarDef, upgrades: { [string]: number }?): Stats
-	local u: { [string]: number } = upgrades or {}
-	local engine = u.engine or 0
-	local nitro = u.nitro or 0
-	local handling = u.handling or 0
+-- Performance rating like Unbound: C < 400, B 400+, A 500+, A+ 600+, S 700+, S+ 800+
+function Config.RatingClass(rating: number): string
+	if rating >= 800 then
+		return "S+"
+	elseif rating >= 700 then
+		return "S"
+	elseif rating >= 600 then
+		return "A+"
+	elseif rating >= 500 then
+		return "A"
+	elseif rating >= 400 then
+		return "B"
+	end
+	return "C"
+end
+
+function Config.ComputeStats(car: CarDef, tune: Tune?): Stats
+	local t = tune or Config.DefaultTune()
+	local speedB, accelB, turnB, gripB, brakeB, nitroB, capB = 0, 0, 0, 0, 0, 0, 0
+	for _, p in Config.Parts do
+		local tier = (t.parts and t.parts[p.id]) or 0
+		speedB += (p.maxSpeed or 0) * tier
+		accelB += (p.accel or 0) * tier
+		turnB += (p.turn or 0) * tier
+		gripB += (p.grip or 0) * tier
+		brakeB += (p.brake or 0) * tier
+		nitroB += (p.nitro or 0) * tier
+		capB += (p.cap or 0) * tier
+	end
+	local h: { [string]: number } = t.handling or {}
+	local g = (h.drift or 0) / 5 -- -1 drift .. +1 grip
+	local df = (h.downforce or 1) / 5
+	local steer = h.steering or 0
+	local ride = h.ride or 0
+
+	local maxSpeed = car.maxSpeed * (1 + speedB) * (1 - 0.04 * df)
+	local accel = car.accel * (1 + accelB)
+	local turn = car.turn * (1 + turnB) * (1 - 0.06 * g) * (1 + 0.06 * steer)
+	local grip = car.grip * (1 + gripB) * (1 + 0.18 * g) * (1 - 0.02 * ride)
+	local brake = car.brake * (1 + brakeB)
+	local rating = maxSpeed * 1.6 + accel * 2.5 + turn * grip * 4 + brake * 0.3
 	return {
-		maxSpeed = car.maxSpeed * (1 + 0.07 * engine),
-		accel = car.accel * (1 + 0.1 * engine),
-		brake = car.brake,
-		turn = car.turn * (1 + 0.05 * handling),
-		grip = car.grip * (1 + 0.08 * handling),
-		nitroMult = car.nitroMult + 0.04 * nitro,
-		nitroCapacity = 1 + 0.3 * nitro,
+		maxSpeed = maxSpeed,
+		accel = accel,
+		brake = brake,
+		turn = turn,
+		grip = grip,
+		nitroMult = car.nitroMult + nitroB,
+		nitroCapacity = 1 + capB,
+		driftGrip = 0.4 + 0.12 * g,
+		downforce = df,
+		rating = math.clamp(math.floor(rating), 100, 999),
 	}
 end
 
@@ -287,7 +429,10 @@ Config.Police = {
 	Accel = 50,
 	Turn = 2.4,
 	Grip = 6.5,
-	PatrolCount = 4, -- roaming patrols across the whole city
+	PatrolCount = 4, -- roaming patrols across the whole city (daytime)
+	NightExtraPatrols = 5, -- extra patrol cars out at night
+	NightExtraCops = 2, -- extra units per pursuit at night
+	NightSpawnMult = 0.65, -- pursuit reinforcements arrive faster at night
 	SpeedLimit = 95, -- studs/s (~71 mph). Faster than this in front of a cop starts a pursuit.
 	SpotRadius = 140,
 	BustRadius = 22,

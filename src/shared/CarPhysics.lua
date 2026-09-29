@@ -22,6 +22,8 @@ export type Stats = {
 	turn: number,
 	grip: number,
 	nitroMult: number,
+	driftGrip: number?, -- grip multiplier while drifting (lower = longer slides)
+	downforce: number?, -- 0..1, extra grip at high speed
 }
 
 export type State = {
@@ -151,11 +153,11 @@ function CarPhysics.Step(state: State, input: Input, stats: Stats, dt: number)
 			state.drifting = false
 		end
 
-		local grip = stats.grip
+		local grip = stats.grip * (1 + (stats.downforce or 0) * 0.6 * math.clamp(absFwd / stats.maxSpeed, 0, 1))
 		if input.handbrake then
 			grip *= 0.18
 		elseif state.drifting then
-			grip *= 0.4
+			grip *= stats.driftGrip or 0.4
 		end
 		local oldLat = math.abs(lat)
 		lat *= math.max(0, 1 - grip * dt)

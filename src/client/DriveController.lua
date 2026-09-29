@@ -26,6 +26,9 @@ Drive.Nitro = 1
 Drive.NitroCapacity = 1
 Drive.NitroOn = false
 Drive.Drifting = false
+Drive.Throttle = 0
+Drive.Steer = 0
+Drive.Handbrake = false
 
 local seat: VehicleSeat? = nil
 local handbrake = false
@@ -183,7 +186,12 @@ RunService.PreSimulation:Connect(function(dt: number)
 		turn = stat(car, "turn", 2.3),
 		grip = stat(car, "grip", 6),
 		nitroMult = stat(car, "nitroMult", 1.3),
+		driftGrip = stat(car, "driftGrip", 0.4),
+		downforce = stat(car, "downforce", 0.2),
 	}
+	Drive.Throttle = throttle
+	Drive.Steer = steer
+	Drive.Handbrake = handbrake
 	CarPhysics.Step(state, { throttle = throttle, steer = steer, handbrake = handbrake, nitro = nitroOn }, stats, dt)
 
 	local speed = state.root.AssemblyLinearVelocity.Magnitude

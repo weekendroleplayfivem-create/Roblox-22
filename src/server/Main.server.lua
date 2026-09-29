@@ -9,6 +9,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
 local Grid = require(Shared:WaitForChild("Grid"))
 
+local DayNight = require(script.Parent.DayNight)
 local MapBuilder = require(script.Parent.MapBuilder)
 local PlayerData = require(script.Parent.PlayerData)
 local Session = require(script.Parent.Session)
@@ -58,44 +59,22 @@ spawnLocation.Neutral = true
 spawnLocation.Duration = 0
 spawnLocation.Parent = workspace
 
--- Lighting / atmosphere for a neon night city
-Lighting.ClockTime = 20
-Lighting.Brightness = 2
-Lighting.OutdoorAmbient = Color3.fromRGB(90, 90, 120)
-Lighting.EnvironmentDiffuseScale = 0.5
-Lighting.EnvironmentSpecularScale = 0.8
-do
-	local atmosphere = Instance.new("Atmosphere")
-	atmosphere.Density = 0.32
-	atmosphere.Haze = 1.5
-	atmosphere.Color = Color3.fromRGB(200, 170, 255)
-	atmosphere.Decay = Color3.fromRGB(90, 60, 130)
-	atmosphere.Parent = Lighting
-	local bloom = Instance.new("BloomEffect")
-	bloom.Intensity = 0.6
-	bloom.Size = 30
-	bloom.Threshold = 1.4
-	bloom.Parent = Lighting
-	local cc = Instance.new("ColorCorrectionEffect")
-	cc.Saturation = 0.2
-	cc.Contrast = 0.1
-	cc.Parent = Lighting
-end
+-- Realistic day / night lighting (sky, clouds, colour grading, street lamps)
+DayNight.Init(mapInfo.nightLights, mapInfo.nightNeon)
 
 -- day / night cycle
 task.spawn(function()
 	local wasNight = Config.IsNight(Lighting.ClockTime)
 	while true do
-		local dt = task.wait(0.5)
-		Lighting.ClockTime = (Lighting.ClockTime + dt * 24 / Config.DayLengthSeconds) % 24
+		task.wait(0.5)
 		local night = Config.IsNight(Lighting.ClockTime)
 		if night ~= wasNight then
 			wasNight = night
 			for _, s in Session.All() do
 				if night then
-					Session.Notify(s.player, "NIGHT HAS FALLEN - x" .. Config.NightMultiplier .. " payouts, cops hunt harder", Color3.fromRGB(170, 120, 255))
+					Session.Notify(s.player, "NIGHT HAS FALLEN - x" .. Config.NightMultiplier .. " payouts, but more cops are out on patrol", Color3.fromRGB(170, 120, 255))
 				else
-					Session.Notify(s.player, "Sunrise - payouts back to normal", Color3.fromRGB(255, 220, 120))
+					Session.Notify(s.player, "Sunrise - fewer cops, payouts back to normal", Color3.fromRGB(255, 220, 120))
 				end
 			end
 		end
@@ -273,7 +252,7 @@ local function snapshot(s: Session.Session)
 		cash = p.cash,
 		owned = p.owned,
 		selected = p.selected,
-		upgrades = p.upgrades,
+		tuning = p.tuning,
 		paint = p.paint,
 		effects = p.effects,
 		effect = p.effect,
@@ -281,15 +260,6 @@ local function snapshot(s: Session.Session)
 		racesWon = p.racesWon,
 		blacklistBeaten = p.blacklistBeaten,
 	}
-end
-
-local function upgradeCost(carId: string, kind: string, nextLevel: number): number?
-	local car = Config.GetCar(carId)
-	local up = (Config.Upgrades :: any)[kind]
-	if not car or not up or nextLevel > up.maxLevel then
-		return nil
-	end
-	return math.floor(up.cost[nextLevel] * (Config.ClassCostMult[car.class] or 1))
 end
 
 shopFunction.OnServerInvoke = function(player, action, a, b)
@@ -328,24 +298,54 @@ shopFunction.OnServerInvoke = function(player, action, a, b)
 		p.selected = a
 		Vehicles.Spawn(s, Vehicles.NextSafehouseSpawn())
 		msg = "Switched car"
-	elseif action == "Upgrade" and type(a) == "string" and type(b) == "string" then
-		local carId = p.selected
-		local levels = PlayerData.Upgrades(p, carId)
-		local cur = levels[b]
-		if cur == nil then
-			return false, "Unknown upgrade", snapshot(s)
+	elseif action == "Part" and type(a) == "string" then
+		-- performance part: buy the next tier
+		local car = Config.GetCar(p.selected)
+		local part = Config.GetPart(a)
+		if not car or not part then
+			return false, "Unknown part", snapshot(s)
 		end
-		local cost = upgradeCost(carId, b, cur + 1)
-		if not cost then
-			return false, "Maxed out", snapshot(s)
+		local tune = PlayerData.Tune(p, car.id)
+		local cur = tune.parts[part.id] or 0
+		if cur >= #Config.PartTiers - 1 then
+			return false, part.name .. " is maxed out", snapshot(s)
 		end
+		local cost = Config.PartCost(car, part, cur + 1)
 		if p.cash < cost then
 			return false, "Not enough cash", snapshot(s)
 		end
 		p.cash -= cost
-		levels[b] = cur + 1
+		tune.parts[part.id] = cur + 1
+		Vehicles.ApplyStats(s)
+		msg = part.name .. " upgraded to " .. Config.PartTiers[cur + 2]
+	elseif action == "Handling" and type(a) == "string" and type(b) == "number" then
+		local slider
+		for _, sl in Config.HandlingSliders do
+			if sl.id == a then
+				slider = sl
+			end
+		end
+		if not slider then
+			return false, "Unknown setting", snapshot(s)
+		end
+		local tune = PlayerData.Tune(p, p.selected)
+		local value = math.clamp(math.round(b), slider.min, slider.max)
+		tune.handling[a] = value
+		if a == "ride" then
+			Vehicles.Spawn(s)
+		else
+			Vehicles.ApplyStats(s)
+		end
+		msg = slider.name .. " set"
+	elseif action == "Visual" and type(a) == "string" and type(b) == "number" then
+		local options = (Config.Visual :: any)[a]
+		if not options or not options[b] then
+			return false, "Unknown option", snapshot(s)
+		end
+		local tune = PlayerData.Tune(p, p.selected)
+		tune.visual[a] = b
 		Vehicles.Spawn(s)
-		msg = (Config.Upgrades :: any)[b].name .. " upgraded to level " .. (cur + 1)
+		msg = (Config.VisualNames :: any)[a] .. " changed"
 	elseif action == "Paint" and type(a) == "number" then
 		if not Config.PaintColors[a] then
 			return false, "Bad colour", snapshot(s)

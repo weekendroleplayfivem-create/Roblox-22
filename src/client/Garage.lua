@@ -1,5 +1,6 @@
 --!strict
--- Safehouse garage: buy / select cars, upgrades, paint, driving effects and the Blacklist.
+-- Safehouse garage: buy / select cars, Unbound-style tuning (performance parts, handling,
+-- visuals), driving effects and the Blacklist.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -142,6 +143,32 @@ local function statBar(parent: Instance, y: number, name: string, value: number,
 	corner(fill, 5)
 end
 
+local function tuneOf(carId: string): any
+	return (data.tuning and data.tuning[carId]) or Config.DefaultTune()
+end
+
+local function classColor(class: string): Color3
+	local colors = {
+		C = Color3.fromRGB(160, 160, 170),
+		B = Color3.fromRGB(80, 200, 255),
+		A = Color3.fromRGB(90, 255, 140),
+		["A+"] = Color3.fromRGB(255, 220, 60),
+		S = Color3.fromRGB(255, 130, 40),
+		["S+"] = Color3.fromRGB(255, 50, 120),
+	}
+	return colors[class] or Color3.new(1, 1, 1)
+end
+
+local function ratingBadge(parent: Instance, props: { [string]: any }, rating: number)
+	local class = Config.RatingClass(rating)
+	local badge = new("Frame", { BackgroundColor3 = classColor(class) }, parent)
+	for k, v in props do
+		(badge :: any)[k] = v
+	end
+	corner(badge, 8)
+	text(badge, { Size = UDim2.fromScale(1, 1), Text = class .. "  " .. rating, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = Color3.fromRGB(15, 15, 20), Font = Enum.Font.GothamBlack })
+end
+
 local function renderCars()
 	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, content)
 	for idx, car in Config.Cars do
@@ -151,14 +178,16 @@ local function renderCars()
 		end
 		local f = card(92)
 		f.LayoutOrder = idx
-		local swatch = new("Frame", { Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(12, 68), BackgroundColor3 = car.color }, f)
+		local paintIdx = data.paint[car.id]
+		local swatch = new("Frame", { Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(12, 68), BackgroundColor3 = if paintIdx then Config.PaintColors[paintIdx] else car.color }, f)
 		corner(swatch, 4)
-		text(f, { Position = UDim2.fromOffset(34, 8), Size = UDim2.new(0.5, 0, 0, 24), Text = car.name .. "   [" .. car.class .. "]", Font = Enum.Font.GothamBlack })
-		local stats = Config.ComputeStats(car, data.upgrades[car.id])
+		text(f, { Position = UDim2.fromOffset(34, 8), Size = UDim2.new(0.45, 0, 0, 24), Text = car.name, Font = Enum.Font.GothamBlack })
+		local stats = Config.ComputeStats(car, tuneOf(car.id))
+		ratingBadge(f, { Position = UDim2.new(0.45, 40, 0, 8), Size = UDim2.fromOffset(90, 24) }, stats.rating)
 		local holder = new("Frame", { Position = UDim2.fromOffset(22, 34), Size = UDim2.new(1, -22, 0, 56), BackgroundTransparency = 1 }, f)
-		statBar(holder, 0, "Top speed", stats.maxSpeed, 240)
-		statBar(holder, 18, "Accel", stats.accel, 90)
-		statBar(holder, 36, "Handling", stats.turn * stats.grip, 21)
+		statBar(holder, 0, "Top speed", stats.maxSpeed, 300)
+		statBar(holder, 18, "Accel", stats.accel, 130)
+		statBar(holder, 36, "Handling", stats.turn * stats.grip, 26)
 		local label, color, action
 		if data.selected == car.id then
 			label, color = "DRIVING", Color3.fromRGB(60, 60, 80)
@@ -175,46 +204,148 @@ local function renderCars()
 	end
 end
 
-local function renderUpgrades()
-	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, content)
+local function carHeader(car: Config.CarDef, stats: Config.Stats, order: number)
+	local head = card(56)
+	head.LayoutOrder = order
+	text(head, { Position = UDim2.fromOffset(12, 6), Size = UDim2.new(0.6, 0, 0, 26), Text = car.name, Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
+	text(head, {
+		Position = UDim2.fromOffset(12, 32),
+		Size = UDim2.new(0.7, 0, 0, 16),
+		Text = string.format("Top %d mph   |   Accel %d   |   Grip %.1f   |   Nitro x%.2f", math.floor(stats.maxSpeed * Config.MphPerStud), math.floor(stats.accel), stats.grip, stats.nitroMult),
+		TextColor3 = Color3.fromRGB(190, 190, 210),
+		Font = Enum.Font.Gotham,
+	})
+	ratingBadge(head, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(110, 36) }, stats.rating)
+end
+
+local function renderPerformance()
+	new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, content)
 	local car = Config.GetCar(data.selected)
 	if not car then
 		return
 	end
-	local levels = data.upgrades[car.id] or {}
-	local head = card(40)
-	head.LayoutOrder = 0
-	text(head, { Position = UDim2.fromOffset(12, 6), Size = UDim2.new(1, -24, 0, 28), Text = "Tuning: " .. car.name, Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
-	for idx, kind in Config.UpgradeOrder do
-		local up = (Config.Upgrades :: any)[kind]
-		local lvl = levels[kind] or 0
-		local f = card(64)
+	local tune = tuneOf(car.id)
+	local stats = Config.ComputeStats(car, tune)
+	carHeader(car, stats, 0)
+	local maxTier = #Config.PartTiers - 1
+	for idx, part in Config.Parts do
+		local tier = tune.parts[part.id] or 0
+		local f = card(58)
 		f.LayoutOrder = idx
-		text(f, { Position = UDim2.fromOffset(12, 8), Size = UDim2.new(0.5, 0, 0, 24), Text = up.name, Font = Enum.Font.GothamBlack })
-		local pips = ""
-		for k = 1, up.maxLevel do
-			pips ..= if k <= lvl then "■ " else "□ "
+		text(f, { Position = UDim2.fromOffset(12, 6), Size = UDim2.new(0.35, 0, 0, 22), Text = part.name, Font = Enum.Font.GothamBlack })
+		text(f, { Position = UDim2.fromOffset(12, 32), Size = UDim2.new(0.35, 0, 0, 16), Text = part.desc, Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(170, 170, 190) })
+		-- tier pips
+		for k = 0, maxTier do
+			local pip = new("Frame", {
+				Position = UDim2.new(0.38, k * 52, 0, 12),
+				Size = UDim2.fromOffset(48, 34),
+				BackgroundColor3 = if k <= tier then PINK else Color3.fromRGB(45, 45, 65),
+			}, f)
+			corner(pip, 6)
+			text(pip, { Size = UDim2.fromScale(1, 1), Text = Config.PartTiers[k + 1], TextXAlignment = Enum.TextXAlignment.Center, Font = Enum.Font.GothamBold })
 		end
-		text(f, { Position = UDim2.fromOffset(12, 34), Size = UDim2.new(0.5, 0, 0, 20), Text = pips, TextColor3 = PINK })
-		if lvl >= up.maxLevel then
-			button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(150, 40), Text = "MAXED", BackgroundColor3 = Color3.fromRGB(60, 60, 80) }, function() end)
+		if tier >= maxTier then
+			button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(150, 38), Text = "MAXED", BackgroundColor3 = Color3.fromRGB(60, 60, 80) }, function() end)
 		else
-			local cost = math.floor(up.cost[lvl + 1] * (Config.ClassCostMult[car.class] or 1))
-			button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(150, 40), Text = "UPGRADE $" .. HUD.Commas(cost) }, function()
-				act("Upgrade", car.id, kind)
+			local cost = Config.PartCost(car, part, tier + 1)
+			button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(150, 38), Text = Config.PartTiers[tier + 2] .. "  $" .. HUD.Commas(cost) }, function()
+				act("Part", part.id)
 			end)
 		end
 	end
 end
 
-local function renderPaint()
-	new("UIGridLayout", { CellSize = UDim2.fromOffset(90, 90), CellPadding = UDim2.fromOffset(10, 10) }, content)
+local function renderHandling()
+	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, content)
+	local car = Config.GetCar(data.selected)
+	if not car then
+		return
+	end
+	local tune = tuneOf(car.id)
+	carHeader(car, Config.ComputeStats(car, tune), 0)
+	for idx, sl in Config.HandlingSliders do
+		local value = tune.handling[sl.id] or sl.default
+		local f = card(64)
+		f.LayoutOrder = idx
+		text(f, { Position = UDim2.fromOffset(12, 6), Size = UDim2.new(0.25, 0, 0, 22), Text = sl.name, Font = Enum.Font.GothamBlack })
+		text(f, { Position = UDim2.fromOffset(12, 34), Size = UDim2.new(0.25, 0, 0, 18), Text = tostring(value), Font = Enum.Font.GothamBold, TextColor3 = PINK })
+		text(f, { Position = UDim2.new(0.27, 0, 0, 6), Size = UDim2.fromOffset(60, 16), Text = sl.left, Font = Enum.Font.GothamBold, TextColor3 = Color3.fromRGB(170, 170, 190) })
+		text(f, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -120, 0, 6), Size = UDim2.fromOffset(60, 16), Text = sl.right, Font = Enum.Font.GothamBold, TextColor3 = Color3.fromRGB(170, 170, 190), TextXAlignment = Enum.TextXAlignment.Right })
+		local track = new("Frame", { Position = UDim2.new(0.27, 0, 0, 32), Size = UDim2.new(0.73, -120, 0, 10), BackgroundColor3 = Color3.fromRGB(50, 50, 70) }, f)
+		corner(track, 5)
+		local frac = (value - sl.min) / (sl.max - sl.min)
+		local knob = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(frac, 0.5), Size = UDim2.fromOffset(20, 20), BackgroundColor3 = CYAN }, track)
+		corner(knob, 10)
+		button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -62, 0.5, 0), Size = UDim2.fromOffset(44, 38), Text = "-", BackgroundColor3 = Color3.fromRGB(60, 60, 90) }, function()
+			if value > sl.min then
+				act("Handling", sl.id, value - 1)
+			end
+		end)
+		button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(44, 38), Text = "+", BackgroundColor3 = Color3.fromRGB(60, 60, 90) }, function()
+			if value < sl.max then
+				act("Handling", sl.id, value + 1)
+			end
+		end)
+	end
+	local tip = card(46)
+	tip.LayoutOrder = 99
+	text(tip, {
+		Position = UDim2.fromOffset(12, 6),
+		Size = UDim2.new(1, -24, 1, -12),
+		Text = "Drift setups slide longer and turn in harder. Grip setups stick to the road. Downforce adds grip at speed but costs a little top speed.",
+		Font = Enum.Font.Gotham,
+		TextColor3 = Color3.fromRGB(190, 190, 210),
+		TextWrapped = true,
+	})
+end
+
+local function optionName(key: string, idx: number): string
+	local entry = (Config.Visual :: any)[key][idx]
+	if type(entry) == "string" then
+		return entry
+	elseif type(entry) == "table" then
+		return entry.name
+	end
+	return "?"
+end
+
+local function renderVisual()
+	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, content)
+	local car = Config.GetCar(data.selected)
+	if not car then
+		return
+	end
+	local tune = tuneOf(car.id)
+
+	local paintCard = card(86)
+	paintCard.LayoutOrder = 0
+	text(paintCard, { Position = UDim2.fromOffset(12, 6), Size = UDim2.new(0.5, 0, 0, 22), Text = "Paint", Font = Enum.Font.GothamBlack })
+	local swatches = new("Frame", { Position = UDim2.fromOffset(12, 34), Size = UDim2.new(1, -24, 0, 42), BackgroundTransparency = 1 }, paintCard)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8) }, swatches)
 	for idx, color in Config.PaintColors do
-		local b = button(content, { Text = "", BackgroundColor3 = color }, function()
+		local b = button(swatches, { Size = UDim2.fromOffset(42, 42), Text = "", BackgroundColor3 = color, LayoutOrder = idx }, function()
 			act("Paint", idx)
 		end)
-		b.LayoutOrder = idx
-		new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = if data.paint[data.selected] == idx then 4 else 0 }, b)
+		new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = if data.paint[data.selected] == idx then 3 else 0 }, b)
+	end
+
+	for idx, key in Config.VisualOrder do
+		local options = (Config.Visual :: any)[key]
+		local cur = tune.visual[key] or 1
+		local f = card(54)
+		f.LayoutOrder = idx
+		text(f, { Position = UDim2.fromOffset(12, 14), Size = UDim2.new(0.3, 0, 0, 24), Text = (Config.VisualNames :: any)[key], Font = Enum.Font.GothamBlack })
+		local entry = options[cur]
+		local valueLabel = text(f, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.62, 0, 0, 14), Size = UDim2.new(0.34, 0, 0, 26), Text = optionName(key, cur), TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = PINK })
+		if type(entry) == "table" and entry.color then
+			valueLabel.TextColor3 = entry.color
+		end
+		button(f, { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0.4, 0, 0.5, 0), Size = UDim2.fromOffset(44, 38), Text = "<", BackgroundColor3 = Color3.fromRGB(60, 60, 90) }, function()
+			act("Visual", key, if cur <= 1 then #options else cur - 1)
+		end)
+		button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(44, 38), Text = ">", BackgroundColor3 = Color3.fromRGB(60, 60, 90) }, function()
+			act("Visual", key, if cur >= #options then 1 else cur + 1)
+		end)
 	end
 end
 
@@ -288,8 +419,9 @@ end
 
 local TAB_RENDER = {
 	Cars = renderCars,
-	Upgrades = renderUpgrades,
-	Paint = renderPaint,
+	Performance = renderPerformance,
+	Handling = renderHandling,
+	Visual = renderVisual,
 	Effects = renderEffects,
 	Blacklist = renderBlacklist,
 }
@@ -307,8 +439,8 @@ render = function()
 	TAB_RENDER[currentTab]()
 end
 
-for _, name in { "Cars", "Upgrades", "Paint", "Effects", "Blacklist" } do
-	tabButtons[name] = button(tabs, { Size = UDim2.fromOffset(120, 34), Text = string.upper(name), BackgroundColor3 = Color3.fromRGB(45, 45, 65) }, function()
+for _, name in { "Cars", "Performance", "Handling", "Visual", "Effects", "Blacklist" } do
+	tabButtons[name] = button(tabs, { Size = UDim2.new(1 / 6, -7, 1, 0), Text = string.upper(name), BackgroundColor3 = Color3.fromRGB(45, 45, 65) }, function()
 		currentTab = name
 		render()
 	end)

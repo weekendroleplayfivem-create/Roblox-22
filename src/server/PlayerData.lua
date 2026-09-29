@@ -13,7 +13,7 @@ export type Profile = {
 	cash: number,
 	owned: { [string]: boolean },
 	selected: string,
-	upgrades: { [string]: { [string]: number } },
+	tuning: { [string]: Config.Tune },
 	paint: { [string]: number }, -- index into Config.PaintColors
 	effects: { [string]: boolean },
 	effect: string,
@@ -42,7 +42,7 @@ local function default(): Profile
 		cash = Config.StartingCash,
 		owned = { [Config.StarterCar] = true },
 		selected = Config.StarterCar,
-		upgrades = {},
+		tuning = {},
 		paint = {},
 		effects = { neon = true },
 		effect = "neon",
@@ -61,6 +61,19 @@ local function reconcile(data: any): Profile
 		if data[k] == nil or type(data[k]) ~= type(v) then
 			data[k] = v
 		end
+	end
+	-- migrate the old 3-slot upgrade system to the new tuning parts
+	if type(data.upgrades) == "table" then
+		for carId, u in data.upgrades do
+			if type(u) == "table" and not data.tuning[carId] then
+				local tune = Config.DefaultTune()
+				tune.parts.engine = math.clamp(tonumber(u.engine) or 0, 0, 4)
+				tune.parts.nitrous = math.clamp(tonumber(u.nitro) or 0, 0, 4)
+				tune.parts.suspension = math.clamp(tonumber(u.handling) or 0, 0, 4)
+				data.tuning[carId] = tune
+			end
+		end
+		data.upgrades = nil
 	end
 	if not data.owned[data.selected] then
 		data.selected = Config.StarterCar
@@ -116,13 +129,27 @@ function PlayerData.All(): { [Player]: Profile }
 	return profiles
 end
 
-function PlayerData.Upgrades(profile: Profile, carId: string): { [string]: number }
-	local u = profile.upgrades[carId]
-	if not u then
-		u = { engine = 0, nitro = 0, handling = 0 }
-		profile.upgrades[carId] = u
+-- Returns the tuning for a car, filling in any missing fields.
+function PlayerData.Tune(profile: Profile, carId: string): Config.Tune
+	local t = profile.tuning[carId]
+	local base = Config.DefaultTune()
+	if type(t) ~= "table" then
+		profile.tuning[carId] = base
+		return base
 	end
-	return u
+	for _, group in { "parts", "handling", "visual" } do
+		local have = (t :: any)[group]
+		if type(have) ~= "table" then
+			(t :: any)[group] = (base :: any)[group]
+		else
+			for k, v in (base :: any)[group] do
+				if type(have[k]) ~= "number" then
+					have[k] = v
+				end
+			end
+		end
+	end
+	return t
 end
 
 return PlayerData

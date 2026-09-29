@@ -1,4 +1,4 @@
-<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4"><Item class="Workspace" referent="RBX00000000000000000000000000000015"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">false</bool></Properties></Item><Item class="Lighting" referent="RBX00000000000000000000000000000016"><Properties><string name="Name">Lighting</string><token name="Technology">4</token></Properties></Item><Item class="ReplicatedStorage" referent="RBX00000000000000000000000000000017"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000004"><Properties><string name="Name">Shared</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">CarPhysics</string><ProtectedString name="Source"><![CDATA[--!strict
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4"><Item class="Workspace" referent="RBX00000000000000000000000000000017"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">false</bool></Properties></Item><Item class="Lighting" referent="RBX00000000000000000000000000000018"><Properties><string name="Name">Lighting</string><token name="Technology">4</token></Properties></Item><Item class="ReplicatedStorage" referent="RBX00000000000000000000000000000019"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000004"><Properties><string name="Name">Shared</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">CarPhysics</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Arcade driving model shared by the player's car (simulated on the client that owns it)
 -- and AI cars (police and rivals, simulated on the server).
 --
@@ -22,6 +22,8 @@ export type Stats = {
 	turn: number,
 	grip: number,
 	nitroMult: number,
+	driftGrip: number?, -- grip multiplier while drifting (lower = longer slides)
+	downforce: number?, -- 0..1, extra grip at high speed
 }
 
 export type State = {
@@ -151,11 +153,11 @@ function CarPhysics.Step(state: State, input: Input, stats: Stats, dt: number)
 			state.drifting = false
 		end
 
-		local grip = stats.grip
+		local grip = stats.grip * (1 + (stats.downforce or 0) * 0.6 * math.clamp(absFwd / stats.maxSpeed, 0, 1))
 		if input.handbrake then
 			grip *= 0.18
 		elseif state.drifting then
-			grip *= 0.4
+			grip *= stats.driftGrip or 0.4
 		end
 		local oldLat = math.abs(lat)
 		lat *= math.max(0, 1 - grip * dt)
@@ -413,17 +415,117 @@ function Config.GetCar(id: string): CarDef?
 end
 
 ---------------------------------------------------------------------------
--- Upgrades (per car). Each level multiplies stats.
+-- Tuning (Unbound style). Per car you get:
+--   * performance parts in tiers Stock -> Sport -> Pro -> Elite -> Elite+
+--   * handling sliders (drift <-> grip, downforce, steering, ride height)
+--   * visual customisation (rims, tint, spoiler, body kit, underglow)
+-- Everything feeds a Performance Rating (PI) and class, C up to S+.
 ---------------------------------------------------------------------------
-Config.Upgrades = {
-	engine = { name = "Engine", maxLevel = 3, cost = { 4000, 12000, 30000 } },
-	nitro = { name = "Nitrous", maxLevel = 3, cost = { 3000, 9000, 22000 } },
-	handling = { name = "Handling", maxLevel = 3, cost = { 3000, 9000, 22000 } },
-}
-Config.UpgradeOrder = { "engine", "nitro", "handling" }
+Config.PartTiers = { "Stock", "Sport", "Pro", "Elite", "Elite+" }
+Config.PartTierCost = { 1, 2.5, 5, 9 } -- multiplier for tier 1..4 on the part base price
 
--- Class multiplier for upgrade prices
+export type PartDef = {
+	id: string,
+	name: string,
+	desc: string,
+	base: number,
+	-- bonus per tier (fractions, except nitro/cap which are absolute)
+	maxSpeed: number?,
+	accel: number?,
+	turn: number?,
+	grip: number?,
+	brake: number?,
+	nitro: number?,
+	cap: number?,
+}
+
+Config.Parts = {
+	{ id = "engine", name = "Engine", desc = "Top speed + acceleration", base = 3000, maxSpeed = 0.03, accel = 0.05 },
+	{ id = "turbo", name = "Forced Induction", desc = "Turbo / supercharger: acceleration", base = 3500, maxSpeed = 0.015, accel = 0.06 },
+	{ id = "exhaust", name = "Exhaust", desc = "Free-flow exhaust", base = 1500, maxSpeed = 0.01, accel = 0.02 },
+	{ id = "ecu", name = "ECU", desc = "Engine map: top speed", base = 2000, maxSpeed = 0.02, accel = 0.01 },
+	{ id = "transmission", name = "Transmission", desc = "Faster shifts: speed + acceleration", base = 2500, maxSpeed = 0.02, accel = 0.03 },
+	{ id = "suspension", name = "Suspension", desc = "Cornering + stability", base = 2000, turn = 0.03, grip = 0.03 },
+	{ id = "brakes", name = "Brakes", desc = "Stopping power", base = 1500, brake = 0.1 },
+	{ id = "tires", name = "Tires", desc = "Grip", base = 2000, grip = 0.05, turn = 0.01 },
+	{ id = "nitrous", name = "Nitrous", desc = "Boost power + tank size", base = 2500, nitro = 0.03, cap = 0.2 },
+} :: { PartDef }
+
+function Config.GetPart(id: string): PartDef?
+	for _, p in Config.Parts do
+		if p.id == id then
+			return p
+		end
+	end
+	return nil
+end
+
+export type Slider = { id: string, name: string, left: string, right: string, min: number, max: number, default: number }
+
+Config.HandlingSliders = {
+	{ id = "drift", name = "Handling", left = "DRIFT", right = "GRIP", min = -5, max = 5, default = 0 },
+	{ id = "downforce", name = "Downforce", left = "LOW", right = "HIGH", min = 0, max = 5, default = 1 },
+	{ id = "steering", name = "Steering", left = "SLOW", right = "FAST", min = -3, max = 3, default = 0 },
+	{ id = "ride", name = "Ride Height", left = "LOW", right = "HIGH", min = -2, max = 2, default = 0 },
+} :: { Slider }
+
+Config.Visual = {
+	rim = { "Classic 5-Spoke", "Sport 6-Spoke", "Mesh", "Deep Dish", "Turbine" },
+	rimColor = {
+		{ name = "Silver", color = Color3.fromRGB(200, 200, 210) },
+		{ name = "Gunmetal", color = Color3.fromRGB(70, 72, 80) },
+		{ name = "Black", color = Color3.fromRGB(25, 25, 28) },
+		{ name = "Gold", color = Color3.fromRGB(215, 175, 60) },
+		{ name = "Bronze", color = Color3.fromRGB(150, 100, 55) },
+		{ name = "White", color = Color3.fromRGB(240, 240, 240) },
+		{ name = "Neon Pink", color = Color3.fromRGB(255, 60, 170) },
+	},
+	tint = {
+		{ name = "Clear", transparency = 0.65 },
+		{ name = "Light", transparency = 0.45 },
+		{ name = "Dark", transparency = 0.25 },
+		{ name = "Limo", transparency = 0.1 },
+	},
+	spoiler = { "None", "Ducktail Lip", "Street Wing", "GT Wing" },
+	kit = { "Stock", "Street Kit", "Widebody" },
+	glow = {
+		{ name = "Off", color = nil :: Color3? },
+		{ name = "Effect Colour", color = nil :: Color3? },
+		{ name = "Cyan", color = Color3.fromRGB(0, 240, 255) :: Color3? },
+		{ name = "Pink", color = Color3.fromRGB(255, 40, 170) :: Color3? },
+		{ name = "Purple", color = Color3.fromRGB(160, 60, 255) :: Color3? },
+		{ name = "Green", color = Color3.fromRGB(60, 255, 100) :: Color3? },
+		{ name = "Orange", color = Color3.fromRGB(255, 140, 20) :: Color3? },
+	},
+}
+Config.VisualOrder = { "rim", "rimColor", "tint", "spoiler", "kit", "glow" }
+Config.VisualNames = { rim = "Rims", rimColor = "Rim Colour", tint = "Window Tint", spoiler = "Spoiler", kit = "Body Kit", glow = "Underglow" }
+
+export type Tune = {
+	parts: { [string]: number },
+	handling: { [string]: number },
+	visual: { [string]: number },
+}
+
+function Config.DefaultTune(): Tune
+	local parts = {}
+	for _, p in Config.Parts do
+		parts[p.id] = 0
+	end
+	local handling = {}
+	for _, sl in Config.HandlingSliders do
+		handling[sl.id] = sl.default
+	end
+	local visual = { rim = 1, rimColor = 1, tint = 2, spoiler = 1, kit = 1, glow = 2 }
+	return { parts = parts, handling = handling, visual = visual }
+end
+
+-- Class multiplier for tuning prices
 Config.ClassCostMult = { D = 1, C = 1.3, B = 1.7, A = 2.2, S = 3, ["S+"] = 3.5 }
+
+function Config.PartCost(car: CarDef, part: PartDef, tier: number): number
+	return math.floor(part.base * (Config.PartTierCost[tier] or 99) * (Config.ClassCostMult[car.class] or 1))
+end
 
 export type Stats = {
 	maxSpeed: number,
@@ -433,21 +535,63 @@ export type Stats = {
 	grip: number,
 	nitroMult: number,
 	nitroCapacity: number,
+	driftGrip: number,
+	downforce: number,
+	rating: number,
 }
 
-function Config.ComputeStats(car: CarDef, upgrades: { [string]: number }?): Stats
-	local u: { [string]: number } = upgrades or {}
-	local engine = u.engine or 0
-	local nitro = u.nitro or 0
-	local handling = u.handling or 0
+-- Performance rating like Unbound: C < 400, B 400+, A 500+, A+ 600+, S 700+, S+ 800+
+function Config.RatingClass(rating: number): string
+	if rating >= 800 then
+		return "S+"
+	elseif rating >= 700 then
+		return "S"
+	elseif rating >= 600 then
+		return "A+"
+	elseif rating >= 500 then
+		return "A"
+	elseif rating >= 400 then
+		return "B"
+	end
+	return "C"
+end
+
+function Config.ComputeStats(car: CarDef, tune: Tune?): Stats
+	local t = tune or Config.DefaultTune()
+	local speedB, accelB, turnB, gripB, brakeB, nitroB, capB = 0, 0, 0, 0, 0, 0, 0
+	for _, p in Config.Parts do
+		local tier = (t.parts and t.parts[p.id]) or 0
+		speedB += (p.maxSpeed or 0) * tier
+		accelB += (p.accel or 0) * tier
+		turnB += (p.turn or 0) * tier
+		gripB += (p.grip or 0) * tier
+		brakeB += (p.brake or 0) * tier
+		nitroB += (p.nitro or 0) * tier
+		capB += (p.cap or 0) * tier
+	end
+	local h: { [string]: number } = t.handling or {}
+	local g = (h.drift or 0) / 5 -- -1 drift .. +1 grip
+	local df = (h.downforce or 1) / 5
+	local steer = h.steering or 0
+	local ride = h.ride or 0
+
+	local maxSpeed = car.maxSpeed * (1 + speedB) * (1 - 0.04 * df)
+	local accel = car.accel * (1 + accelB)
+	local turn = car.turn * (1 + turnB) * (1 - 0.06 * g) * (1 + 0.06 * steer)
+	local grip = car.grip * (1 + gripB) * (1 + 0.18 * g) * (1 - 0.02 * ride)
+	local brake = car.brake * (1 + brakeB)
+	local rating = maxSpeed * 1.6 + accel * 2.5 + turn * grip * 4 + brake * 0.3
 	return {
-		maxSpeed = car.maxSpeed * (1 + 0.07 * engine),
-		accel = car.accel * (1 + 0.1 * engine),
-		brake = car.brake,
-		turn = car.turn * (1 + 0.05 * handling),
-		grip = car.grip * (1 + 0.08 * handling),
-		nitroMult = car.nitroMult + 0.04 * nitro,
-		nitroCapacity = 1 + 0.3 * nitro,
+		maxSpeed = maxSpeed,
+		accel = accel,
+		brake = brake,
+		turn = turn,
+		grip = grip,
+		nitroMult = car.nitroMult + nitroB,
+		nitroCapacity = 1 + capB,
+		driftGrip = 0.4 + 0.12 * g,
+		downforce = df,
+		rating = math.clamp(math.floor(rating), 100, 999),
 	}
 end
 
@@ -490,7 +634,10 @@ Config.Police = {
 	Accel = 50,
 	Turn = 2.4,
 	Grip = 6.5,
-	PatrolCount = 4, -- roaming patrols across the whole city
+	PatrolCount = 4, -- roaming patrols across the whole city (daytime)
+	NightExtraPatrols = 5, -- extra patrol cars out at night
+	NightExtraCops = 2, -- extra units per pursuit at night
+	NightSpawnMult = 0.65, -- pursuit reinforcements arrive faster at night
 	SpeedLimit = 95, -- studs/s (~71 mph). Faster than this in front of a cop starts a pursuit.
 	SpotRadius = 140,
 	BustRadius = 22,
@@ -833,7 +980,7 @@ function Grid.Neighbours(i: number, j: number): { { number } }
 end
 
 return Grid
-]]></ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX00000000000000000000000000000018"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Folder" referent="RBX0000000000000000000000000000000E"><Properties><string name="Name">Server</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">AIDriver</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX0000000000000000000000000000001A"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Folder" referent="RBX0000000000000000000000000000000F"><Properties><string name="Name">Server</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">AIDriver</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Server-side driver for AI cars (police and race rivals). Each AI has a `think` callback
 -- that picks a goal; AIDriver handles road-grid navigation, steering, unsticking and
 -- runs the shared arcade physics.
@@ -1088,7 +1235,10 @@ end)
 
 return AIDriver
 ]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000006"><Properties><string name="Name">CarBuilder</string><ProtectedString name="Source"><![CDATA[--!strict
--- Builds car models from parts at runtime (no meshes needed), for players, police and rivals.
+-- Builds detailed car models from parts at runtime (no meshes needed): real-world proportions,
+-- wheel arches, sloped hood / windshield, glass cabin with interior, spoked wheels with brake
+-- calipers, bumpers, grille, lights, mirrors, plates and exhausts. Supports the visual tuning
+-- options (rims, rim colour, tint, spoiler, body kit, underglow, ride height).
 
 local CarBuilder = {}
 
@@ -1101,26 +1251,56 @@ export type BuildOptions = {
 	seat: boolean?,
 	effectColor: Color3?,
 	label: string?,
+	rim: number?, -- 1..5 (Config.Visual.rim)
+	rimColor: Color3?,
+	tint: number?, -- glass transparency
+	spoiler: number?, -- 1 none, 2 ducktail, 3 street wing, 4 GT wing
+	kit: number?, -- 1 stock, 2 street kit, 3 widebody
+	glow: Color3?, -- underglow colour (nil = off)
+	ride: number?, -- -2..2 ride height
 }
 
 type Dims = {
-	size: Vector3, -- chassis size
-	bodyH: number,
-	cabin: Vector3,
-	cabinZ: number,
-	spoiler: boolean,
-	scoop: boolean,
+	W: number, -- width
+	L: number, -- length
+	c: number, -- ground clearance
+	top: number, -- beltline / top of the body
+	roof: number, -- roof height
+	r: number, -- wheel radius
+	cabS: number, -- cabin start (fraction of length from the front)
+	cabE: number, -- cabin end
+	ws: number, -- windshield length
+	rw: number, -- rear window length
+	hood: number, -- hood rise
+	fAxle: number, -- front axle position (fraction from front)
+	rAxle: number, -- rear axle position (fraction from rear)
+	spoiler: number, -- default spoiler
+	fullTail: boolean, -- full width tail light bar
+	exhausts: number,
 }
 
+-- Proportions are based on real cars at roughly 1 stud = 0.35 m.
 local STYLES: { [string]: Dims } = {
-	coupe = { size = Vector3.new(7, 1.6, 13), bodyH = 1.8, cabin = Vector3.new(6, 1.7, 6), cabinZ = 0.8, spoiler = false, scoop = false },
-	hyper = { size = Vector3.new(7.4, 1.4, 13.6), bodyH = 1.4, cabin = Vector3.new(5.8, 1.4, 5), cabinZ = 0.4, spoiler = true, scoop = false },
-	muscle = { size = Vector3.new(7.4, 1.8, 14.2), bodyH = 2, cabin = Vector3.new(6.2, 1.7, 5.6), cabinZ = 1.4, spoiler = false, scoop = true },
-	suv = { size = Vector3.new(8, 2.2, 14), bodyH = 2.6, cabin = Vector3.new(7.6, 2.4, 8.5), cabinZ = 1.4, spoiler = false, scoop = false },
+	coupe = { W = 5.6, L = 13, c = 0.45, top = 2.25, roof = 3.7, r = 1.0, cabS = 0.36, cabE = 0.78, ws = 2.4, rw = 2.2, hood = 0.3, fAxle = 0.19, rAxle = 0.18, spoiler = 1, fullTail = false, exhausts = 2 },
+	hyper = { W = 5.9, L = 13.4, c = 0.35, top = 1.95, roof = 3.25, r = 1.05, cabS = 0.3, cabE = 0.66, ws = 2.6, rw = 2.6, hood = 0.2, fAxle = 0.18, rAxle = 0.2, spoiler = 3, fullTail = true, exhausts = 2 },
+	muscle = { W = 5.9, L = 14, c = 0.5, top = 2.5, roof = 3.9, r = 1.05, cabS = 0.42, cabE = 0.8, ws = 2.2, rw = 1.8, hood = 0.25, fAxle = 0.18, rAxle = 0.17, spoiler = 2, fullTail = true, exhausts = 4 },
+	sedan = { W = 5.8, L = 14, c = 0.5, top = 2.45, roof = 4.1, r = 1.05, cabS = 0.31, cabE = 0.8, ws = 2.4, rw = 2.3, hood = 0.25, fAxle = 0.19, rAxle = 0.18, spoiler = 1, fullTail = false, exhausts = 1 },
+	suv = { W = 6.2, L = 14.2, c = 0.85, top = 3.2, roof = 5.1, r = 1.25, cabS = 0.28, cabE = 0.93, ws = 2.0, rw = 0.8, hood = 0.2, fAxle = 0.18, rAxle = 0.17, spoiler = 1, fullTail = false, exhausts = 1 },
 }
 
-local function part(props: { [string]: any }): Part
-	local p = Instance.new("Part")
+local DARK = Color3.fromRGB(18, 18, 20)
+local TRIM = Color3.fromRGB(35, 35, 38)
+local CHROME = Color3.fromRGB(210, 210, 215)
+local TIRE = Color3.fromRGB(28, 28, 30)
+local GLASS = Color3.fromRGB(20, 26, 36)
+
+type Ctx = {
+	model: Model,
+	chassis: BasePart,
+}
+
+local function setup(p: BasePart, ctx: Ctx, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?)
+	p.Name = name
 	p.Anchored = false
 	p.CanCollide = false
 	p.CanQuery = false
@@ -1128,27 +1308,55 @@ local function part(props: { [string]: any }): Part
 	p.Massless = true
 	p.TopSurface = Enum.SurfaceType.Smooth
 	p.BottomSurface = Enum.SurfaceType.Smooth
-	for k, v in props do
-		(p :: any)[k] = v
-	end
-	return p
+	p.Size = size
+	p.CFrame = cf
+	p.Color = color
+	p.Material = material or Enum.Material.SmoothPlastic
+	p.Parent = ctx.model
 end
 
-local function weld(a: BasePart, b: BasePart)
+local function weldTo(a: BasePart, b: BasePart)
 	local w = Instance.new("WeldConstraint")
 	w.Part0 = a
 	w.Part1 = b
 	w.Parent = b
 end
 
-local function addText(target: BasePart, face: Enum.NormalId, text: string, color: Color3)
+local function box(ctx: Ctx, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?, weldTarget: BasePart?): Part
+	local p = Instance.new("Part")
+	setup(p, ctx, name, size, cf, color, material)
+	weldTo(weldTarget or ctx.chassis, p)
+	return p
+end
+
+local function wedge(ctx: Ctx, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?): WedgePart
+	local p = Instance.new("WedgePart")
+	setup(p, ctx, name, size, cf, color, material)
+	weldTo(ctx.chassis, p)
+	return p
+end
+
+local function cylinder(ctx: Ctx, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?, weldTarget: BasePart?): Part
+	local p = Instance.new("Part")
+	p.Shape = Enum.PartType.Cylinder
+	setup(p, ctx, name, size, cf, color, material)
+	weldTo(weldTarget or ctx.chassis, p)
+	return p
+end
+
+local function paint(p: BasePart)
+	p.Reflectance = 0.18
+end
+
+local function surfaceText(target: BasePart, face: Enum.NormalId, text: string, color: Color3, bg: Color3?)
 	local gui = Instance.new("SurfaceGui")
 	gui.Face = face
 	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-	gui.PixelsPerStud = 40
-	gui.LightInfluence = 0
+	gui.PixelsPerStud = 50
+	gui.LightInfluence = 1
 	local label = Instance.new("TextLabel")
-	label.BackgroundTransparency = 1
+	label.BackgroundTransparency = if bg then 0 else 1
+	label.BackgroundColor3 = bg or Color3.new(1, 1, 1)
 	label.Size = UDim2.fromScale(1, 1)
 	label.Text = text
 	label.TextScaled = true
@@ -1158,26 +1366,79 @@ local function addText(target: BasePart, face: Enum.NormalId, text: string, colo
 	gui.Parent = target
 end
 
+-- One wheel: tyre, rim lip, dark barrel, spokes and centre cap on a hub that the client spins.
+local function buildWheel(ctx: Ctx, d: Dims, x: number, z: number, front: boolean, opts: BuildOptions)
+	local r = d.r
+	local side = math.sign(x)
+	local chassis = ctx.chassis
+	local hubCF = CFrame.new(x, r, z)
+	local hub = Instance.new("Part")
+	setup(hub, ctx, "WheelHub", Vector3.new(0.2, 0.2, 0.2), hubCF, DARK)
+	hub.Transparency = 1
+	local weld = Instance.new("Weld")
+	weld.Name = "WheelWeld"
+	weld.Part0 = chassis
+	weld.Part1 = hub
+	weld.C0 = chassis.CFrame:ToObjectSpace(hubCF)
+	weld:SetAttribute("BaseC0", weld.C0)
+	weld:SetAttribute("Front", front)
+	weld:SetAttribute("Radius", r)
+	weld.Parent = hub
+
+	local rimColor = opts.rimColor or CHROME
+	local style = opts.rim or 1
+	local width = if opts.kit == 3 then 1.35 else 1.15
+
+	cylinder(ctx, "Tire", Vector3.new(width, r * 2, r * 2), hubCF, TIRE, Enum.Material.SmoothPlastic, hub)
+	local outer = side * (width / 2)
+	local lipR = if style == 4 then 0.8 else 0.72
+	local barrelR = if style == 4 then 0.5 else 0.64
+	cylinder(ctx, "RimLip", Vector3.new(0.06, r * 2 * lipR, r * 2 * lipR), hubCF * CFrame.new(outer - side * 0.02, 0, 0), rimColor, Enum.Material.Metal, hub).Reflectance = 0.35
+	cylinder(ctx, "RimBarrel", Vector3.new(0.06, r * 2 * barrelR, r * 2 * barrelR), hubCF * CFrame.new(outer - side * 0.01, 0, 0), Color3.fromRGB(40, 40, 44), Enum.Material.Metal, hub)
+	-- brake disc visible through the spokes
+	cylinder(ctx, "Disc", Vector3.new(0.04, r * 1.05, r * 1.05), hubCF * CFrame.new(outer, 0, 0), Color3.fromRGB(95, 95, 100), Enum.Material.Metal, hub)
+
+	local counts = { 5, 6, 12, 5, 14 }
+	local n = counts[style] or 5
+	local spokeW = if style == 3 or style == 5 then 0.09 else 0.2
+	local spokeLen = r * barrelR
+	for k = 0, n - 1 do
+		local angle = k * math.pi * 2 / n
+		local cf = hubCF * CFrame.new(outer + side * 0.03, 0, 0) * CFrame.Angles(angle, 0, 0)
+		if style == 5 then
+			cf *= CFrame.Angles(0, 0.6, 0) -- twisted turbine blades
+		end
+		cf *= CFrame.new(0, spokeLen / 2, 0)
+		box(ctx, "Spoke", Vector3.new(0.06, spokeLen, spokeW), cf, rimColor, Enum.Material.Metal, hub).Reflectance = 0.3
+	end
+	cylinder(ctx, "Cap", Vector3.new(0.08, r * 0.28, r * 0.28), hubCF * CFrame.new(outer + side * 0.05, 0, 0), rimColor, Enum.Material.Metal, hub)
+
+	-- caliper stays still (welded to the chassis)
+	box(ctx, "Caliper", Vector3.new(0.08, r * 0.45, r * 0.32), hubCF * CFrame.new(outer + side * 0.015, r * 0.32, r * 0.18), Color3.fromRGB(200, 30, 35))
+end
+
 function CarBuilder.Build(opts: BuildOptions): Model
-	local style = if opts.heavy then "suv" else opts.style
-	local d = STYLES[style] or STYLES.coupe
+	local styleName = if opts.heavy then "suv" elseif opts.police then "sedan" else opts.style
+	local d = STYLES[styleName] or STYLES.coupe
 	local model = Instance.new("Model")
 	model.Name = opts.name
 
-	local size = d.size
+	local W, L, r = d.W, d.L, d.r
+	local chassisH = 1.4
 	local chassis = Instance.new("Part")
 	chassis.Name = "Chassis"
-	chassis.Size = size
+	chassis.Size = Vector3.new(W, chassisH, L)
 	chassis.Transparency = 1
 	chassis.CanCollide = true
 	chassis.Anchored = false
-	chassis.CustomPhysicalProperties = PhysicalProperties.new(if opts.heavy then 1.4 else 0.8, 0, 0, 100, 1)
+	chassis.CustomPhysicalProperties = PhysicalProperties.new(if opts.heavy then 1.6 else 0.9, 0, 0, 100, 1)
 	chassis.RootPriority = 10
-	chassis.CFrame = CFrame.new(0, size.Y / 2, 0)
+	chassis.CFrame = CFrame.new(0, chassisH / 2, 0)
 	chassis.Parent = model
 	model.PrimaryPart = chassis
+	local ctx: Ctx = { model = model, chassis = chassis }
 
-	-- Keep the car upright (primary axis = attachment X axis, pointed up)
+	-- keep the car upright (primary axis = attachment X axis, pointed up)
 	local att = Instance.new("Attachment")
 	att.Name = "UprightAttachment"
 	att.CFrame = CFrame.fromMatrix(Vector3.zero, Vector3.yAxis, -Vector3.xAxis)
@@ -1192,216 +1453,270 @@ function CarBuilder.Build(opts: BuildOptions): Model
 	align.MaxTorque = 5e6
 	align.Parent = chassis
 
-	local bottom = 0
-	local bodyColor = opts.color
-	local bodyY = bottom + 0.6 + d.bodyH / 2
+	local rideOff = (opts.ride or 0) * 0.15
+	local bottom = d.c + rideOff
+	local top = d.top + rideOff
+	local roof = d.roof + rideOff
+	local H = top - bottom
+	local roofH = roof - top
+	local kit = opts.kit or 1
+	local wide = kit == 3
+	local bodyColor = if opts.police then Color3.fromRGB(14, 14, 18) else opts.color
+	local front = -L / 2
+	local rear = L / 2
+	local fz = front + L * d.fAxle
+	local rz = rear - L * d.rAxle
+	local a = r + 0.3 -- half length of a wheel arch
+	local archTop = math.min(r * 2 + 0.15, top - 0.15)
+	local midY = (bottom + top) / 2
 
-	local body = part({
-		Name = "Body",
-		Size = Vector3.new(size.X + 0.2, d.bodyH, size.Z + 0.4),
-		CFrame = CFrame.new(0, bodyY, 0),
-		Color = bodyColor,
-		Material = Enum.Material.SmoothPlastic,
-		Reflectance = 0.15,
-	})
-	body.Parent = model
-	weld(chassis, body)
-
-	local cabinY = bodyY + d.bodyH / 2 + d.cabin.Y / 2
-	local cabin = part({
-		Name = "Cabin",
-		Size = d.cabin,
-		CFrame = CFrame.new(0, cabinY, d.cabinZ),
-		Color = Color3.fromRGB(20, 25, 35),
-		Material = Enum.Material.Glass,
-		Transparency = 0.35,
-		Reflectance = 0.3,
-	})
-	cabin.Parent = model
-	weld(chassis, cabin)
-
-	local roof = part({
-		Name = "Roof",
-		Size = Vector3.new(d.cabin.X - 0.4, 0.3, d.cabin.Z - 1),
-		CFrame = CFrame.new(0, cabinY + d.cabin.Y / 2 + 0.15, d.cabinZ + 0.3),
-		Color = if opts.police then Color3.fromRGB(245, 245, 245) else bodyColor,
-		Material = Enum.Material.SmoothPlastic,
-	})
-	roof.Parent = model
-	weld(chassis, roof)
-
-	if d.spoiler then
-		local wing = part({
-			Name = "Spoiler",
-			Size = Vector3.new(size.X, 0.3, 1.4),
-			CFrame = CFrame.new(0, bodyY + d.bodyH / 2 + 1.2, size.Z / 2 - 0.6),
-			Color = Color3.fromRGB(20, 20, 20),
-		})
-		wing.Parent = model
-		weld(chassis, wing)
-		for _, x in { -size.X / 2 + 1, size.X / 2 - 1 } do
-			local strut = part({
-				Size = Vector3.new(0.3, 1.1, 0.5),
-				CFrame = CFrame.new(x, bodyY + d.bodyH / 2 + 0.55, size.Z / 2 - 0.6),
-				Color = Color3.fromRGB(20, 20, 20),
-			})
-			strut.Parent = model
-			weld(chassis, strut)
+	-- Body shell split around the wheel arches
+	local sections = {
+		{ z0 = front, z1 = fz - a, arch = false },
+		{ z0 = fz - a, z1 = fz + a, arch = true },
+		{ z0 = fz + a, z1 = rz - a, arch = false },
+		{ z0 = rz - a, z1 = rz + a, arch = true },
+		{ z0 = rz + a, z1 = rear, arch = false },
+	}
+	for _, sec in sections do
+		local z0, z1, arch = sec.z0, sec.z1, sec.arch
+		local len = z1 - z0
+		local zc = (z0 + z1) / 2
+		if arch then
+			paint(box(ctx, "Fender", Vector3.new(W, top - archTop, len), CFrame.new(0, (archTop + top) / 2, zc), bodyColor))
+			box(ctx, "ArchInner", Vector3.new(W - 2.6, archTop - bottom, len), CFrame.new(0, (bottom + archTop) / 2, zc), DARK)
+			box(ctx, "ArchLiner", Vector3.new(W - 0.1, 0.1, len - 0.1), CFrame.new(0, archTop - 0.05, zc), DARK)
+		else
+			paint(box(ctx, "Body", Vector3.new(W, H, len), CFrame.new(0, midY, zc), bodyColor))
 		end
 	end
 
-	if d.scoop then
-		local scoop = part({
-			Name = "Scoop",
-			Size = Vector3.new(2.2, 0.6, 3),
-			CFrame = CFrame.new(0, bodyY + d.bodyH / 2 + 0.3, -size.Z / 2 + 3.5),
-			Color = Color3.fromRGB(15, 15, 15),
-		})
-		scoop.Parent = model
-		weld(chassis, scoop)
+	-- Hood, windshield, roof, rear window, trunk
+	local cabW = W - 0.9
+	local cabS = front + L * d.cabS
+	local cabE = front + L * d.cabE
+	local roofS = cabS + d.ws
+	local roofE = cabE - d.rw
+	local roofLen = math.max(roofE - roofS, 0.5)
+	local roofMid = (roofS + roofE) / 2
+	local hoodLen = cabS - (front + 0.3)
+	paint(wedge(ctx, "Hood", Vector3.new(W - 0.3, d.hood, hoodLen), CFrame.new(0, top + d.hood / 2, front + 0.3 + hoodLen / 2), bodyColor))
+	local tint = opts.tint or 0.4
+	local ws = wedge(ctx, "Windshield", Vector3.new(cabW, roofH, d.ws), CFrame.new(0, top + roofH / 2, cabS + d.ws / 2), GLASS, Enum.Material.Glass)
+	ws.Transparency = tint
+	ws.Reflectance = 0.25
+	local roofColor = if opts.police then Color3.fromRGB(240, 240, 240) else bodyColor
+	paint(box(ctx, "Roof", Vector3.new(cabW, 0.18, roofLen), CFrame.new(0, roof - 0.09, roofMid), roofColor))
+	local cabin = box(ctx, "CabinGlass", Vector3.new(cabW - 0.1, roofH - 0.18, roofLen), CFrame.new(0, top + (roofH - 0.18) / 2, roofMid), GLASS, Enum.Material.Glass)
+	cabin.Transparency = tint
+	cabin.Reflectance = 0.25
+	local rwp = wedge(ctx, "RearWindow", Vector3.new(cabW, roofH, d.rw), CFrame.new(0, top + roofH / 2, cabE - d.rw / 2) * CFrame.Angles(0, math.pi, 0), GLASS, Enum.Material.Glass)
+	rwp.Transparency = tint
+	rwp.Reflectance = 0.25
+	if rear - 0.3 - cabE > 0.5 then
+		local trunkLen = rear - 0.3 - cabE
+		paint(wedge(ctx, "Trunk", Vector3.new(W - 0.3, 0.15, trunkLen), CFrame.new(0, top + 0.075, cabE + trunkLen / 2) * CFrame.Angles(0, math.pi, 0), bodyColor))
+	end
+	-- pillars
+	for _, s in { -1, 1 } do
+		box(ctx, "BPillar", Vector3.new(0.06, roofH - 0.18, 0.35), CFrame.new(s * (cabW / 2), top + (roofH - 0.18) / 2, roofMid + roofLen * 0.1), DARK)
 	end
 
-	-- Racing stripe for player / rival cars
-	if not opts.police then
-		local stripe = part({
-			Name = "Stripe",
-			Size = Vector3.new(1.2, 0.05, size.Z + 0.42),
-			CFrame = CFrame.new(0, bodyY + d.bodyH / 2 + 0.02, 0),
-			Color = Color3.fromRGB(255, 255, 255),
-			Material = Enum.Material.SmoothPlastic,
-		})
-		stripe.Parent = model
-		weld(chassis, stripe)
+	-- Interior (visible through lighter tints)
+	for _, s in { -1, 1 } do
+		box(ctx, "Seat", Vector3.new(1.3, 1.5, 0.35), CFrame.new(s * cabW / 4, top + 0.35, roofMid + 0.6) * CFrame.Angles(math.rad(-12), 0, 0), Color3.fromRGB(30, 30, 34), Enum.Material.Fabric)
+	end
+	box(ctx, "Dash", Vector3.new(cabW - 0.2, 0.35, 0.9), CFrame.new(0, top + 0.1, cabS + d.ws * 0.65), Color3.fromRGB(25, 25, 28))
+	cylinder(ctx, "SteeringWheel", Vector3.new(0.12, 0.9, 0.9), CFrame.new(-cabW / 4, top + 0.45, cabS + d.ws * 0.95) * CFrame.Angles(0, math.rad(90), math.rad(20)), DARK)
+
+	-- Front end
+	box(ctx, "Bumper", Vector3.new(W - 0.3, 0.4, 0.35), CFrame.new(0, bottom + 0.2, front - 0.12), TRIM)
+	box(ctx, "Grille", Vector3.new(W * 0.42, H * 0.35, 0.1), CFrame.new(0, bottom + H * 0.42, front - 0.04), DARK)
+	for _, s in { -1, 1 } do
+		box(ctx, "Intake", Vector3.new(0.9, 0.3, 0.1), CFrame.new(s * (W / 2 - 1), bottom + 0.55, front - 0.04), DARK)
+	end
+	for idx, s in { -1, 1 } do
+		local x = s * (W / 2 - 0.85)
+		local y = top - 0.28
+		local head = box(ctx, "Headlight", Vector3.new(1.15, 0.26, 0.1), CFrame.new(x, y, front - 0.06), Color3.fromRGB(255, 250, 235), Enum.Material.Neon)
+		local lens = box(ctx, "HeadlightLens", Vector3.new(1.35, 0.4, 0.12), CFrame.new(x, y, front - 0.03), Color3.fromRGB(200, 210, 220), Enum.Material.Glass)
+		lens.Transparency = 0.6
+		box(ctx, "DRL", Vector3.new(1.2, 0.06, 0.1), CFrame.new(x, y - 0.26, front - 0.06), Color3.fromRGB(220, 240, 255), Enum.Material.Neon)
+		local spot = Instance.new("SpotLight")
+		spot.Name = "Beam"
+		spot.Face = Enum.NormalId.Front
+		spot.Range = 90
+		spot.Angle = 55
+		spot.Brightness = 3.5
+		spot.Color = Color3.fromRGB(255, 245, 225)
+		spot.Shadows = opts.seat == true and idx == 1
+		spot.Parent = head
+	end
+
+	-- Rear end
+	box(ctx, "RearBumper", Vector3.new(W - 0.3, 0.45, 0.35), CFrame.new(0, bottom + 0.22, rear + 0.12), TRIM)
+	local tailY = top - 0.3
+	if d.fullTail then
+		box(ctx, "Taillight", Vector3.new(W - 0.5, 0.16, 0.1), CFrame.new(0, tailY, rear + 0.05), Color3.fromRGB(255, 20, 35), Enum.Material.Neon)
+	end
+	for _, s in { -1, 1 } do
+		box(ctx, "Taillight", Vector3.new(1.3, 0.32, 0.1), CFrame.new(s * (W / 2 - 0.85), tailY, rear + 0.05), Color3.fromRGB(230, 15, 30), Enum.Material.Neon)
+		box(ctx, "ReverseLight", Vector3.new(0.35, 0.2, 0.1), CFrame.new(s * (W / 2 - 1.75), tailY - 0.05, rear + 0.05), Color3.fromRGB(235, 235, 235), Enum.Material.Glass)
+	end
+	local firstTail = model:FindFirstChild("Taillight") :: BasePart
+	local tailGlow = Instance.new("SurfaceLight")
+	tailGlow.Name = "TailGlow"
+	tailGlow.Face = Enum.NormalId.Back
+	tailGlow.Color = Color3.fromRGB(255, 20, 30)
+	tailGlow.Range = 9
+	tailGlow.Brightness = 1.2
+	tailGlow.Angle = 120
+	tailGlow.Parent = firstTail
+
+	-- Exhaust tips
+	local tips: { number } = {}
+	if d.exhausts == 1 then
+		tips = { -(W / 2 - 1.3) }
+	elseif d.exhausts == 2 then
+		tips = { -(W / 2 - 1.3), W / 2 - 1.3 }
+	else
+		tips = { -(W / 2 - 1.2), -(W / 2 - 1.75), W / 2 - 1.75, W / 2 - 1.2 }
+	end
+	for _, x in tips do
+		local tip = cylinder(ctx, "ExhaustTip", Vector3.new(0.6, 0.38, 0.38), CFrame.new(x, bottom + 0.22, rear + 0.3) * CFrame.Angles(0, math.rad(90), 0), CHROME, Enum.Material.Metal)
+		tip.Reflectance = 0.5
+	end
+
+	-- Plates
+	local plateF = box(ctx, "Plate", Vector3.new(1.8, 0.42, 0.05), CFrame.new(0, bottom + 0.45, front - 0.32), Color3.new(1, 1, 1))
+	surfaceText(plateF, Enum.NormalId.Front, "NEON BAY", Color3.fromRGB(20, 40, 120))
+	local plateR = box(ctx, "Plate", Vector3.new(1.8, 0.42, 0.05), CFrame.new(0, bottom + 0.62, rear + 0.32), Color3.new(1, 1, 1))
+	surfaceText(plateR, Enum.NormalId.Back, if opts.police then "POLICE" else "WNTD 22", Color3.fromRGB(20, 40, 120))
+
+	-- Sides: mirrors, door shut lines, handles
+	for _, s in { -1, 1 } do
+		local mx = s * (W / 2 + 0.25)
+		paint(box(ctx, "Mirror", Vector3.new(0.5, 0.32, 0.55), CFrame.new(mx, top + 0.3, cabS + 0.55), bodyColor))
+		box(ctx, "MirrorArm", Vector3.new(0.4, 0.08, 0.2), CFrame.new(s * (W / 2 + 0.02), top + 0.18, cabS + 0.6), DARK)
+		for _, z in { cabS + 0.2, roofMid + roofLen * 0.1, cabE - 0.4 } do
+			box(ctx, "DoorLine", Vector3.new(0.03, H - 0.35, 0.05), CFrame.new(s * (W / 2 + 0.005), midY + 0.05, z), DARK)
+		end
+		box(ctx, "Handle", Vector3.new(0.05, 0.12, 0.5), CFrame.new(s * (W / 2 + 0.02), top - 0.4, roofMid + roofLen * 0.1 - 0.5), TRIM)
+		box(ctx, "Sill", Vector3.new(0.08, 0.2, (rz - a) - (fz + a)), CFrame.new(s * (W / 2 + 0.02), bottom + 0.1, (fz + rz) / 2), TRIM)
+	end
+
+	-- Body kits
+	if kit >= 2 then
+		box(ctx, "Splitter", Vector3.new(W + 0.2, 0.08, 0.7), CFrame.new(0, bottom + 0.02, front - 0.25), DARK)
+		for k = -2, 2 do
+			box(ctx, "Diffuser", Vector3.new(0.06, 0.35, 0.7), CFrame.new(k * 0.7, bottom + 0.15, rear + 0.2), DARK)
+		end
+		for _, s in { -1, 1 } do
+			box(ctx, "SideSkirt", Vector3.new(0.25, 0.28, (rz - a) - (fz + a)), CFrame.new(s * (W / 2 + 0.1), bottom + 0.12, (fz + rz) / 2), DARK)
+			box(ctx, "Canard", Vector3.new(0.5, 0.06, 0.6), CFrame.new(s * (W / 2 - 0.2), bottom + 0.5, front - 0.2) * CFrame.Angles(0, 0, s * math.rad(-10)), DARK)
+		end
+	end
+	if wide then
+		for _, zc in { fz, rz } do
+			for _, s in { -1, 1 } do
+				paint(box(ctx, "Flare", Vector3.new(0.4, top - r * 1.25, a * 2 + 0.4), CFrame.new(s * (W / 2 + 0.2), (r * 1.25 + top) / 2, zc), bodyColor))
+			end
+		end
+	end
+
+	-- Spoiler
+	local spoiler = opts.spoiler or d.spoiler
+	local deck = top + 0.15
+	if spoiler == 2 then
+		paint(wedge(ctx, "Spoiler", Vector3.new(W - 0.8, 0.35, 0.9), CFrame.new(0, deck + 0.175, rear - 0.65), bodyColor))
+	elseif spoiler == 3 or spoiler == 4 then
+		local gt = spoiler == 4
+		local wingY = deck + (if gt then 1.5 else 0.95)
+		local wingW = if gt then W + 0.1 else W - 0.8
+		box(ctx, "Spoiler", Vector3.new(wingW, 0.12, if gt then 1.4 else 1.0), CFrame.new(0, wingY, rear - 0.8) * CFrame.Angles(math.rad(-6), 0, 0), if gt then DARK else bodyColor)
+		for _, s in { -1, 1 } do
+			box(ctx, "SpoilerStrut", Vector3.new(0.12, wingY - deck, 0.45), CFrame.new(s * (wingW / 2 - 1.1), (wingY + deck) / 2, rear - 0.8), DARK)
+			if gt then
+				box(ctx, "Endplate", Vector3.new(0.08, 0.7, 1.6), CFrame.new(s * (wingW / 2), wingY + 0.1, rear - 0.8), DARK)
+			end
+		end
 	end
 
 	-- Wheels
-	local wheelRadius = 1.35
-	for _, x in { -1, 1 } do
-		for _, z in { -1, 1 } do
-			local wheel = part({
-				Name = "Wheel",
-				Shape = Enum.PartType.Cylinder,
-				Size = Vector3.new(1.3, wheelRadius * 2, wheelRadius * 2),
-				CFrame = CFrame.new(x * (size.X / 2), bottom + wheelRadius - 0.1, z * (size.Z / 2 - 2.4)),
-				Color = Color3.fromRGB(25, 25, 25),
-				Material = Enum.Material.SmoothPlastic,
-			})
-			wheel.Parent = model
-			weld(chassis, wheel)
-			local rim = part({
-				Name = "Rim",
-				Shape = Enum.PartType.Cylinder,
-				Size = Vector3.new(1.35, wheelRadius * 1.1, wheelRadius * 1.1),
-				CFrame = wheel.CFrame,
-				Color = Color3.fromRGB(190, 190, 200),
-				Material = Enum.Material.Metal,
-			})
-			rim.Parent = model
-			weld(chassis, rim)
+	local wheelX = W / 2 - 0.6 + (if wide then 0.35 else 0)
+	for _, z in { fz, rz } do
+		for _, s in { -1, 1 } do
+			buildWheel(ctx, d, s * wheelX, z, z == fz, opts)
 		end
 	end
 
-	-- Headlights / taillights
-	for _, x in { -1, 1 } do
-		local head = part({
-			Name = "Headlight",
-			Size = Vector3.new(1.4, 0.5, 0.2),
-			CFrame = CFrame.new(x * (size.X / 2 - 1.1), bodyY + 0.2, -size.Z / 2 - 0.25),
-			Color = Color3.fromRGB(255, 250, 220),
-			Material = Enum.Material.Neon,
-		})
-		head.Parent = model
-		weld(chassis, head)
-		local tail = part({
-			Name = "Taillight",
-			Size = Vector3.new(1.6, 0.45, 0.2),
-			CFrame = CFrame.new(x * (size.X / 2 - 1.1), bodyY + 0.2, size.Z / 2 + 0.25),
-			Color = Color3.fromRGB(255, 30, 40),
-			Material = Enum.Material.Neon,
-		})
-		tail.Parent = model
-		weld(chassis, tail)
-	end
-	local beamPart = model:FindFirstChild("Headlight") :: BasePart
-	local spot = Instance.new("SpotLight")
-	spot.Face = Enum.NormalId.Front
-	spot.Range = 60
-	spot.Angle = 70
-	spot.Brightness = 2.5
-	spot.Color = Color3.fromRGB(255, 245, 220)
-	spot.Parent = beamPart
-
-	-- Police livery and light bar
+	-- Police livery, light bar and push bar
 	if opts.police then
-		body.Color = Color3.fromRGB(15, 15, 20)
-		for _, side in { -1, 1 } do
-			local door = part({
-				Name = "Door",
-				Size = Vector3.new(0.1, d.bodyH * 0.8, size.Z * 0.45),
-				CFrame = CFrame.new(side * (size.X / 2 + 0.12), bodyY, 0.5),
-				Color = Color3.fromRGB(245, 245, 245),
-				Material = Enum.Material.SmoothPlastic,
-			})
-			door.Parent = model
-			weld(chassis, door)
-			addText(door, if side < 0 then Enum.NormalId.Left else Enum.NormalId.Right, "POLICE", Color3.fromRGB(20, 40, 140))
+		for _, s in { -1, 1 } do
+			local door = box(ctx, "Door", Vector3.new(0.04, H - 0.4, (rz - a) - (fz + a) - 0.4), CFrame.new(s * (W / 2 + 0.03), midY + 0.05, (fz + rz) / 2), Color3.fromRGB(240, 240, 240))
+			surfaceText(door, if s < 0 then Enum.NormalId.Left else Enum.NormalId.Right, "POLICE", Color3.fromRGB(20, 40, 140))
 		end
-		local barY = roof.Position.Y + 0.4
+		local hoodStripe = box(ctx, "HoodBadge", Vector3.new(1.4, 0.05, 1.4), CFrame.new(0, top + d.hood + 0.03, front + 1.6), Color3.fromRGB(240, 240, 240))
+		local _ = hoodStripe
+		local barY = roof + 0.15
+		box(ctx, "LightbarBase", Vector3.new(cabW * 0.8, 0.14, 0.9), CFrame.new(0, barY - 0.05, roofMid), DARK)
 		local sirens = {
 			{ x = -1, color = Color3.fromRGB(255, 20, 30), name = "SirenRed" },
 			{ x = 1, color = Color3.fromRGB(20, 80, 255), name = "SirenBlue" },
 		}
 		for _, info in sirens do
-			local light = part({
-				Name = info.name,
-				Size = Vector3.new(1.8, 0.5, 0.9),
-				CFrame = CFrame.new(info.x * 1.1, barY, roof.Position.Z),
-				Color = info.color,
-				Material = Enum.Material.Neon,
-			})
-			light.Parent = model
-			weld(chassis, light)
+			local light = box(ctx, info.name, Vector3.new(cabW * 0.36, 0.26, 0.75), CFrame.new(info.x * cabW * 0.2, barY + 0.13, roofMid), info.color, Enum.Material.Neon)
 			local pl = Instance.new("PointLight")
 			pl.Color = info.color
-			pl.Range = 24
-			pl.Brightness = 4
+			pl.Range = 30
+			pl.Brightness = 5
 			pl.Parent = light
 		end
+		for _, s in { -1, 1 } do
+			box(ctx, "PushBar", Vector3.new(0.18, 1.1, 0.18), CFrame.new(s * 0.9, bottom + 0.75, front - 0.55), Color3.fromRGB(60, 60, 65), Enum.Material.Metal)
+		end
+		box(ctx, "PushBarTop", Vector3.new(2.2, 0.18, 0.18), CFrame.new(0, bottom + 1.3, front - 0.55), Color3.fromRGB(60, 60, 65), Enum.Material.Metal)
+		box(ctx, "Antenna", Vector3.new(0.04, 1.2, 0.04), CFrame.new(0.6, roof + 0.6, roofE - 0.2), DARK)
 		model:SetAttribute("Police", true)
 	end
 
-	-- Underglow + nitro / driving effect emitters
-	local effectColor = opts.effectColor or Color3.fromRGB(0, 255, 255)
+	-- Underglow
+	local glowColor = opts.glow
 	local glow = Instance.new("PointLight")
 	glow.Name = "Underglow"
-	glow.Color = if opts.police then Color3.fromRGB(80, 80, 255) else effectColor
 	glow.Range = 14
-	glow.Brightness = if opts.police then 0 else 2
+	glow.Color = glowColor or Color3.new(1, 1, 1)
+	glow.Brightness = if glowColor then 3 else 0
 	glow.Parent = chassis
+	if glowColor then
+		local strip = box(ctx, "GlowStrip", Vector3.new(W - 1.2, 0.05, L - 3.5), CFrame.new(0, bottom - 0.05, 0), glowColor, Enum.Material.Neon)
+		strip.Transparency = 0.2
+	end
 
+	-- Nitro flames, Unbound style wing trails, drift smoke
+	local effectColor = opts.effectColor or Color3.fromRGB(0, 255, 255)
 	local exhaust = Instance.new("Attachment")
 	exhaust.Name = "Exhaust"
-	exhaust.Position = Vector3.new(0, 0.4, size.Z / 2 + 0.5)
+	exhaust.Position = Vector3.new(tips[1], bottom + 0.22 - chassisH / 2, rear + 0.7)
 	exhaust.Parent = chassis
 	local flame = Instance.new("ParticleEmitter")
 	flame.Name = "NitroFlame"
 	flame.Enabled = false
 	flame.Color = ColorSequence.new(Color3.fromRGB(80, 170, 255), effectColor)
 	flame.LightEmission = 1
-	flame.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1.2), NumberSequenceKeypoint.new(1, 0) })
-	flame.Lifetime = NumberRange.new(0.15, 0.3)
-	flame.Rate = 120
+	flame.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.9), NumberSequenceKeypoint.new(1, 0) })
+	flame.Lifetime = NumberRange.new(0.12, 0.25)
+	flame.Rate = 140
 	flame.Speed = NumberRange.new(20, 30)
 	flame.EmissionDirection = Enum.NormalId.Back
 	flame.Parent = exhaust
 
-	-- Unbound style "wings" trails off the rear corners
-	for _, side in { -1, 1 } do
+	for _, s in { -1, 1 } do
 		local a0 = Instance.new("Attachment")
-		a0.Position = Vector3.new(side * size.X / 2, 0.5, size.Z / 2)
+		a0.Position = Vector3.new(s * W / 2, top - 0.3 - chassisH / 2, rear)
 		a0.Parent = chassis
 		local a1 = Instance.new("Attachment")
-		a1.Position = Vector3.new(side * (size.X / 2 + 1.8), 2.2, size.Z / 2)
+		a1.Position = Vector3.new(s * (W / 2 + 1.6), top + 1.3 - chassisH / 2, rear)
 		a1.Parent = chassis
 		local trail = Instance.new("Trail")
 		trail.Name = "EffectTrail"
@@ -1415,28 +1730,27 @@ function CarBuilder.Build(opts: BuildOptions): Model
 		trail.Parent = chassis
 	end
 
-	-- Drift smoke
 	local smokeAtt = Instance.new("Attachment")
 	smokeAtt.Name = "Smoke"
-	smokeAtt.Position = Vector3.new(0, -0.6, size.Z / 2 - 2)
+	smokeAtt.Position = Vector3.new(0, -chassisH / 2 + 0.2, rz)
 	smokeAtt.Parent = chassis
 	local smoke = Instance.new("ParticleEmitter")
 	smoke.Name = "DriftSmoke"
 	smoke.Enabled = false
 	smoke.Color = ColorSequence.new(Color3.fromRGB(220, 220, 225))
 	smoke.Transparency = NumberSequence.new(0.4, 1)
-	smoke.Size = NumberSequence.new(2, 7)
-	smoke.Lifetime = NumberRange.new(0.8, 1.4)
+	smoke.Size = NumberSequence.new(2, 8)
+	smoke.Lifetime = NumberRange.new(0.8, 1.5)
 	smoke.Rate = 60
 	smoke.Speed = NumberRange.new(2, 5)
-	smoke.SpreadAngle = Vector2.new(40, 40)
+	smoke.SpreadAngle = Vector2.new(60, 20)
 	smoke.Parent = smokeAtt
 
 	if opts.seat then
 		local seat = Instance.new("VehicleSeat")
 		seat.Name = "DriverSeat"
-		seat.Size = Vector3.new(2, 0.6, 2)
-		seat.CFrame = CFrame.new(0, bodyY + d.bodyH / 2 - 0.8, d.cabinZ + 0.5)
+		seat.Size = Vector3.new(1.4, 0.4, 1.4)
+		seat.CFrame = CFrame.new(-cabW / 4, top - 0.4, roofMid + 0.2)
 		seat.Transparency = 1
 		seat.CanCollide = false
 		seat.Massless = true
@@ -1445,14 +1759,14 @@ function CarBuilder.Build(opts: BuildOptions): Model
 		seat.TurnSpeed = 0
 		seat.HeadsUpDisplay = false
 		seat.Parent = model
-		weld(chassis, seat)
+		weldTo(chassis, seat)
 	end
 
 	if opts.label then
 		local bb = Instance.new("BillboardGui")
 		bb.Name = "Tag"
-		bb.Size = UDim2.fromOffset(200, 40)
-		bb.StudsOffset = Vector3.new(0, 6, 0)
+		bb.Size = UDim2.fromOffset(200, 36)
+		bb.StudsOffset = Vector3.new(0, roof + 2, 0)
 		bb.AlwaysOnTop = true
 		bb.MaxDistance = 250
 		local t = Instance.new("TextLabel")
@@ -1471,7 +1785,197 @@ function CarBuilder.Build(opts: BuildOptions): Model
 end
 
 return CarBuilder
-]]></ProtectedString></Properties></Item><Item class="Script" referent="RBX00000000000000000000000000000007"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000007"><Properties><string name="Name">DayNight</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Realistic day/night lighting: sky, clouds, sun rays, depth of field and colour grading that
+-- blends between night, dawn, day, golden hour and dusk. Street lamps and window lights switch
+-- on at night.
+
+local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+
+local DayNight = {}
+
+type Key = {
+	t: number,
+	ambient: Color3,
+	outdoor: Color3,
+	brightness: number,
+	exposure: number,
+	atmoColor: Color3,
+	atmoDecay: Color3,
+	density: number,
+	haze: number,
+	tint: Color3,
+	saturation: number,
+	sunRays: number,
+	bloom: number,
+}
+
+local function rgb(r: number, g: number, b: number): Color3
+	return Color3.fromRGB(r, g, b)
+end
+
+local NIGHT: Key = {
+	t = 0,
+	ambient = rgb(28, 28, 48),
+	outdoor = rgb(62, 64, 105),
+	brightness = 1.1,
+	exposure = 0.25,
+	atmoColor = rgb(120, 110, 190),
+	atmoDecay = rgb(55, 40, 105),
+	density = 0.36,
+	haze = 1.9,
+	tint = rgb(215, 215, 255),
+	saturation = 0.28,
+	sunRays = 0,
+	bloom = 0.9,
+}
+
+local KEYS: { Key } = {
+	NIGHT,
+	{ t = 5.3, ambient = rgb(40, 36, 62), outdoor = rgb(92, 82, 122), brightness = 1.3, exposure = 0.15, atmoColor = rgb(200, 150, 175), atmoDecay = rgb(120, 70, 110), density = 0.34, haze = 1.7, tint = rgb(255, 228, 230), saturation = 0.2, sunRays = 0.05, bloom = 0.7 },
+	{ t = 7, ambient = rgb(72, 62, 62), outdoor = rgb(155, 125, 112), brightness = 2.2, exposure = 0, atmoColor = rgb(255, 190, 150), atmoDecay = rgb(180, 110, 90), density = 0.3, haze = 1.2, tint = rgb(255, 236, 220), saturation = 0.15, sunRays = 0.16, bloom = 0.5 },
+	{ t = 12, ambient = rgb(92, 92, 102), outdoor = rgb(142, 142, 152), brightness = 3, exposure = 0, atmoColor = rgb(199, 210, 230), atmoDecay = rgb(106, 120, 150), density = 0.27, haze = 0.6, tint = rgb(255, 255, 255), saturation = 0.1, sunRays = 0.08, bloom = 0.35 },
+	{ t = 17.3, ambient = rgb(82, 66, 60), outdoor = rgb(165, 122, 100), brightness = 2.4, exposure = 0.02, atmoColor = rgb(255, 170, 120), atmoDecay = rgb(190, 100, 80), density = 0.3, haze = 1.3, tint = rgb(255, 226, 200), saturation = 0.2, sunRays = 0.22, bloom = 0.5 },
+	{ t = 19, ambient = rgb(50, 40, 72), outdoor = rgb(102, 80, 132), brightness = 1.5, exposure = 0.15, atmoColor = rgb(220, 120, 170), atmoDecay = rgb(120, 60, 120), density = 0.34, haze = 1.8, tint = rgb(240, 215, 255), saturation = 0.25, sunRays = 0.1, bloom = 0.75 },
+	{ t = 20.5, ambient = NIGHT.ambient, outdoor = NIGHT.outdoor, brightness = NIGHT.brightness, exposure = NIGHT.exposure, atmoColor = NIGHT.atmoColor, atmoDecay = NIGHT.atmoDecay, density = NIGHT.density, haze = NIGHT.haze, tint = NIGHT.tint, saturation = NIGHT.saturation, sunRays = NIGHT.sunRays, bloom = NIGHT.bloom },
+}
+
+local atmosphere: Atmosphere
+local bloom: BloomEffect
+local sunRays: SunRaysEffect
+local cc: ColorCorrectionEffect
+
+local function lerp(a: number, b: number, t: number): number
+	return a + (b - a) * t
+end
+
+local function sample(time: number): (Key, Key, number)
+	for k = 1, #KEYS do
+		local a = KEYS[k]
+		local b = KEYS[k + 1]
+		if not b then
+			-- wrap from the last key to midnight (next day)
+			local span = 24 - a.t
+			return a, KEYS[1], math.clamp((time - a.t) / span, 0, 1)
+		end
+		if time >= a.t and time < b.t then
+			return a, b, (time - a.t) / (b.t - a.t)
+		end
+	end
+	return KEYS[1], KEYS[1], 0
+end
+
+local function apply(time: number)
+	local a, b, t = sample(time)
+	-- smoothstep so transitions ease in and out
+	t = t * t * (3 - 2 * t)
+	Lighting.Ambient = a.ambient:Lerp(b.ambient, t)
+	Lighting.OutdoorAmbient = a.outdoor:Lerp(b.outdoor, t)
+	Lighting.Brightness = lerp(a.brightness, b.brightness, t)
+	Lighting.ExposureCompensation = lerp(a.exposure, b.exposure, t)
+	atmosphere.Color = a.atmoColor:Lerp(b.atmoColor, t)
+	atmosphere.Decay = a.atmoDecay:Lerp(b.atmoDecay, t)
+	atmosphere.Density = lerp(a.density, b.density, t)
+	atmosphere.Haze = lerp(a.haze, b.haze, t)
+	cc.TintColor = a.tint:Lerp(b.tint, t)
+	cc.Saturation = lerp(a.saturation, b.saturation, t)
+	sunRays.Intensity = lerp(a.sunRays, b.sunRays, t)
+	bloom.Intensity = lerp(a.bloom, b.bloom, t)
+end
+
+local function clear(className: string)
+	for _, c in Lighting:GetChildren() do
+		if c.ClassName == className then
+			c:Destroy()
+		end
+	end
+end
+
+function DayNight.Init(nightLights: { Light }, nightNeon: { BasePart })
+	for _, cls in { "Atmosphere", "BloomEffect", "SunRaysEffect", "ColorCorrectionEffect", "DepthOfFieldEffect", "Sky" } do
+		clear(cls)
+	end
+	Lighting.ClockTime = 20.5
+	Lighting.GeographicLatitude = 35
+	Lighting.EnvironmentDiffuseScale = 1
+	Lighting.EnvironmentSpecularScale = 1
+	Lighting.GlobalShadows = true
+	Lighting.ShadowSoftness = 0.25
+
+	local sky = Instance.new("Sky")
+	sky.StarCount = 4000
+	sky.SunAngularSize = 14
+	sky.MoonAngularSize = 9
+	sky.CelestialBodiesShown = true
+	sky.Parent = Lighting
+
+	atmosphere = Instance.new("Atmosphere")
+	atmosphere.Offset = 0.1
+	atmosphere.Glare = 0.4
+	atmosphere.Parent = Lighting
+
+	bloom = Instance.new("BloomEffect")
+	bloom.Size = 28
+	bloom.Threshold = 1.3
+	bloom.Parent = Lighting
+
+	sunRays = Instance.new("SunRaysEffect")
+	sunRays.Spread = 0.6
+	sunRays.Parent = Lighting
+
+	cc = Instance.new("ColorCorrectionEffect")
+	cc.Contrast = 0.12
+	cc.Parent = Lighting
+
+	local dof = Instance.new("DepthOfFieldEffect")
+	dof.FarIntensity = 0.12
+	dof.FocusDistance = 120
+	dof.InFocusRadius = 220
+	dof.NearIntensity = 0
+	dof.Parent = Lighting
+
+	local terrain = workspace.Terrain
+	local clouds = terrain:FindFirstChildOfClass("Clouds") or Instance.new("Clouds")
+	clouds.Cover = 0.55
+	clouds.Density = 0.6
+	clouds.Color = Color3.fromRGB(220, 215, 235)
+	clouds.Parent = terrain
+
+	local lampsOn: boolean? = nil
+	local function setNight(on: boolean)
+		if lampsOn == on then
+			return
+		end
+		lampsOn = on
+		for _, l in nightLights do
+			l.Enabled = on
+		end
+		for _, p in nightNeon do
+			p.Material = if on then Enum.Material.Neon else Enum.Material.Glass
+			p.Transparency = if on then 0.25 else 0.55
+		end
+	end
+
+	apply(Lighting.ClockTime)
+	-- lamps come on a little before full night and stay on until after sunrise
+	setNight(Lighting.ClockTime >= 18.3 or Lighting.ClockTime < 6.5)
+
+	task.spawn(function()
+		while true do
+			local dt = task.wait(0.25)
+			Lighting.ClockTime = (Lighting.ClockTime + dt * 24 / Config.DayLengthSeconds) % 24
+			local time = Lighting.ClockTime
+			apply(time)
+			setNight(time >= 18.3 or time < 6.5)
+		end
+	end)
+end
+
+return DayNight
+]]></ProtectedString></Properties></Item><Item class="Script" referent="RBX00000000000000000000000000000008"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
 -- WANTED: UNBOUND - server entry point.
 
 local Lighting = game:GetService("Lighting")
@@ -1482,6 +1986,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
 local Grid = require(Shared:WaitForChild("Grid"))
 
+local DayNight = require(script.Parent.DayNight)
 local MapBuilder = require(script.Parent.MapBuilder)
 local PlayerData = require(script.Parent.PlayerData)
 local Session = require(script.Parent.Session)
@@ -1531,44 +2036,22 @@ spawnLocation.Neutral = true
 spawnLocation.Duration = 0
 spawnLocation.Parent = workspace
 
--- Lighting / atmosphere for a neon night city
-Lighting.ClockTime = 20
-Lighting.Brightness = 2
-Lighting.OutdoorAmbient = Color3.fromRGB(90, 90, 120)
-Lighting.EnvironmentDiffuseScale = 0.5
-Lighting.EnvironmentSpecularScale = 0.8
-do
-	local atmosphere = Instance.new("Atmosphere")
-	atmosphere.Density = 0.32
-	atmosphere.Haze = 1.5
-	atmosphere.Color = Color3.fromRGB(200, 170, 255)
-	atmosphere.Decay = Color3.fromRGB(90, 60, 130)
-	atmosphere.Parent = Lighting
-	local bloom = Instance.new("BloomEffect")
-	bloom.Intensity = 0.6
-	bloom.Size = 30
-	bloom.Threshold = 1.4
-	bloom.Parent = Lighting
-	local cc = Instance.new("ColorCorrectionEffect")
-	cc.Saturation = 0.2
-	cc.Contrast = 0.1
-	cc.Parent = Lighting
-end
+-- Realistic day / night lighting (sky, clouds, colour grading, street lamps)
+DayNight.Init(mapInfo.nightLights, mapInfo.nightNeon)
 
 -- day / night cycle
 task.spawn(function()
 	local wasNight = Config.IsNight(Lighting.ClockTime)
 	while true do
-		local dt = task.wait(0.5)
-		Lighting.ClockTime = (Lighting.ClockTime + dt * 24 / Config.DayLengthSeconds) % 24
+		task.wait(0.5)
 		local night = Config.IsNight(Lighting.ClockTime)
 		if night ~= wasNight then
 			wasNight = night
 			for _, s in Session.All() do
 				if night then
-					Session.Notify(s.player, "NIGHT HAS FALLEN - x" .. Config.NightMultiplier .. " payouts, cops hunt harder", Color3.fromRGB(170, 120, 255))
+					Session.Notify(s.player, "NIGHT HAS FALLEN - x" .. Config.NightMultiplier .. " payouts, but more cops are out on patrol", Color3.fromRGB(170, 120, 255))
 				else
-					Session.Notify(s.player, "Sunrise - payouts back to normal", Color3.fromRGB(255, 220, 120))
+					Session.Notify(s.player, "Sunrise - fewer cops, payouts back to normal", Color3.fromRGB(255, 220, 120))
 				end
 			end
 		end
@@ -1746,7 +2229,7 @@ local function snapshot(s: Session.Session)
 		cash = p.cash,
 		owned = p.owned,
 		selected = p.selected,
-		upgrades = p.upgrades,
+		tuning = p.tuning,
 		paint = p.paint,
 		effects = p.effects,
 		effect = p.effect,
@@ -1754,15 +2237,6 @@ local function snapshot(s: Session.Session)
 		racesWon = p.racesWon,
 		blacklistBeaten = p.blacklistBeaten,
 	}
-end
-
-local function upgradeCost(carId: string, kind: string, nextLevel: number): number?
-	local car = Config.GetCar(carId)
-	local up = (Config.Upgrades :: any)[kind]
-	if not car or not up or nextLevel > up.maxLevel then
-		return nil
-	end
-	return math.floor(up.cost[nextLevel] * (Config.ClassCostMult[car.class] or 1))
 end
 
 shopFunction.OnServerInvoke = function(player, action, a, b)
@@ -1801,24 +2275,54 @@ shopFunction.OnServerInvoke = function(player, action, a, b)
 		p.selected = a
 		Vehicles.Spawn(s, Vehicles.NextSafehouseSpawn())
 		msg = "Switched car"
-	elseif action == "Upgrade" and type(a) == "string" and type(b) == "string" then
-		local carId = p.selected
-		local levels = PlayerData.Upgrades(p, carId)
-		local cur = levels[b]
-		if cur == nil then
-			return false, "Unknown upgrade", snapshot(s)
+	elseif action == "Part" and type(a) == "string" then
+		-- performance part: buy the next tier
+		local car = Config.GetCar(p.selected)
+		local part = Config.GetPart(a)
+		if not car or not part then
+			return false, "Unknown part", snapshot(s)
 		end
-		local cost = upgradeCost(carId, b, cur + 1)
-		if not cost then
-			return false, "Maxed out", snapshot(s)
+		local tune = PlayerData.Tune(p, car.id)
+		local cur = tune.parts[part.id] or 0
+		if cur >= #Config.PartTiers - 1 then
+			return false, part.name .. " is maxed out", snapshot(s)
 		end
+		local cost = Config.PartCost(car, part, cur + 1)
 		if p.cash < cost then
 			return false, "Not enough cash", snapshot(s)
 		end
 		p.cash -= cost
-		levels[b] = cur + 1
+		tune.parts[part.id] = cur + 1
+		Vehicles.ApplyStats(s)
+		msg = part.name .. " upgraded to " .. Config.PartTiers[cur + 2]
+	elseif action == "Handling" and type(a) == "string" and type(b) == "number" then
+		local slider
+		for _, sl in Config.HandlingSliders do
+			if sl.id == a then
+				slider = sl
+			end
+		end
+		if not slider then
+			return false, "Unknown setting", snapshot(s)
+		end
+		local tune = PlayerData.Tune(p, p.selected)
+		local value = math.clamp(math.round(b), slider.min, slider.max)
+		tune.handling[a] = value
+		if a == "ride" then
+			Vehicles.Spawn(s)
+		else
+			Vehicles.ApplyStats(s)
+		end
+		msg = slider.name .. " set"
+	elseif action == "Visual" and type(a) == "string" and type(b) == "number" then
+		local options = (Config.Visual :: any)[a]
+		if not options or not options[b] then
+			return false, "Unknown option", snapshot(s)
+		end
+		local tune = PlayerData.Tune(p, p.selected)
+		tune.visual[a] = b
 		Vehicles.Spawn(s)
-		msg = (Config.Upgrades :: any)[b].name .. " upgraded to level " .. (cur + 1)
+		msg = (Config.VisualNames :: any)[a] .. " changed"
 	elseif action == "Paint" and type(a) == "number" then
 		if not Config.PaintColors[a] then
 			return false, "Bad colour", snapshot(s)
@@ -1941,7 +2445,7 @@ task.spawn(function()
 end)
 
 print("[" .. Config.GameName .. "] server ready")
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000008"><Properties><string name="Name">MapBuilder</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000009"><Properties><string name="Name">MapBuilder</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Procedurally builds the city of Neon Bay: road grid, skyscrapers, the safehouse,
 -- a park, covered hiding spots, pursuit breakers, speed cameras and ramps.
 
@@ -1967,6 +2471,8 @@ export type MapInfo = {
 	breakers: { Breaker },
 	speedCams: { Vector3 },
 	buildings: Folder,
+	nightLights: { Light },
+	nightNeon: { BasePart },
 }
 
 local rng = Random.new(22)
@@ -2023,9 +2529,32 @@ local NEON_COLORS = {
 }
 local SIGN_TEXTS = { "WANTED", "UNBOUND", "NEON BAY", "NITRO", "24/7", "MOTEL", "GARAGE", "HOTEL", "CLUB", "RAMEN" }
 
+-- Painted road markings: double yellow centre line and white edge lines.
+local function markings(mid: Vector3, alongX: boolean, segLen: number, folder: Folder)
+	local function line(offset: number, width: number, color: Color3)
+		local size = if alongX then Vector3.new(segLen - 6, 0.04, width) else Vector3.new(width, 0.04, segLen - 6)
+		local off = if alongX then Vector3.new(0, 0, offset) else Vector3.new(offset, 0, 0)
+		anchored({
+			Name = "Line",
+			Size = size,
+			CFrame = CFrame.new(mid.X + off.X, SURFACE + 0.02, mid.Z + off.Z),
+			Color = color,
+			Material = Enum.Material.SmoothPlastic,
+			CanCollide = false,
+			CanQuery = false,
+		}, folder)
+	end
+	local yellow = Color3.fromRGB(235, 190, 40)
+	local white = Color3.fromRGB(225, 225, 225)
+	line(-0.55, 0.45, yellow)
+	line(0.55, 0.45, yellow)
+	line(-(ROAD / 2 - 2.5), 0.5, white)
+	line(ROAD / 2 - 2.5, 0.5, white)
+end
+
 local function buildRoads(folder: Folder)
 	local N = Grid.Size
-	local asphalt = Color3.fromRGB(38, 38, 42)
+	local asphalt = Color3.fromRGB(34, 34, 37)
 	local segLen = Grid.Cell - ROAD
 	for i = 0, N do
 		for j = 0, N do
@@ -2046,15 +2575,7 @@ local function buildRoads(folder: Folder)
 					Color = asphalt,
 					Material = Enum.Material.Asphalt,
 				}, folder)
-				anchored({
-					Name = "Line",
-					Size = Vector3.new(segLen - 10, 0.05, 0.8),
-					CFrame = CFrame.new(mid.X, SURFACE + 0.02, mid.Z),
-					Color = Color3.fromRGB(255, 200, 40),
-					Material = Enum.Material.Neon,
-					CanCollide = false,
-					CanQuery = false,
-				}, folder)
+				markings(mid, true, segLen, folder)
 			end
 			if j < N then
 				local mid = Grid.SegmentMid(i, j, "z")
@@ -2065,42 +2586,55 @@ local function buildRoads(folder: Folder)
 					Color = asphalt,
 					Material = Enum.Material.Asphalt,
 				}, folder)
-				anchored({
-					Name = "Line",
-					Size = Vector3.new(0.8, 0.05, segLen - 10),
-					CFrame = CFrame.new(mid.X, SURFACE + 0.02, mid.Z),
-					Color = Color3.fromRGB(255, 200, 40),
-					Material = Enum.Material.Neon,
-					CanCollide = false,
-					CanQuery = false,
-				}, folder)
+				markings(mid, false, segLen, folder)
 			end
 		end
 	end
 end
 
-local function streetLight(pos: Vector3, props: Folder)
+-- Night-time lights the day/night cycle switches on and off
+local nightLights: { Light } = {}
+local nightNeon: { BasePart } = {}
+
+-- Street lamp with an arm reaching over the road (`toRoad` is a unit direction).
+local function streetLight(pos: Vector3, toRoad: Vector3, props: Folder)
+	local metal = Color3.fromRGB(55, 58, 62)
 	anchored({
 		Name = "Pole",
-		Size = Vector3.new(0.8, 22, 0.8),
-		CFrame = CFrame.new(pos + Vector3.new(0, 11, 0)),
-		Color = Color3.fromRGB(60, 60, 65),
+		Size = Vector3.new(0.7, 24, 0.7),
+		CFrame = CFrame.new(pos + Vector3.new(0, 12, 0)),
+		Color = metal,
 		Material = Enum.Material.Metal,
 		CanCollide = false,
 	}, props)
-	local lamp = anchored({
-		Name = "Lamp",
-		Size = Vector3.new(2.5, 0.6, 2.5),
-		CFrame = CFrame.new(pos + Vector3.new(0, 22, 0)),
-		Color = Color3.fromRGB(255, 220, 160),
-		Material = Enum.Material.Neon,
+	local armCenter = pos + toRoad * 3 + Vector3.new(0, 24, 0)
+	anchored({
+		Name = "Arm",
+		Size = Vector3.new(0.5, 0.5, 6.5),
+		CFrame = CFrame.lookAt(armCenter, armCenter + toRoad),
+		Color = metal,
+		Material = Enum.Material.Metal,
 		CanCollide = false,
 	}, props)
-	local light = Instance.new("PointLight")
-	light.Range = 45
-	light.Brightness = 1.4
-	light.Color = Color3.fromRGB(255, 200, 140)
+	local headPos = pos + toRoad * 6 + Vector3.new(0, 23.6, 0)
+	local lamp = anchored({
+		Name = "Lamp",
+		Size = Vector3.new(1.6, 0.35, 3),
+		CFrame = CFrame.lookAt(headPos, headPos + toRoad),
+		Color = Color3.fromRGB(255, 214, 150),
+		Material = Enum.Material.Neon,
+		CanCollide = false,
+		CanQuery = false,
+	}, props)
+	local light = Instance.new("SpotLight")
+	light.Face = Enum.NormalId.Bottom
+	light.Range = 58
+	light.Angle = 120
+	light.Brightness = 3
+	light.Color = Color3.fromRGB(255, 196, 130)
 	light.Parent = lamp
+	table.insert(nightLights, light)
+	table.insert(nightNeon, lamp)
 end
 
 local function building(center: Vector3, footprint: Vector3, height: number, buildings: Folder, props: Folder)
@@ -2127,7 +2661,7 @@ local function building(center: Vector3, footprint: Vector3, height: number, bui
 	local bands = math.floor(height / 24)
 	for k = 1, bands do
 		if rng:NextNumber() < 0.55 then
-			anchored({
+			local win = anchored({
 				Name = "Windows",
 				Size = Vector3.new(footprint.X + 0.4, 2, footprint.Z + 0.4),
 				CFrame = CFrame.new(center.X, SURFACE + k * 24 - 6, center.Z),
@@ -2137,6 +2671,7 @@ local function building(center: Vector3, footprint: Vector3, height: number, bui
 				CanCollide = false,
 				CanQuery = false,
 			}, props)
+			table.insert(nightNeon, win)
 		end
 	end
 	-- occasional rooftop sign
@@ -2188,9 +2723,11 @@ local function cityBlock(bx: number, bz: number, buildings: Folder, props: Folde
 			end
 		end
 	end
-	for _, o in { -1, 1 } do
-		streetLight(c + Vector3.new(o * (BLOCK / 2 - 4), 0, o * (BLOCK / 2 - 4)), props)
-	end
+	local edge = BLOCK / 2 - 3
+	streetLight(c + Vector3.new(0, 0, -edge), -Vector3.zAxis, props)
+	streetLight(c + Vector3.new(0, 0, edge), Vector3.zAxis, props)
+	streetLight(c + Vector3.new(-edge, 0, 0), -Vector3.xAxis, props)
+	streetLight(c + Vector3.new(edge, 0, 0), Vector3.xAxis, props)
 end
 
 local function safehouse(bx: number, bz: number, buildings: Folder, props: Folder, ground: Folder): (Vector3, { CFrame })
@@ -2501,6 +3038,8 @@ function MapBuilder.Build(): MapInfo
 		breakers = {},
 		speedCams = {},
 		buildings = buildings,
+		nightLights = nightLights,
+		nightNeon = nightNeon,
 	}
 
 	local function isSpecial(bx: number, bz: number): string?
@@ -2611,7 +3150,7 @@ function MapBuilder.CollapseBreaker(b: Breaker, towards: Vector3)
 end
 
 return MapBuilder
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000009"><Properties><string name="Name">PlayerData</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000A"><Properties><string name="Name">PlayerData</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Saves and loads player progress with DataStoreService (falls back to memory in Studio
 -- when API access is disabled).
 
@@ -2626,7 +3165,7 @@ export type Profile = {
 	cash: number,
 	owned: { [string]: boolean },
 	selected: string,
-	upgrades: { [string]: { [string]: number } },
+	tuning: { [string]: Config.Tune },
 	paint: { [string]: number }, -- index into Config.PaintColors
 	effects: { [string]: boolean },
 	effect: string,
@@ -2655,7 +3194,7 @@ local function default(): Profile
 		cash = Config.StartingCash,
 		owned = { [Config.StarterCar] = true },
 		selected = Config.StarterCar,
-		upgrades = {},
+		tuning = {},
 		paint = {},
 		effects = { neon = true },
 		effect = "neon",
@@ -2674,6 +3213,19 @@ local function reconcile(data: any): Profile
 		if data[k] == nil or type(data[k]) ~= type(v) then
 			data[k] = v
 		end
+	end
+	-- migrate the old 3-slot upgrade system to the new tuning parts
+	if type(data.upgrades) == "table" then
+		for carId, u in data.upgrades do
+			if type(u) == "table" and not data.tuning[carId] then
+				local tune = Config.DefaultTune()
+				tune.parts.engine = math.clamp(tonumber(u.engine) or 0, 0, 4)
+				tune.parts.nitrous = math.clamp(tonumber(u.nitro) or 0, 0, 4)
+				tune.parts.suspension = math.clamp(tonumber(u.handling) or 0, 0, 4)
+				data.tuning[carId] = tune
+			end
+		end
+		data.upgrades = nil
 	end
 	if not data.owned[data.selected] then
 		data.selected = Config.StarterCar
@@ -2729,17 +3281,31 @@ function PlayerData.All(): { [Player]: Profile }
 	return profiles
 end
 
-function PlayerData.Upgrades(profile: Profile, carId: string): { [string]: number }
-	local u = profile.upgrades[carId]
-	if not u then
-		u = { engine = 0, nitro = 0, handling = 0 }
-		profile.upgrades[carId] = u
+-- Returns the tuning for a car, filling in any missing fields.
+function PlayerData.Tune(profile: Profile, carId: string): Config.Tune
+	local t = profile.tuning[carId]
+	local base = Config.DefaultTune()
+	if type(t) ~= "table" then
+		profile.tuning[carId] = base
+		return base
 	end
-	return u
+	for _, group in { "parts", "handling", "visual" } do
+		local have = (t :: any)[group]
+		if type(have) ~= "table" then
+			(t :: any)[group] = (base :: any)[group]
+		else
+			for k, v in (base :: any)[group] do
+				if type(have[k]) ~= "number" then
+					have[k] = v
+				end
+			end
+		end
+	end
+	return t
 end
 
 return PlayerData
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000A"><Properties><string name="Name">Police</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000B"><Properties><string name="Name">Police</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Most Wanted style police: patrols, heat levels, pursuits, evasion + cooldown,
 -- busts, roadblocks, a helicopter at heat 5, wrecking cops and pursuit breakers.
 
@@ -3341,7 +3907,10 @@ local function updatePursuit(s: Session.Session, pos: Vector3, dt: number)
 				Session.Notify(s.player, "Out of sight - lie low for COOLDOWN", BLUE)
 			end
 		end
-		if #s.cops < lvl.maxCops and now - s.lastCopSpawn > lvl.spawnInterval then
+		local isNight = Session.IsNight()
+		local maxCops = lvl.maxCops + (if isNight then P.NightExtraCops else 0)
+		local interval = lvl.spawnInterval * (if isNight then P.NightSpawnMult else 1)
+		if #s.cops < maxCops and now - s.lastCopSpawn > interval then
 			s.lastCopSpawn = now
 			spawnCopFor(s)
 		end
@@ -3375,8 +3944,31 @@ local function maintainPatrols()
 			table.remove(patrols, idx)
 		end
 	end
-	local want = P.PatrolCount + math.floor(#Players:GetPlayers() / 2)
-	if #patrols >= want then
+	-- more patrols roam the city at night
+	local want = P.PatrolCount + math.floor(#Players:GetPlayers() / 2) + (if Session.IsNight() then P.NightExtraPatrols else 0)
+	if #patrols > want then
+		-- daybreak: send surplus patrols home once nobody can see them
+		for idx = #patrols, 1, -1 do
+			local ai = patrols[idx]
+			local pos = ai.state.root.Position
+			local seen = false
+			for _, s in Session.All() do
+				local cp = Session.CarPosition(s)
+				if cp and (cp - pos).Magnitude < 350 then
+					seen = true
+					break
+				end
+			end
+			if not seen then
+				table.remove(patrols, idx)
+				AIDriver.Remove(ai)
+				ai.model:Destroy()
+				return
+			end
+		end
+		return
+	end
+	if #patrols == want then
 		return
 	end
 	-- spawn away from every player
@@ -3493,7 +4085,7 @@ function Police.Cleanup(s: Session.Session)
 end
 
 return Police
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000B"><Properties><string name="Name">Races</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000C"><Properties><string name="Name">Races</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Street races (Unbound buy-in style) and Blacklist challenges (Most Wanted style).
 
 local Debris = game:GetService("Debris")
@@ -3774,12 +4366,17 @@ function Races.Start(s: Session.Session, def: Config.RaceDef, rival: Config.Riva
 			name = RIVAL_NAMES[math.random(1, #RIVAL_NAMES)]
 		end
 		assert(carDef, "rival car missing")
+		local fx = Config.DrivingEffects[math.random(1, #Config.DrivingEffects)].color
 		local model = CarBuilder.Build({
 			style = carDef.style,
 			color = carDef.color,
 			name = "Rival_" .. name,
-			effectColor = Config.DrivingEffects[math.random(1, #Config.DrivingEffects)].color,
+			effectColor = fx,
+			glow = fx,
 			label = name,
+			rim = math.random(1, #Config.Visual.rim),
+			spoiler = if math.random() < 0.5 then nil else math.random(2, 4),
+			kit = math.random(1, 3),
 		})
 		local cf = slot(slotOrder[k])
 		model:PivotTo(Vehicles.GroundCFrame(cf, model))
@@ -3939,7 +4536,7 @@ function Races.RivalDef(rival: Config.Rival): Config.RaceDef
 end
 
 return Races
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000C"><Properties><string name="Name">Session</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000D"><Properties><string name="Name">Session</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Runtime (non-saved) state for every player in the server, plus money helpers.
 
 local Lighting = game:GetService("Lighting")
@@ -4116,7 +4713,7 @@ function Session.CarPosition(s: Session): Vector3?
 end
 
 return Session
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000D"><Properties><string name="Name">Vehicles</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000E"><Properties><string name="Name">Vehicles</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Spawns, refreshes and resets player cars.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -4169,9 +4766,34 @@ local function seatCharacter(s: Session.Session)
 			end
 			seat:Sit(humanoid)
 		end
+		-- The driver sits behind tinted glass; hide the avatar so it doesn't poke through the roof.
+		for _, d in character:GetDescendants() do
+			if d:IsA("BasePart") or d:IsA("Decal") then
+				(d :: any).Transparency = 1
+			end
+		end
 	end
 end
 Vehicles.SeatCharacter = seatCharacter
+
+function Vehicles.WriteStats(car: Model, stats: Config.Stats)
+	for k, val in stats :: any do
+		car:SetAttribute(k, val)
+	end
+	car:SetAttribute("RatingClass", Config.RatingClass(stats.rating))
+end
+
+-- Re-apply tuning stats to the current car without rebuilding it.
+function Vehicles.ApplyStats(s: Session.Session)
+	local car = s.car
+	local def = Config.GetCar(s.profile.selected)
+	if not car or not def then
+		return
+	end
+	local stats = Config.ComputeStats(def, PlayerData.Tune(s.profile, def.id))
+	s.stats = stats
+	Vehicles.WriteStats(car, stats)
+end
 
 function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 	local profile = s.profile
@@ -4202,7 +4824,16 @@ function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 	local paintIndex = profile.paint[def.id]
 	local color = if paintIndex then Config.PaintColors[paintIndex] or def.color else def.color
 	local effect = Config.GetEffect(profile.effect)
-	local stats = Config.ComputeStats(def, PlayerData.Upgrades(profile, def.id))
+	local tune = PlayerData.Tune(profile, def.id)
+	local stats = Config.ComputeStats(def, tune)
+	local v = tune.visual
+	local glowEntry = Config.Visual.glow[v.glow] or Config.Visual.glow[1]
+	local glowColor: Color3? = glowEntry.color
+	if v.glow == 2 then
+		glowColor = effect.color
+	end
+	local rimEntry = Config.Visual.rimColor[v.rimColor] or Config.Visual.rimColor[1]
+	local tintEntry = Config.Visual.tint[v.tint] or Config.Visual.tint[2]
 
 	local car = CarBuilder.Build({
 		style = def.style,
@@ -4211,13 +4842,18 @@ function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 		seat = true,
 		effectColor = effect.color,
 		label = s.player.DisplayName,
+		rim = v.rim,
+		rimColor = rimEntry.color,
+		tint = tintEntry.transparency,
+		spoiler = v.spoiler,
+		kit = v.kit,
+		glow = glowColor,
+		ride = tune.handling.ride,
 	})
 	car:SetAttribute("Owner", s.player.UserId)
 	car:SetAttribute("CarId", def.id)
 	car:SetAttribute("CarName", def.name)
-	for k, v in stats :: any do
-		car:SetAttribute(k, v)
-	end
+	Vehicles.WriteStats(car, stats)
 	car:PivotTo(Vehicles.GroundCFrame(ground :: CFrame, car))
 	car.Parent = carsFolder
 	s.car = car
@@ -4278,7 +4914,163 @@ function Vehicles.Freeze(s: Session.Session, seconds: number)
 end
 
 return Vehicles
-]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX00000000000000000000000000000019"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX00000000000000000000000000000014"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000013"><Properties><string name="Name">Client</string></Properties><Item class="ModuleScript" referent="RBX0000000000000000000000000000000F"><Properties><string name="Name">DriveController</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX0000000000000000000000000000001B"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX00000000000000000000000000000016"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000015"><Properties><string name="Name">Client</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000010"><Properties><string name="Name">CarVisuals</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Local visual effects for every car near the camera: spinning wheels, front wheels steering,
+-- headlights at night, and brake / reverse lights on your own car.
+
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+
+local Drive = require(script.Parent.DriveController)
+
+local CarVisuals = {}
+
+type Entry = {
+	welds: { Weld },
+	spin: number,
+	steer: number,
+	night: boolean?,
+	braking: boolean?,
+	reversing: boolean?,
+	heads: { SpotLight },
+	tails: { BasePart },
+	reverse: { BasePart },
+	tailGlow: SurfaceLight?,
+}
+
+local cache: { [Model]: Entry } = setmetatable({}, { __mode = "k" }) :: any
+local TAIL = Color3.fromRGB(230, 15, 30)
+local BRAKE = Color3.fromRGB(255, 70, 70)
+
+local function build(model: Model): Entry
+	local e: Entry = { welds = {}, spin = 0, steer = 0, heads = {}, tails = {}, reverse = {} }
+	for _, d in model:GetDescendants() do
+		if d:IsA("Weld") and d.Name == "WheelWeld" then
+			table.insert(e.welds, d)
+		elseif d:IsA("SpotLight") and d.Name == "Beam" then
+			table.insert(e.heads, d)
+		elseif d:IsA("BasePart") and d.Name == "Taillight" then
+			table.insert(e.tails, d)
+		elseif d:IsA("BasePart") and d.Name == "ReverseLight" then
+			table.insert(e.reverse, d)
+		elseif d:IsA("SurfaceLight") and d.Name == "TailGlow" then
+			e.tailGlow = d
+		end
+	end
+	cache[model] = e
+	return e
+end
+
+local function animate(model: Model, dt: number, night: boolean, camPos: Vector3)
+	local root = model.PrimaryPart
+	if not root then
+		return
+	end
+	if (root.Position - camPos).Magnitude > 400 then
+		return
+	end
+	local e = cache[model] or build(model)
+	local cf = root.CFrame
+	local vel = root.AssemblyLinearVelocity
+	local fwd = vel:Dot(cf.LookVector)
+	local own = model == Drive.Car
+
+	local steerTarget = 0
+	if own then
+		steerTarget = Drive.Steer
+	elseif math.abs(fwd) > 3 then
+		steerTarget = math.clamp(-root.AssemblyAngularVelocity.Y / 2.2, -1, 1) * math.sign(fwd)
+	end
+	e.steer += (steerTarget * 0.45 - e.steer) * math.min(1, dt * 10)
+
+	for _, weld in e.welds do
+		local base = weld:GetAttribute("BaseC0")
+		local radius = weld:GetAttribute("Radius")
+		if typeof(base) ~= "CFrame" or type(radius) ~= "number" then
+			continue
+		end
+		local steer = if weld:GetAttribute("Front") then -e.steer else 0
+		weld.C0 = base * CFrame.Angles(0, steer, 0) * CFrame.Angles(e.spin, 0, 0)
+	end
+	local r = 1
+	local first = e.welds[1]
+	if first then
+		local rv = first:GetAttribute("Radius")
+		if type(rv) == "number" then
+			r = rv
+		end
+	end
+	e.spin = (e.spin - fwd / r * dt) % (math.pi * 2)
+
+	if e.night ~= night then
+		e.night = night
+		for _, light in e.heads do
+			light.Enabled = night
+		end
+	end
+
+	if own then
+		local braking = Drive.Handbrake or (Drive.Throttle < -0.1 and fwd > 2)
+		if braking ~= e.braking then
+			e.braking = braking
+			for _, t in e.tails do
+				t.Color = if braking then BRAKE else TAIL
+			end
+			if e.tailGlow then
+				e.tailGlow.Brightness = if braking then 5 else 1.2
+				e.tailGlow.Range = if braking then 14 else 9
+			end
+		end
+		local reversing = fwd < -1 and Drive.Throttle < -0.1
+		if reversing ~= e.reversing then
+			e.reversing = reversing
+			for _, p in e.reverse do
+				p.Material = if reversing then Enum.Material.Neon else Enum.Material.Glass
+			end
+		end
+	end
+end
+
+local function eachCar(folder: Instance?, fn: (Model) -> ())
+	if not folder then
+		return
+	end
+	for _, m in folder:GetChildren() do
+		if m:IsA("Model") then
+			if m.PrimaryPart then
+				fn(m)
+			else
+				-- roadblocks and race folders contain car models one level down
+				for _, inner in m:GetChildren() do
+					if inner:IsA("Model") and inner.PrimaryPart then
+						fn(inner)
+					end
+				end
+			end
+		elseif m:IsA("Folder") then
+			for _, inner in m:GetChildren() do
+				if inner:IsA("Model") and inner.PrimaryPart then
+					fn(inner)
+				end
+			end
+		end
+	end
+end
+
+RunService.RenderStepped:Connect(function(dt)
+	local time = Lighting.ClockTime
+	local night = time >= 17.8 or time < 7
+	local camPos = workspace.CurrentCamera.CFrame.Position
+	local function fn(m: Model)
+		animate(m, dt, night, camPos)
+	end
+	eachCar(workspace:FindFirstChild("Cars"), fn)
+	eachCar(workspace:FindFirstChild("Police"), fn)
+	eachCar(workspace:FindFirstChild("Races"), fn)
+end)
+
+return CarVisuals
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000011"><Properties><string name="Name">DriveController</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Drives the local player's car: input, arcade physics (we own the car's physics),
 -- nitro, drift smoke and the chase camera.
 
@@ -4306,6 +5098,9 @@ Drive.Nitro = 1
 Drive.NitroCapacity = 1
 Drive.NitroOn = false
 Drive.Drifting = false
+Drive.Throttle = 0
+Drive.Steer = 0
+Drive.Handbrake = false
 
 local seat: VehicleSeat? = nil
 local handbrake = false
@@ -4463,7 +5258,12 @@ RunService.PreSimulation:Connect(function(dt: number)
 		turn = stat(car, "turn", 2.3),
 		grip = stat(car, "grip", 6),
 		nitroMult = stat(car, "nitroMult", 1.3),
+		driftGrip = stat(car, "driftGrip", 0.4),
+		downforce = stat(car, "downforce", 0.2),
 	}
+	Drive.Throttle = throttle
+	Drive.Steer = steer
+	Drive.Handbrake = handbrake
 	CarPhysics.Step(state, { throttle = throttle, steer = steer, handbrake = handbrake, nitro = nitroOn }, stats, dt)
 
 	local speed = state.root.AssemblyLinearVelocity.Magnitude
@@ -4548,8 +5348,9 @@ RunService:BindToRenderStep("WU_ChaseCam", Enum.RenderPriority.Camera.Value + 1,
 end)
 
 return Drive
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000010"><Properties><string name="Name">Garage</string><ProtectedString name="Source"><![CDATA[--!strict
--- Safehouse garage: buy / select cars, upgrades, paint, driving effects and the Blacklist.
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000012"><Properties><string name="Name">Garage</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Safehouse garage: buy / select cars, Unbound-style tuning (performance parts, handling,
+-- visuals), driving effects and the Blacklist.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -4692,6 +5493,32 @@ local function statBar(parent: Instance, y: number, name: string, value: number,
 	corner(fill, 5)
 end
 
+local function tuneOf(carId: string): any
+	return (data.tuning and data.tuning[carId]) or Config.DefaultTune()
+end
+
+local function classColor(class: string): Color3
+	local colors = {
+		C = Color3.fromRGB(160, 160, 170),
+		B = Color3.fromRGB(80, 200, 255),
+		A = Color3.fromRGB(90, 255, 140),
+		["A+"] = Color3.fromRGB(255, 220, 60),
+		S = Color3.fromRGB(255, 130, 40),
+		["S+"] = Color3.fromRGB(255, 50, 120),
+	}
+	return colors[class] or Color3.new(1, 1, 1)
+end
+
+local function ratingBadge(parent: Instance, props: { [string]: any }, rating: number)
+	local class = Config.RatingClass(rating)
+	local badge = new("Frame", { BackgroundColor3 = classColor(class) }, parent)
+	for k, v in props do
+		(badge :: any)[k] = v
+	end
+	corner(badge, 8)
+	text(badge, { Size = UDim2.fromScale(1, 1), Text = class .. "  " .. rating, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = Color3.fromRGB(15, 15, 20), Font = Enum.Font.GothamBlack })
+end
+
 local function renderCars()
 	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, content)
 	for idx, car in Config.Cars do
@@ -4701,14 +5528,16 @@ local function renderCars()
 		end
 		local f = card(92)
 		f.LayoutOrder = idx
-		local swatch = new("Frame", { Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(12, 68), BackgroundColor3 = car.color }, f)
+		local paintIdx = data.paint[car.id]
+		local swatch = new("Frame", { Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(12, 68), BackgroundColor3 = if paintIdx then Config.PaintColors[paintIdx] else car.color }, f)
 		corner(swatch, 4)
-		text(f, { Position = UDim2.fromOffset(34, 8), Size = UDim2.new(0.5, 0, 0, 24), Text = car.name .. "   [" .. car.class .. "]", Font = Enum.Font.GothamBlack })
-		local stats = Config.ComputeStats(car, data.upgrades[car.id])
+		text(f, { Position = UDim2.fromOffset(34, 8), Size = UDim2.new(0.45, 0, 0, 24), Text = car.name, Font = Enum.Font.GothamBlack })
+		local stats = Config.ComputeStats(car, tuneOf(car.id))
+		ratingBadge(f, { Position = UDim2.new(0.45, 40, 0, 8), Size = UDim2.fromOffset(90, 24) }, stats.rating)
 		local holder = new("Frame", { Position = UDim2.fromOffset(22, 34), Size = UDim2.new(1, -22, 0, 56), BackgroundTransparency = 1 }, f)
-		statBar(holder, 0, "Top speed", stats.maxSpeed, 240)
-		statBar(holder, 18, "Accel", stats.accel, 90)
-		statBar(holder, 36, "Handling", stats.turn * stats.grip, 21)
+		statBar(holder, 0, "Top speed", stats.maxSpeed, 300)
+		statBar(holder, 18, "Accel", stats.accel, 130)
+		statBar(holder, 36, "Handling", stats.turn * stats.grip, 26)
 		local label, color, action
 		if data.selected == car.id then
 			label, color = "DRIVING", Color3.fromRGB(60, 60, 80)
@@ -4725,46 +5554,148 @@ local function renderCars()
 	end
 end
 
-local function renderUpgrades()
-	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, content)
+local function carHeader(car: Config.CarDef, stats: Config.Stats, order: number)
+	local head = card(56)
+	head.LayoutOrder = order
+	text(head, { Position = UDim2.fromOffset(12, 6), Size = UDim2.new(0.6, 0, 0, 26), Text = car.name, Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
+	text(head, {
+		Position = UDim2.fromOffset(12, 32),
+		Size = UDim2.new(0.7, 0, 0, 16),
+		Text = string.format("Top %d mph   |   Accel %d   |   Grip %.1f   |   Nitro x%.2f", math.floor(stats.maxSpeed * Config.MphPerStud), math.floor(stats.accel), stats.grip, stats.nitroMult),
+		TextColor3 = Color3.fromRGB(190, 190, 210),
+		Font = Enum.Font.Gotham,
+	})
+	ratingBadge(head, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(110, 36) }, stats.rating)
+end
+
+local function renderPerformance()
+	new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, content)
 	local car = Config.GetCar(data.selected)
 	if not car then
 		return
 	end
-	local levels = data.upgrades[car.id] or {}
-	local head = card(40)
-	head.LayoutOrder = 0
-	text(head, { Position = UDim2.fromOffset(12, 6), Size = UDim2.new(1, -24, 0, 28), Text = "Tuning: " .. car.name, Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
-	for idx, kind in Config.UpgradeOrder do
-		local up = (Config.Upgrades :: any)[kind]
-		local lvl = levels[kind] or 0
-		local f = card(64)
+	local tune = tuneOf(car.id)
+	local stats = Config.ComputeStats(car, tune)
+	carHeader(car, stats, 0)
+	local maxTier = #Config.PartTiers - 1
+	for idx, part in Config.Parts do
+		local tier = tune.parts[part.id] or 0
+		local f = card(58)
 		f.LayoutOrder = idx
-		text(f, { Position = UDim2.fromOffset(12, 8), Size = UDim2.new(0.5, 0, 0, 24), Text = up.name, Font = Enum.Font.GothamBlack })
-		local pips = ""
-		for k = 1, up.maxLevel do
-			pips ..= if k <= lvl then "■ " else "□ "
+		text(f, { Position = UDim2.fromOffset(12, 6), Size = UDim2.new(0.35, 0, 0, 22), Text = part.name, Font = Enum.Font.GothamBlack })
+		text(f, { Position = UDim2.fromOffset(12, 32), Size = UDim2.new(0.35, 0, 0, 16), Text = part.desc, Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(170, 170, 190) })
+		-- tier pips
+		for k = 0, maxTier do
+			local pip = new("Frame", {
+				Position = UDim2.new(0.38, k * 52, 0, 12),
+				Size = UDim2.fromOffset(48, 34),
+				BackgroundColor3 = if k <= tier then PINK else Color3.fromRGB(45, 45, 65),
+			}, f)
+			corner(pip, 6)
+			text(pip, { Size = UDim2.fromScale(1, 1), Text = Config.PartTiers[k + 1], TextXAlignment = Enum.TextXAlignment.Center, Font = Enum.Font.GothamBold })
 		end
-		text(f, { Position = UDim2.fromOffset(12, 34), Size = UDim2.new(0.5, 0, 0, 20), Text = pips, TextColor3 = PINK })
-		if lvl >= up.maxLevel then
-			button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(150, 40), Text = "MAXED", BackgroundColor3 = Color3.fromRGB(60, 60, 80) }, function() end)
+		if tier >= maxTier then
+			button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(150, 38), Text = "MAXED", BackgroundColor3 = Color3.fromRGB(60, 60, 80) }, function() end)
 		else
-			local cost = math.floor(up.cost[lvl + 1] * (Config.ClassCostMult[car.class] or 1))
-			button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(150, 40), Text = "UPGRADE $" .. HUD.Commas(cost) }, function()
-				act("Upgrade", car.id, kind)
+			local cost = Config.PartCost(car, part, tier + 1)
+			button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(150, 38), Text = Config.PartTiers[tier + 2] .. "  $" .. HUD.Commas(cost) }, function()
+				act("Part", part.id)
 			end)
 		end
 	end
 end
 
-local function renderPaint()
-	new("UIGridLayout", { CellSize = UDim2.fromOffset(90, 90), CellPadding = UDim2.fromOffset(10, 10) }, content)
+local function renderHandling()
+	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, content)
+	local car = Config.GetCar(data.selected)
+	if not car then
+		return
+	end
+	local tune = tuneOf(car.id)
+	carHeader(car, Config.ComputeStats(car, tune), 0)
+	for idx, sl in Config.HandlingSliders do
+		local value = tune.handling[sl.id] or sl.default
+		local f = card(64)
+		f.LayoutOrder = idx
+		text(f, { Position = UDim2.fromOffset(12, 6), Size = UDim2.new(0.25, 0, 0, 22), Text = sl.name, Font = Enum.Font.GothamBlack })
+		text(f, { Position = UDim2.fromOffset(12, 34), Size = UDim2.new(0.25, 0, 0, 18), Text = tostring(value), Font = Enum.Font.GothamBold, TextColor3 = PINK })
+		text(f, { Position = UDim2.new(0.27, 0, 0, 6), Size = UDim2.fromOffset(60, 16), Text = sl.left, Font = Enum.Font.GothamBold, TextColor3 = Color3.fromRGB(170, 170, 190) })
+		text(f, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -120, 0, 6), Size = UDim2.fromOffset(60, 16), Text = sl.right, Font = Enum.Font.GothamBold, TextColor3 = Color3.fromRGB(170, 170, 190), TextXAlignment = Enum.TextXAlignment.Right })
+		local track = new("Frame", { Position = UDim2.new(0.27, 0, 0, 32), Size = UDim2.new(0.73, -120, 0, 10), BackgroundColor3 = Color3.fromRGB(50, 50, 70) }, f)
+		corner(track, 5)
+		local frac = (value - sl.min) / (sl.max - sl.min)
+		local knob = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(frac, 0.5), Size = UDim2.fromOffset(20, 20), BackgroundColor3 = CYAN }, track)
+		corner(knob, 10)
+		button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -62, 0.5, 0), Size = UDim2.fromOffset(44, 38), Text = "-", BackgroundColor3 = Color3.fromRGB(60, 60, 90) }, function()
+			if value > sl.min then
+				act("Handling", sl.id, value - 1)
+			end
+		end)
+		button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(44, 38), Text = "+", BackgroundColor3 = Color3.fromRGB(60, 60, 90) }, function()
+			if value < sl.max then
+				act("Handling", sl.id, value + 1)
+			end
+		end)
+	end
+	local tip = card(46)
+	tip.LayoutOrder = 99
+	text(tip, {
+		Position = UDim2.fromOffset(12, 6),
+		Size = UDim2.new(1, -24, 1, -12),
+		Text = "Drift setups slide longer and turn in harder. Grip setups stick to the road. Downforce adds grip at speed but costs a little top speed.",
+		Font = Enum.Font.Gotham,
+		TextColor3 = Color3.fromRGB(190, 190, 210),
+		TextWrapped = true,
+	})
+end
+
+local function optionName(key: string, idx: number): string
+	local entry = (Config.Visual :: any)[key][idx]
+	if type(entry) == "string" then
+		return entry
+	elseif type(entry) == "table" then
+		return entry.name
+	end
+	return "?"
+end
+
+local function renderVisual()
+	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, content)
+	local car = Config.GetCar(data.selected)
+	if not car then
+		return
+	end
+	local tune = tuneOf(car.id)
+
+	local paintCard = card(86)
+	paintCard.LayoutOrder = 0
+	text(paintCard, { Position = UDim2.fromOffset(12, 6), Size = UDim2.new(0.5, 0, 0, 22), Text = "Paint", Font = Enum.Font.GothamBlack })
+	local swatches = new("Frame", { Position = UDim2.fromOffset(12, 34), Size = UDim2.new(1, -24, 0, 42), BackgroundTransparency = 1 }, paintCard)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8) }, swatches)
 	for idx, color in Config.PaintColors do
-		local b = button(content, { Text = "", BackgroundColor3 = color }, function()
+		local b = button(swatches, { Size = UDim2.fromOffset(42, 42), Text = "", BackgroundColor3 = color, LayoutOrder = idx }, function()
 			act("Paint", idx)
 		end)
-		b.LayoutOrder = idx
-		new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = if data.paint[data.selected] == idx then 4 else 0 }, b)
+		new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = if data.paint[data.selected] == idx then 3 else 0 }, b)
+	end
+
+	for idx, key in Config.VisualOrder do
+		local options = (Config.Visual :: any)[key]
+		local cur = tune.visual[key] or 1
+		local f = card(54)
+		f.LayoutOrder = idx
+		text(f, { Position = UDim2.fromOffset(12, 14), Size = UDim2.new(0.3, 0, 0, 24), Text = (Config.VisualNames :: any)[key], Font = Enum.Font.GothamBlack })
+		local entry = options[cur]
+		local valueLabel = text(f, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.62, 0, 0, 14), Size = UDim2.new(0.34, 0, 0, 26), Text = optionName(key, cur), TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = PINK })
+		if type(entry) == "table" and entry.color then
+			valueLabel.TextColor3 = entry.color
+		end
+		button(f, { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0.4, 0, 0.5, 0), Size = UDim2.fromOffset(44, 38), Text = "<", BackgroundColor3 = Color3.fromRGB(60, 60, 90) }, function()
+			act("Visual", key, if cur <= 1 then #options else cur - 1)
+		end)
+		button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(44, 38), Text = ">", BackgroundColor3 = Color3.fromRGB(60, 60, 90) }, function()
+			act("Visual", key, if cur >= #options then 1 else cur + 1)
+		end)
 	end
 end
 
@@ -4838,8 +5769,9 @@ end
 
 local TAB_RENDER = {
 	Cars = renderCars,
-	Upgrades = renderUpgrades,
-	Paint = renderPaint,
+	Performance = renderPerformance,
+	Handling = renderHandling,
+	Visual = renderVisual,
 	Effects = renderEffects,
 	Blacklist = renderBlacklist,
 }
@@ -4857,8 +5789,8 @@ render = function()
 	TAB_RENDER[currentTab]()
 end
 
-for _, name in { "Cars", "Upgrades", "Paint", "Effects", "Blacklist" } do
-	tabButtons[name] = button(tabs, { Size = UDim2.fromOffset(120, 34), Text = string.upper(name), BackgroundColor3 = Color3.fromRGB(45, 45, 65) }, function()
+for _, name in { "Cars", "Performance", "Handling", "Visual", "Effects", "Blacklist" } do
+	tabButtons[name] = button(tabs, { Size = UDim2.new(1 / 6, -7, 1, 0), Text = string.upper(name), BackgroundColor3 = Color3.fromRGB(45, 45, 65) }, function()
 		currentTab = name
 		render()
 	end)
@@ -4876,7 +5808,7 @@ function Garage.Toggle(open: boolean?)
 end
 
 return Garage
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000011"><Properties><string name="Name">HUD</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000013"><Properties><string name="Name">HUD</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Heads-up display: speedometer + nitro, heat stars and pursuit meters, cash, race panel,
 -- drift combo, minimap, notifications and context prompts.
 
@@ -5263,7 +6195,13 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	speedLabel.Text = tostring(math.floor(speed * Config.MphPerStud))
 	nitroFill.Size = UDim2.fromScale(math.clamp(nitro / math.max(capacity, 0.01), 0, 1), 1)
 	nitroFill.BackgroundColor3 = if nitroOn then Color3.fromRGB(255, 255, 255) else CYAN
-	carNameLabel.Text = if car then tostring(car:GetAttribute("CarName") or "") else ""
+	if car then
+		local rating = car:GetAttribute("rating")
+		local class = car:GetAttribute("RatingClass")
+		carNameLabel.Text = tostring(car:GetAttribute("CarName") or "") .. (if class then "   " .. tostring(class) .. " " .. tostring(rating) else "")
+	else
+		carNameLabel.Text = ""
+	end
 
 	-- heat
 	local heat = num("Heat")
@@ -5395,7 +6333,7 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 end
 
 return HUD
-]]></ProtectedString></Properties></Item><Item class="LocalScript" referent="RBX00000000000000000000000000000012"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="LocalScript" referent="RBX00000000000000000000000000000014"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
 -- WANTED: UNBOUND - client entry point.
 
 local ContextActionService = game:GetService("ContextActionService")
@@ -5414,6 +6352,7 @@ local QuitRace = Remotes:WaitForChild("QuitRace") :: RemoteEvent
 local Drive = require(script.Parent.DriveController)
 local HUD = require(script.Parent.HUD)
 local Garage = require(script.Parent.Garage)
+require(script.Parent.CarVisuals)
 
 local player = Players.LocalPlayer
 

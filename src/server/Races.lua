@@ -279,12 +279,17 @@ function Races.Start(s: Session.Session, def: Config.RaceDef, rival: Config.Riva
 			name = RIVAL_NAMES[math.random(1, #RIVAL_NAMES)]
 		end
 		assert(carDef, "rival car missing")
+		local fx = Config.DrivingEffects[math.random(1, #Config.DrivingEffects)].color
 		local model = CarBuilder.Build({
 			style = carDef.style,
 			color = carDef.color,
 			name = "Rival_" .. name,
-			effectColor = Config.DrivingEffects[math.random(1, #Config.DrivingEffects)].color,
+			effectColor = fx,
+			glow = fx,
 			label = name,
+			rim = math.random(1, #Config.Visual.rim),
+			spoiler = if math.random() < 0.5 then nil else math.random(2, 4),
+			kit = math.random(1, 3),
 		})
 		local cf = slot(slotOrder[k])
 		model:PivotTo(Vehicles.GroundCFrame(cf, model))

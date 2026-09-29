@@ -37,8 +37,25 @@ in code, so you don't need any models, meshes or assets.
   busted, buy-in races, drift combos that pay cash, nitro that refills from drifting and airtime,
   and neon "driving effects" (wing trails + flames when you use nitro).
 - **Race types:** sprint, circuit (laps) and a timed drift event.
-- **Garage:** 5 cars to buy (classes D → S) and 5 Blacklist cars to win. You can also buy
-  engine/nitrous/handling upgrades, change your paint and pick a driving effect.
+- **Garage + Unbound-style tuning:**
+  - 5 cars to buy and 5 Blacklist cars to win. Every car has a **Performance Rating** (PI) and a
+    class from C up to S+.
+  - **Performance parts:** engine, forced induction, exhaust, ECU, transmission, suspension,
+    brakes, tires and nitrous. Each goes through the tiers Stock → Sport → Pro → Elite → Elite+.
+  - **Handling sliders:** Drift ↔ Grip, downforce, steering speed and ride height.
+  - **Visuals:** paint, 5 rim styles, rim colour, window tint, spoilers (ducktail / street wing /
+    GT wing), body kits (street kit / widebody) and underglow.
+  - Driving effects (nitro trail colours).
+- **Realistic cars built from parts:** real-world proportions, wheel arches, a sloped hood and
+  windshield, and a glass cabin with an interior. The wheels have spokes and brake calipers,
+  spin, and steer. Cars also get bumpers, a grille, headlight lenses with DRLs, taillights,
+  mirrors, license plates and exhaust tips. Headlights switch on at night, and brake and reverse
+  lights work.
+- **Realistic lighting:** Future lighting, smooth day/night colour grading (sunrise, midday, golden
+  hour, dusk, night), sky with stars, clouds, sun rays, bloom, depth of field. Street lamps and
+  building windows switch on at night, and the roads have painted markings.
+- **More police at night:** extra patrol cars roam the city after dark, pursuits send more units,
+  and reinforcements arrive faster.
 - **Procedural city "Neon Bay":** 8×8 blocks of neon skyscrapers, a park with jumps, ramps,
   parking garages, a safehouse and invisible boundary walls.
 - **Arcade driving model** with drifting, a chase camera and speed-based FOV.
@@ -78,7 +95,8 @@ src/shared/   (ReplicatedStorage.Shared)
 src/server/   (ServerScriptService.Server)
   Main.server.lua   bootstrap, remotes, lighting, day/night, garage shop, safehouse/drift/speed cams
   MapBuilder.lua    procedural city
-  CarBuilder.lua    builds cars out of parts (player, police, rivals)
+  CarBuilder.lua    builds detailed cars out of parts (player, police, rivals)
+  DayNight.lua      day/night lighting, sky, clouds, street lamps
   Vehicles.lua      spawning / resetting player cars
   AIDriver.lua      road-grid navigation + unstick logic for AI cars
   Police.lua        heat, pursuits, cops, roadblocks, helicopter, pursuit breakers, busts
@@ -89,7 +107,8 @@ src/client/   (StarterPlayerScripts.Client)
   Main.client.lua   prompts, checkpoint beacon, siren lights, main loop
   DriveController.lua  input, physics, nitro, chase camera
   HUD.lua           all on-screen UI + minimap
-  Garage.lua        garage / Blacklist menu
+  Garage.lua        garage: cars, performance parts, handling, visuals, Blacklist
+  CarVisuals.lua    spinning / steering wheels, headlights at night, brake lights
 ```
 
 You can change almost everything in `src/shared/Config.lua`, including car stats, prices, heat

@@ -51,9 +51,34 @@ local function seatCharacter(s: Session.Session)
 			end
 			seat:Sit(humanoid)
 		end
+		-- The driver sits behind tinted glass; hide the avatar so it doesn't poke through the roof.
+		for _, d in character:GetDescendants() do
+			if d:IsA("BasePart") or d:IsA("Decal") then
+				(d :: any).Transparency = 1
+			end
+		end
 	end
 end
 Vehicles.SeatCharacter = seatCharacter
+
+function Vehicles.WriteStats(car: Model, stats: Config.Stats)
+	for k, val in stats :: any do
+		car:SetAttribute(k, val)
+	end
+	car:SetAttribute("RatingClass", Config.RatingClass(stats.rating))
+end
+
+-- Re-apply tuning stats to the current car without rebuilding it.
+function Vehicles.ApplyStats(s: Session.Session)
+	local car = s.car
+	local def = Config.GetCar(s.profile.selected)
+	if not car or not def then
+		return
+	end
+	local stats = Config.ComputeStats(def, PlayerData.Tune(s.profile, def.id))
+	s.stats = stats
+	Vehicles.WriteStats(car, stats)
+end
 
 function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 	local profile = s.profile
@@ -84,7 +109,16 @@ function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 	local paintIndex = profile.paint[def.id]
 	local color = if paintIndex then Config.PaintColors[paintIndex] or def.color else def.color
 	local effect = Config.GetEffect(profile.effect)
-	local stats = Config.ComputeStats(def, PlayerData.Upgrades(profile, def.id))
+	local tune = PlayerData.Tune(profile, def.id)
+	local stats = Config.ComputeStats(def, tune)
+	local v = tune.visual
+	local glowEntry = Config.Visual.glow[v.glow] or Config.Visual.glow[1]
+	local glowColor: Color3? = glowEntry.color
+	if v.glow == 2 then
+		glowColor = effect.color
+	end
+	local rimEntry = Config.Visual.rimColor[v.rimColor] or Config.Visual.rimColor[1]
+	local tintEntry = Config.Visual.tint[v.tint] or Config.Visual.tint[2]
 
 	local car = CarBuilder.Build({
 		style = def.style,
@@ -93,13 +127,18 @@ function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 		seat = true,
 		effectColor = effect.color,
 		label = s.player.DisplayName,
+		rim = v.rim,
+		rimColor = rimEntry.color,
+		tint = tintEntry.transparency,
+		spoiler = v.spoiler,
+		kit = v.kit,
+		glow = glowColor,
+		ride = tune.handling.ride,
 	})
 	car:SetAttribute("Owner", s.player.UserId)
 	car:SetAttribute("CarId", def.id)
 	car:SetAttribute("CarName", def.name)
-	for k, v in stats :: any do
-		car:SetAttribute(k, v)
-	end
+	Vehicles.WriteStats(car, stats)
 	car:PivotTo(Vehicles.GroundCFrame(ground :: CFrame, car))
 	car.Parent = carsFolder
 	s.car = car

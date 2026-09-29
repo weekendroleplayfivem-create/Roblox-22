@@ -17,6 +17,7 @@ local QuitRace = Remotes:WaitForChild("QuitRace") :: RemoteEvent
 local Drive = require(script.Parent.DriveController)
 local HUD = require(script.Parent.HUD)
 local Garage = require(script.Parent.Garage)
+require(script.Parent.CarVisuals)
 
 local player = Players.LocalPlayer
 

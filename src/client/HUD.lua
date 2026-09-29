@@ -385,7 +385,13 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	speedLabel.Text = tostring(math.floor(speed * Config.MphPerStud))
 	nitroFill.Size = UDim2.fromScale(math.clamp(nitro / math.max(capacity, 0.01), 0, 1), 1)
 	nitroFill.BackgroundColor3 = if nitroOn then Color3.fromRGB(255, 255, 255) else CYAN
-	carNameLabel.Text = if car then tostring(car:GetAttribute("CarName") or "") else ""
+	if car then
+		local rating = car:GetAttribute("rating")
+		local class = car:GetAttribute("RatingClass")
+		carNameLabel.Text = tostring(car:GetAttribute("CarName") or "") .. (if class then "   " .. tostring(class) .. " " .. tostring(rating) else "")
+	else
+		carNameLabel.Text = ""
+	end
 
 	-- heat
 	local heat = num("Heat")
