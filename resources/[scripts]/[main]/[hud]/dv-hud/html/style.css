@@ -36,6 +36,8 @@
     --mm-right: 16vw;
     --mm-top: 76vh;
     --mm-bottom: 97vh;
+
+    --speedo-h: 106px;   /* hoogte van de snelheidsmeter */
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -82,16 +84,17 @@ svg { display: block; }
    ------------------------------------------------------------ */
 .status {
     position: fixed;
-    left: var(--mm-left);
-    bottom: calc(100vh - var(--mm-bottom));
+    left: 50%;
+    bottom: 12px;
     display: flex;
     gap: 6px;
     align-items: flex-end;
-    transform: scale(var(--scale));
-    transform-origin: left bottom;
-    transition: bottom .45s var(--ease), left .45s var(--ease);
+    transform: translateX(-50%) scale(var(--scale));
+    transform-origin: center bottom;
+    transition: bottom .45s var(--ease);
 }
-.status.above-map { bottom: calc(100vh - var(--mm-top) + 8px); }
+/* in een voertuig: boven de snelheidsmeter */
+body.in-vehicle .status { bottom: calc(10px + (var(--speedo-h) + 8px) * var(--scale)); }
 
 .ring {
     --c: var(--accent);
@@ -451,7 +454,7 @@ svg { display: block; }
 .vehicle {
     position: fixed;
     left: 50%;
-    bottom: 22px;
+    bottom: 10px;
     transform: translateX(-50%) scale(var(--scale));
     transform-origin: center bottom;
     transition: opacity .35s var(--ease), transform .35s var(--ease);
@@ -464,6 +467,7 @@ svg { display: block; }
 
 .speedo {
     width: 300px;
+    height: var(--speedo-h);
     padding: 10px 12px 12px;
     border-radius: 12px;
     background: linear-gradient(180deg, rgba(20, 22, 30, .86), rgba(10, 11, 16, .9));

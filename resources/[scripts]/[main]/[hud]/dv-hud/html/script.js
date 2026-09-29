@@ -284,6 +284,7 @@ function renderVehicle() {
     const v = state.vehicle;
     const el = $('#vehicle');
     el.classList.toggle('away', !v.inVehicle);
+    document.body.classList.toggle('in-vehicle', !!v.inVehicle && !state.settings.hidden.speedo);
     if (!v.inVehicle) return;
 
     el.classList.toggle('air', v.type === 'air');
@@ -432,7 +433,6 @@ const handlers = {
             root.setProperty('--mm-bottom', `${d.bottom * 100}vh`);
         }
         if ('visible' in d) {
-            $('#status').classList.toggle('above-map', !!d.visible);
             $('#location').classList.toggle('beside-map', !!d.visible);
             const fake = $('.minimap-fake');
             if (fake) fake.style.opacity = d.visible ? 1 : 0;

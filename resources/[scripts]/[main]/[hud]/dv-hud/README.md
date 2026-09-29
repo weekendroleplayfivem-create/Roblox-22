@@ -12,11 +12,11 @@ Moderne HUD voor Dayverse Roleplay (QBCore, Qbox, ESX of standalone). Standaardk
 
 ## Functies
 
-**Stijl:** Nederlandse RP-stijl: vierkante statusvakjes die van onder vol lopen, logo met geld en baan in kaartjes rechtsboven, straatnaam met richting naast de minimap en een rechthoekige snelheidsmeter midden onderin.
+**Stijl:** Nederlandse RP-stijl: vierkante statusvakjes midden onderin (in een voertuig boven de snelheidsmeter) die van onder vol lopen, logo met geld en baan in kaartjes rechtsboven, straatnaam met richting naast de minimap en een rechthoekige snelheidsmeter midden onderin.
 
 - Statusvakjes: leven, pantser, honger, dorst, stress, uithouding, zuurstof (onder water) en stem (pma-voice: bereik, praten, radio)
 - Vakjes knipperen rood bij een laag niveau; pantser/stress/uithouding verbergen zich automatisch als ze niet relevant zijn
-- Vakjes en straatnaam schuiven automatisch mee met de positie van de minimap (elke resolutie en safezone)
+- Straatnaam schuift automatisch mee met de positie van de minimap (elke resolutie en safezone)
 - Rechthoekige snelheidsmeter midden onderin: snelheid (bv. `087`), toerenbalk met rood gebied, versnelling, en op de meter de gordel-, motor- en lichticoontjes plus brandstof en motorschade, versnelling, brandstof, motorschade, lichten, gordel en hoogte (vliegtuig/heli)
 - Brandstof: automatisch voor native, LegacyFuel, ox_fuel, ps-fuel, cdn-fuel en lj-fuel
 - Ingebouwde gordel (toets **B**, instelbaar in GTA-toetsinstellingen) met geluid en uit-de-auto-vliegen bij crashes
