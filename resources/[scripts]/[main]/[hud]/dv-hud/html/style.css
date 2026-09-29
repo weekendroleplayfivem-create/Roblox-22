@@ -446,23 +446,21 @@ svg { display: block; }
 .job { font: 600 13px/1 var(--font); }
 
 /* ------------------------------------------------------------
-   Voertuig: rechthoekige meter (linksonder, naast de minimap)
+   Voertuig: rechthoekige meter (midden onder)
    ------------------------------------------------------------ */
 .vehicle {
     position: fixed;
-    left: calc(var(--mm-right) + 14px);
-    bottom: calc(100vh - var(--mm-bottom));
-    transform: scale(var(--scale));
-    transform-origin: left bottom;
-    transition: opacity .35s var(--ease), transform .35s var(--ease), left .45s var(--ease);
+    left: 50%;
+    bottom: 22px;
+    transform: translateX(-50%) scale(var(--scale));
+    transform-origin: center bottom;
+    transition: opacity .35s var(--ease), transform .35s var(--ease);
 }
 .vehicle.away {
     opacity: 0;
-    transform: scale(var(--scale)) translateY(30px);
+    transform: translateX(-50%) scale(var(--scale)) translateY(30px);
     pointer-events: none;
 }
-/* straatnaam schuift boven de meter als je in een voertuig zit */
-body.in-vehicle .location.beside-map { bottom: calc(100vh - var(--mm-bottom) + 112px); }
 
 .speedo {
     width: 300px;

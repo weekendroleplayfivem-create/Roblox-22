@@ -284,7 +284,6 @@ function renderVehicle() {
     const v = state.vehicle;
     const el = $('#vehicle');
     el.classList.toggle('away', !v.inVehicle);
-    document.body.classList.toggle('in-vehicle', !!v.inVehicle);
     if (!v.inVehicle) return;
 
     el.classList.toggle('air', v.type === 'air');
