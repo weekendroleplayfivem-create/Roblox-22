@@ -1,0 +1,5605 @@
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4"><Item class="Workspace" referent="RBX00000000000000000000000000000015"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">false</bool></Properties></Item><Item class="Lighting" referent="RBX00000000000000000000000000000016"><Properties><string name="Name">Lighting</string><token name="Technology">4</token></Properties></Item><Item class="ReplicatedStorage" referent="RBX00000000000000000000000000000017"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000004"><Properties><string name="Name">Shared</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">CarPhysics</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Arcade driving model shared by the player's car (simulated on the client that owns it)
+-- and AI cars (police and rivals, simulated on the server).
+--
+-- The chassis is a frictionless box that rests on the road. Every physics step we read its
+-- real velocity, split it into forward / sideways parts, apply throttle, grip and steering,
+-- and write it back. An AlignOrientation keeps the car upright on the ground normal.
+
+local CarPhysics = {}
+
+export type Input = {
+	throttle: number, -- -1..1
+	steer: number, -- -1..1 (positive = right)
+	handbrake: boolean,
+	nitro: boolean,
+}
+
+export type Stats = {
+	maxSpeed: number,
+	accel: number,
+	brake: number,
+	turn: number,
+	grip: number,
+	nitroMult: number,
+}
+
+export type State = {
+	model: Model,
+	root: BasePart,
+	align: AlignOrientation?,
+	params: RaycastParams,
+	grounded: boolean,
+	drifting: boolean,
+	speed: number, -- signed forward speed
+	lateral: number, -- signed sideways speed
+	airTime: number,
+	speedMult: number, -- extra multiplier (AI rubber banding, heat)
+}
+
+function CarPhysics.NewState(model: Model): State
+	local root = model.PrimaryPart :: BasePart
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { model }
+	params.IgnoreWater = true
+	return {
+		model = model,
+		root = root,
+		align = root:FindFirstChild("Upright") :: AlignOrientation?,
+		params = params,
+		grounded = false,
+		drifting = false,
+		speed = 0,
+		lateral = 0,
+		airTime = 0,
+		speedMult = 1,
+	}
+end
+
+-- Keep characters sitting in the car out of our ground raycasts.
+function CarPhysics.SetIgnore(state: State, extra: { Instance })
+	local list: { Instance } = { state.model }
+	for _, inst in extra do
+		table.insert(list, inst)
+	end
+	state.params.FilterDescendantsInstances = list
+end
+
+local UP = Vector3.yAxis
+
+function CarPhysics.Step(state: State, input: Input, stats: Stats, dt: number)
+	local root = state.root
+	if root.Anchored then
+		return
+	end
+	local cf = root.CFrame
+	local halfHeight = root.Size.Y / 2
+	local hit = workspace:Raycast(cf.Position, Vector3.new(0, -(halfHeight + 2.2), 0), state.params)
+
+	local up = UP
+	if hit then
+		up = hit.Normal
+		if up.Y < 0.5 then
+			up = UP -- walls do not count as ground
+			hit = nil
+		end
+	end
+	state.grounded = hit ~= nil
+
+	local align = state.align
+	if align then
+		align.PrimaryAxis = up
+	end
+
+	local vel = root.AssemblyLinearVelocity
+	local look = cf.LookVector
+	local flat = look - up * look:Dot(up)
+	if flat.Magnitude < 0.05 then
+		return
+	end
+	local forward = flat.Unit
+	local right = forward:Cross(up)
+
+	local fwd = vel:Dot(forward)
+	local lat = vel:Dot(right)
+	local vert = vel:Dot(up)
+
+	if state.grounded then
+		state.airTime = 0
+		local mult = state.speedMult
+		local maxSpeed = stats.maxSpeed * mult
+		local accel = stats.accel * mult
+		if input.nitro then
+			maxSpeed *= stats.nitroMult
+			accel *= 1.7
+		end
+
+		local throttle = input.throttle
+		if throttle > 0.05 then
+			if fwd < -2 then
+				fwd = math.min(fwd + stats.brake * throttle * dt, 0)
+			elseif fwd < maxSpeed then
+				local taper = 1 - 0.55 * (math.max(fwd, 0) / maxSpeed) ^ 2
+				fwd = math.min(fwd + accel * throttle * taper * dt, maxSpeed)
+			else
+				fwd -= (fwd - maxSpeed) * math.min(dt * 1.2, 1)
+			end
+		elseif throttle < -0.05 then
+			if fwd > 2 then
+				fwd = math.max(fwd - stats.brake * -throttle * dt, 0)
+			else
+				fwd = math.max(fwd - accel * 0.7 * -throttle * dt, -stats.maxSpeed * 0.35)
+			end
+		else
+			-- coasting drag
+			fwd -= fwd * math.min(dt * 0.35, 1)
+			if math.abs(fwd) < 1 then
+				fwd = 0
+			end
+		end
+
+		-- Drift logic: brake-to-drift / handbrake starts it, low lateral speed ends it.
+		local absFwd = math.abs(fwd)
+		if input.handbrake then
+			fwd -= fwd * math.min(dt * 0.6, 1)
+			if absFwd > 35 and math.abs(input.steer) > 0.2 then
+				state.drifting = true
+			end
+		end
+		if state.drifting and (math.abs(lat) < 5 or absFwd < 20) and not input.handbrake then
+			state.drifting = false
+		end
+
+		local grip = stats.grip
+		if input.handbrake then
+			grip *= 0.18
+		elseif state.drifting then
+			grip *= 0.4
+		end
+		local oldLat = math.abs(lat)
+		lat *= math.max(0, 1 - grip * dt)
+		-- Convert part of the scrubbed sideways speed back into forward speed so corners
+		-- keep momentum, the arcade way.
+		if fwd > 5 then
+			fwd = math.min(fwd + (oldLat - math.abs(lat)) * 0.55, maxSpeed * 1.05)
+		end
+
+		-- Steering: needs speed, softens at the top end, stronger in a drift.
+		local speedFactor = math.clamp(absFwd / 22, 0, 1)
+		local highSpeedDamp = 1 - 0.4 * math.clamp(absFwd / (stats.maxSpeed * 1.2), 0, 1)
+		local yaw = -input.steer * stats.turn * speedFactor * highSpeedDamp
+		if fwd < 0 then
+			yaw = -yaw
+		end
+		if state.drifting then
+			yaw *= 1.35
+		end
+
+		root.AssemblyLinearVelocity = forward * fwd + right * lat + up * math.min(vert, 60)
+		local av = root.AssemblyAngularVelocity
+		root.AssemblyAngularVelocity = av - up * av:Dot(up) + up * yaw
+	else
+		state.airTime += dt
+		-- slight air control
+		local av = root.AssemblyAngularVelocity
+		local yaw = -input.steer * stats.turn * 0.35
+		root.AssemblyAngularVelocity = av - UP * av:Dot(UP) + UP * yaw
+	end
+
+	state.speed = fwd
+	state.lateral = lat
+end
+
+-- Compute simple AI inputs to drive towards a world point.
+function CarPhysics.SteerTowards(state: State, target: Vector3): (number, number, number)
+	local localPos = state.root.CFrame:PointToObjectSpace(target)
+	local angle = math.atan2(localPos.X, -localPos.Z) -- 0 = straight ahead, + = right
+	local dist = Vector3.new(localPos.X, 0, localPos.Z).Magnitude
+	local steer = math.clamp(angle * 2.2, -1, 1)
+	return steer, angle, dist
+end
+
+return CarPhysics
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000002"><Properties><string name="Name">Config</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Central tuning for WANTED: UNBOUND.
+-- Most Wanted style: heat levels, pursuits, bounty, Blacklist rivals, pursuit breakers.
+-- Unbound style: night stakes, unbanked cash that must reach the safehouse, buy-in races,
+-- drift combos, burst nitro and neon driving effects.
+
+local Config = {}
+
+Config.GameName = "WANTED: UNBOUND"
+
+-- 1 stud/s is shown as this many MPH on the speedometer.
+Config.MphPerStud = 0.75
+
+---------------------------------------------------------------------------
+-- City grid
+---------------------------------------------------------------------------
+Config.Grid = {
+	Blocks = 8, -- 8x8 city blocks -> 9x9 intersections
+	BlockSize = 240,
+	RoadWidth = 60,
+	GroundY = 0,
+}
+Config.Grid.Cell = Config.Grid.BlockSize + Config.Grid.RoadWidth
+Config.Grid.HalfExtent = Config.Grid.Blocks * Config.Grid.Cell / 2
+
+-- Special blocks, by block index (0-based, x then z)
+Config.Blocks = {
+	Safehouse = { 3, 4 },
+	Park = { 5, 2 },
+	HidingSpots = { { 1, 1 }, { 6, 6 }, { 2, 6 } }, -- covered parking garages
+}
+
+---------------------------------------------------------------------------
+-- Cars
+---------------------------------------------------------------------------
+export type CarDef = {
+	id: string,
+	name: string,
+	class: string,
+	price: number,
+	maxSpeed: number, -- studs/s
+	accel: number, -- studs/s^2
+	brake: number,
+	turn: number, -- rad/s at full lock
+	grip: number, -- lateral grip (higher = less slide)
+	nitroMult: number,
+	color: Color3,
+	style: string, -- body shape: "coupe" | "muscle" | "hyper" | "suv"
+	blacklistOnly: boolean?,
+}
+
+Config.Cars = {
+	{
+		id = "vortex",
+		name = "Vortex GT",
+		class = "D",
+		price = 0,
+		maxSpeed = 130,
+		accel = 42,
+		brake = 90,
+		turn = 2.3,
+		grip = 6,
+		nitroMult = 1.3,
+		color = Color3.fromRGB(40, 170, 255),
+		style = "coupe",
+	},
+	{
+		id = "hawk",
+		name = "Street Hawk R",
+		class = "C",
+		price = 15000,
+		maxSpeed = 148,
+		accel = 50,
+		brake = 95,
+		turn = 2.4,
+		grip = 6.5,
+		nitroMult = 1.32,
+		color = Color3.fromRGB(255, 200, 40),
+		style = "coupe",
+	},
+	{
+		id = "kaiju",
+		name = "Kaiju RS",
+		class = "B",
+		price = 40000,
+		maxSpeed = 166,
+		accel = 57,
+		brake = 100,
+		turn = 2.45,
+		grip = 6.2,
+		nitroMult = 1.34,
+		color = Color3.fromRGB(230, 60, 60),
+		style = "hyper",
+	},
+	{
+		id = "phantom",
+		name = "Phantom V8",
+		class = "A",
+		price = 90000,
+		maxSpeed = 184,
+		accel = 64,
+		brake = 100,
+		turn = 2.25,
+		grip = 5.6,
+		nitroMult = 1.36,
+		color = Color3.fromRGB(30, 30, 35),
+		style = "muscle",
+	},
+	{
+		id = "apex",
+		name = "Apex Hyper X",
+		class = "S",
+		price = 250000,
+		maxSpeed = 205,
+		accel = 72,
+		brake = 110,
+		turn = 2.5,
+		grip = 7,
+		nitroMult = 1.38,
+		color = Color3.fromRGB(170, 60, 255),
+		style = "hyper",
+	},
+	-- Pink-slip cars won from the Blacklist
+	{
+		id = "tiko_drifter",
+		name = "Tiko's Drifter",
+		class = "C",
+		price = 0,
+		maxSpeed = 152,
+		accel = 52,
+		brake = 95,
+		turn = 2.7,
+		grip = 5,
+		nitroMult = 1.35,
+		color = Color3.fromRGB(255, 120, 200),
+		style = "coupe",
+		blacklistOnly = true,
+	},
+	{
+		id = "viper_venom",
+		name = "Viper's Venom",
+		class = "B",
+		price = 0,
+		maxSpeed = 172,
+		accel = 58,
+		brake = 100,
+		turn = 2.45,
+		grip = 6.4,
+		nitroMult = 1.36,
+		color = Color3.fromRGB(80, 255, 90),
+		style = "hyper",
+		blacklistOnly = true,
+	},
+	{
+		id = "nova_star",
+		name = "Nova's Supernova",
+		class = "A",
+		price = 0,
+		maxSpeed = 188,
+		accel = 66,
+		brake = 105,
+		turn = 2.5,
+		grip = 6.4,
+		nitroMult = 1.37,
+		color = Color3.fromRGB(255, 150, 30),
+		style = "hyper",
+		blacklistOnly = true,
+	},
+	{
+		id = "kingpin_crown",
+		name = "Kingpin's Crown",
+		class = "A",
+		price = 0,
+		maxSpeed = 198,
+		accel = 70,
+		brake = 105,
+		turn = 2.35,
+		grip = 6,
+		nitroMult = 1.4,
+		color = Color3.fromRGB(255, 215, 0),
+		style = "muscle",
+		blacklistOnly = true,
+	},
+	{
+		id = "ghost_zero",
+		name = "Ghost Zero",
+		class = "S+",
+		price = 0,
+		maxSpeed = 225,
+		accel = 80,
+		brake = 115,
+		turn = 2.6,
+		grip = 7.2,
+		nitroMult = 1.4,
+		color = Color3.fromRGB(235, 245, 255),
+		style = "hyper",
+		blacklistOnly = true,
+	},
+} :: { CarDef }
+
+Config.StarterCar = "vortex"
+
+function Config.GetCar(id: string): CarDef?
+	for _, car in Config.Cars do
+		if car.id == id then
+			return car
+		end
+	end
+	return nil
+end
+
+---------------------------------------------------------------------------
+-- Upgrades (per car). Each level multiplies stats.
+---------------------------------------------------------------------------
+Config.Upgrades = {
+	engine = { name = "Engine", maxLevel = 3, cost = { 4000, 12000, 30000 } },
+	nitro = { name = "Nitrous", maxLevel = 3, cost = { 3000, 9000, 22000 } },
+	handling = { name = "Handling", maxLevel = 3, cost = { 3000, 9000, 22000 } },
+}
+Config.UpgradeOrder = { "engine", "nitro", "handling" }
+
+-- Class multiplier for upgrade prices
+Config.ClassCostMult = { D = 1, C = 1.3, B = 1.7, A = 2.2, S = 3, ["S+"] = 3.5 }
+
+export type Stats = {
+	maxSpeed: number,
+	accel: number,
+	brake: number,
+	turn: number,
+	grip: number,
+	nitroMult: number,
+	nitroCapacity: number,
+}
+
+function Config.ComputeStats(car: CarDef, upgrades: { [string]: number }?): Stats
+	local u: { [string]: number } = upgrades or {}
+	local engine = u.engine or 0
+	local nitro = u.nitro or 0
+	local handling = u.handling or 0
+	return {
+		maxSpeed = car.maxSpeed * (1 + 0.07 * engine),
+		accel = car.accel * (1 + 0.1 * engine),
+		brake = car.brake,
+		turn = car.turn * (1 + 0.05 * handling),
+		grip = car.grip * (1 + 0.08 * handling),
+		nitroMult = car.nitroMult + 0.04 * nitro,
+		nitroCapacity = 1 + 0.3 * nitro,
+	}
+end
+
+Config.PaintColors = {
+	Color3.fromRGB(40, 170, 255),
+	Color3.fromRGB(255, 200, 40),
+	Color3.fromRGB(230, 60, 60),
+	Color3.fromRGB(30, 30, 35),
+	Color3.fromRGB(240, 240, 245),
+	Color3.fromRGB(170, 60, 255),
+	Color3.fromRGB(80, 255, 90),
+	Color3.fromRGB(255, 120, 200),
+	Color3.fromRGB(255, 150, 30),
+	Color3.fromRGB(0, 230, 210),
+}
+
+-- Unbound-style driving effects: the trail/particle colours used while boosting.
+Config.DrivingEffects = {
+	{ id = "neon", name = "Neon Wings", price = 0, color = Color3.fromRGB(0, 255, 255) },
+	{ id = "flame", name = "Flame Tag", price = 5000, color = Color3.fromRGB(255, 110, 20) },
+	{ id = "toxic", name = "Toxic Spray", price = 8000, color = Color3.fromRGB(120, 255, 40) },
+	{ id = "royal", name = "Royal Smoke", price = 12000, color = Color3.fromRGB(190, 70, 255) },
+	{ id = "gold", name = "Gold Rush", price = 25000, color = Color3.fromRGB(255, 215, 0) },
+}
+
+function Config.GetEffect(id: string)
+	for _, e in Config.DrivingEffects do
+		if e.id == id then
+			return e
+		end
+	end
+	return Config.DrivingEffects[1]
+end
+
+---------------------------------------------------------------------------
+-- Police / Heat (Most Wanted)
+---------------------------------------------------------------------------
+Config.Police = {
+	BaseSpeed = 128,
+	Accel = 50,
+	Turn = 2.4,
+	Grip = 6.5,
+	PatrolCount = 4, -- roaming patrols across the whole city
+	SpeedLimit = 95, -- studs/s (~71 mph). Faster than this in front of a cop starts a pursuit.
+	SpotRadius = 140,
+	BustRadius = 22,
+	BustSpeed = 14, -- player must be slower than this near a cop for the bust meter to fill
+	BustTime = 3,
+	CopHealth = 100,
+	HeatPerMinute = 1.2, -- during a pursuit
+	RoadblockInterval = 35,
+}
+
+export type HeatLevel = {
+	maxCops: number,
+	spawnInterval: number,
+	speedMult: number,
+	detectRadius: number,
+	evadeTime: number,
+	cooldownTime: number,
+	roadblocks: boolean,
+	heli: boolean,
+	heavy: boolean,
+	bountyPerSecond: number,
+}
+
+Config.HeatLevels = {
+	{ maxCops = 2, spawnInterval = 7, speedMult = 1.0, detectRadius = 220, evadeTime = 5, cooldownTime = 18, roadblocks = false, heli = false, heavy = false, bountyPerSecond = 8 },
+	{ maxCops = 3, spawnInterval = 6, speedMult = 1.08, detectRadius = 240, evadeTime = 6, cooldownTime = 22, roadblocks = false, heli = false, heavy = false, bountyPerSecond = 14 },
+	{ maxCops = 4, spawnInterval = 5, speedMult = 1.16, detectRadius = 260, evadeTime = 7, cooldownTime = 26, roadblocks = true, heli = false, heavy = false, bountyPerSecond = 22 },
+	{ maxCops = 5, spawnInterval = 4.5, speedMult = 1.26, detectRadius = 280, evadeTime = 8, cooldownTime = 30, roadblocks = true, heli = false, heavy = true, bountyPerSecond = 32 },
+	{ maxCops = 6, spawnInterval = 4, speedMult = 1.36, detectRadius = 300, evadeTime = 9, cooldownTime = 35, roadblocks = true, heli = true, heavy = true, bountyPerSecond = 45 },
+} :: { HeatLevel }
+
+Config.Bounty = {
+	CopWrecked = 750,
+	RoadblockSmashed = 1000,
+	PursuitBreaker = 1500,
+}
+
+---------------------------------------------------------------------------
+-- Day / night (Unbound): night pays more and heat builds faster.
+---------------------------------------------------------------------------
+Config.DayLengthSeconds = 720 -- a full 24h cycle
+Config.NightMultiplier = 1.5
+
+function Config.IsNight(clockTime: number): boolean
+	return clockTime < 6 or clockTime >= 18.5
+end
+
+---------------------------------------------------------------------------
+-- Races. Routes are lists of intersections {i, j} (0..Blocks). Consecutive
+-- points must share a row or a column so the route follows real roads.
+---------------------------------------------------------------------------
+export type RaceDef = {
+	id: string,
+	name: string,
+	kind: string, -- "sprint" | "circuit" | "drift"
+	route: { { number } },
+	laps: number,
+	buyIn: number,
+	reward: number,
+	heat: number, -- heat gained for finishing (Unbound)
+	rivals: number,
+	rivalSpeed: number,
+	driftTarget: number?,
+	duration: number?,
+}
+
+Config.Races = {
+	{
+		id = "downtown_dash",
+		name = "Downtown Dash",
+		kind = "sprint",
+		route = { { 0, 0 }, { 0, 4 }, { 4, 4 }, { 4, 8 }, { 8, 8 } },
+		laps = 1,
+		buyIn = 500,
+		reward = 3000,
+		heat = 0.6,
+		rivals = 3,
+		rivalSpeed = 125,
+	},
+	{
+		id = "neon_loop",
+		name = "Neon Loop",
+		kind = "circuit",
+		route = { { 2, 2 }, { 2, 6 }, { 6, 6 }, { 6, 2 } },
+		laps = 2,
+		buyIn = 1500,
+		reward = 7500,
+		heat = 0.8,
+		rivals = 3,
+		rivalSpeed = 140,
+	},
+	{
+		id = "harbor_run",
+		name = "Harbor Run",
+		kind = "sprint",
+		route = { { 8, 0 }, { 5, 0 }, { 5, 3 }, { 1, 3 }, { 1, 7 }, { 3, 7 }, { 3, 8 } },
+		laps = 1,
+		buyIn = 3000,
+		reward = 14000,
+		heat = 1,
+		rivals = 3,
+		rivalSpeed = 155,
+	},
+	{
+		id = "outer_ring",
+		name = "Outer Ring",
+		kind = "circuit",
+		route = { { 0, 8 }, { 8, 8 }, { 8, 0 }, { 0, 0 } },
+		laps = 2,
+		buyIn = 6000,
+		reward = 30000,
+		heat = 1.2,
+		rivals = 3,
+		rivalSpeed = 175,
+	},
+	{
+		id = "park_drift",
+		name = "Park Side Drift",
+		kind = "drift",
+		route = { { 6, 3 } },
+		laps = 1,
+		buyIn = 800,
+		reward = 5000,
+		heat = 0.4,
+		rivals = 0,
+		rivalSpeed = 0,
+		driftTarget = 25000,
+		duration = 60,
+	},
+} :: { RaceDef }
+
+function Config.GetRace(id: string): RaceDef?
+	for _, r in Config.Races do
+		if r.id == id then
+			return r
+		end
+	end
+	return nil
+end
+
+-- Payout fraction by finishing place (1st, 2nd, 3rd, 4th)
+Config.PlacePayout = { 1, 0.4, 0.15, 0 }
+
+---------------------------------------------------------------------------
+-- Blacklist (Most Wanted). Beat them in order, from #5 up to #1.
+---------------------------------------------------------------------------
+export type Rival = {
+	rank: number,
+	name: string,
+	bio: string,
+	bountyReq: number,
+	winsReq: number,
+	carId: string,
+	speed: number,
+	reward: number,
+	route: { { number } },
+	laps: number,
+}
+
+Config.Blacklist = {
+	{
+		rank = 5,
+		name = "Tiko",
+		bio = "Drift kid who owns the park. Slides everywhere, rarely wins straight.",
+		bountyReq = 1500,
+		winsReq = 1,
+		carId = "tiko_drifter",
+		speed = 138,
+		reward = 10000,
+		route = { { 4, 4 }, { 4, 0 }, { 8, 0 }, { 8, 4 } },
+		laps = 1,
+	},
+	{
+		rank = 4,
+		name = "Viper",
+		bio = "Street hustler. Never lost a bet she set up herself.",
+		bountyReq = 6000,
+		winsReq = 3,
+		carId = "viper_venom",
+		speed = 158,
+		reward = 25000,
+		route = { { 0, 2 }, { 7, 2 }, { 7, 7 }, { 2, 7 }, { 2, 2 } },
+		laps = 1,
+	},
+	{
+		rank = 3,
+		name = "Nova",
+		bio = "Streams every race. Two million followers watching you lose.",
+		bountyReq = 15000,
+		winsReq = 5,
+		carId = "nova_star",
+		speed = 176,
+		reward = 50000,
+		route = { { 1, 1 }, { 1, 7 }, { 7, 7 }, { 7, 1 } },
+		laps = 2,
+	},
+	{
+		rank = 2,
+		name = "Kingpin",
+		bio = "Runs the underground betting scene. The cops are on his payroll.",
+		bountyReq = 40000,
+		winsReq = 8,
+		carId = "kingpin_crown",
+		speed = 190,
+		reward = 90000,
+		route = { { 0, 0 }, { 0, 8 }, { 8, 8 }, { 8, 0 } },
+		laps = 2,
+	},
+	{
+		rank = 1,
+		name = "Ghost",
+		bio = "Nobody has seen his face. Nobody has seen his taillights up close either.",
+		bountyReq = 90000,
+		winsReq = 12,
+		carId = "ghost_zero",
+		speed = 212,
+		reward = 200000,
+		route = { { 4, 0 }, { 4, 8 }, { 0, 8 }, { 0, 4 }, { 8, 4 }, { 8, 0 } },
+		laps = 1,
+	},
+} :: { Rival }
+
+function Config.GetRival(rank: number): Rival?
+	for _, r in Config.Blacklist do
+		if r.rank == rank then
+			return r
+		end
+	end
+	return nil
+end
+
+---------------------------------------------------------------------------
+-- Misc world features
+---------------------------------------------------------------------------
+-- Speed cameras: {i, j, axis} placed mid-road. axis "x" = road runs along X.
+Config.SpeedCameras = {
+	{ i = 2, j = 4, axis = "x" },
+	{ i = 6, j = 1, axis = "z" },
+	{ i = 4, j = 7, axis = "x" },
+	{ i = 0, j = 5, axis = "z" },
+}
+Config.SpeedCameraCashPerMph = 25
+
+-- Pursuit breakers placed on block corners next to these intersections.
+Config.PursuitBreakers = {
+	{ 1, 2 },
+	{ 3, 6 },
+	{ 5, 5 },
+	{ 7, 3 },
+	{ 2, 4 },
+	{ 6, 7 },
+}
+
+-- Ramps: mid-road jumps. {i, j, axis}
+Config.Ramps = {
+	{ i = 1, j = 5, axis = "x" },
+	{ i = 7, j = 6, axis = "z" },
+	{ i = 3, j = 2, axis = "z" },
+	{ i = 5, j = 8, axis = "x" },
+}
+
+Config.StartingCash = 5000
+
+return Config
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000003"><Properties><string name="Name">Grid</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Helpers for the city road grid. Intersection (i, j) sits at X = i*Cell - H, Z = j*Cell - H.
+
+local Config = require(script.Parent.Config)
+
+local Grid = {}
+
+local G = Config.Grid
+local CELL = G.Cell
+local HALF = G.HalfExtent
+local N = G.Blocks -- intersections go 0..N
+
+Grid.Size = N
+Grid.Cell = CELL
+Grid.Half = HALF
+Grid.RoadY = G.GroundY + 0.5
+
+function Grid.Intersection(i: number, j: number): Vector3
+	return Vector3.new(i * CELL - HALF, Grid.RoadY, j * CELL - HALF)
+end
+
+function Grid.BlockCenter(bx: number, bz: number): Vector3
+	return Vector3.new((bx + 0.5) * CELL - HALF, Grid.RoadY, (bz + 0.5) * CELL - HALF)
+end
+
+function Grid.InBounds(i: number, j: number): boolean
+	return i >= 0 and i <= N and j >= 0 and j <= N
+end
+
+function Grid.NearestIntersection(pos: Vector3): (number, number)
+	local i = math.clamp(math.round((pos.X + HALF) / CELL), 0, N)
+	local j = math.clamp(math.round((pos.Z + HALF) / CELL), 0, N)
+	return i, j
+end
+
+-- Midpoint of the road segment starting at intersection (i, j) along axis "x" or "z".
+function Grid.SegmentMid(i: number, j: number, axis: string): Vector3
+	local a = Grid.Intersection(i, j)
+	local b = if axis == "x" then Grid.Intersection(i + 1, j) else Grid.Intersection(i, j + 1)
+	return (a + b) / 2
+end
+
+-- Is this position on a road (not inside a block)?
+function Grid.IsOnRoad(pos: Vector3): boolean
+	local half = G.RoadWidth / 2
+	local fx = (pos.X + HALF) % CELL
+	local fz = (pos.Z + HALF) % CELL
+	return fx < half or fx > CELL - half or fz < half or fz > CELL - half
+end
+
+-- Snap a position to the closest point on the road network (road centre line).
+function Grid.SnapToRoad(pos: Vector3): Vector3
+	local i, j = Grid.NearestIntersection(pos)
+	local ix = i * CELL - HALF
+	local jz = j * CELL - HALF
+	local x = math.clamp(pos.X, -HALF, HALF)
+	local z = math.clamp(pos.Z, -HALF, HALF)
+	-- choose whichever road line (vertical x=ix or horizontal z=jz) is closer
+	if math.abs(x - ix) < math.abs(z - jz) then
+		return Vector3.new(ix, Grid.RoadY, z)
+	else
+		return Vector3.new(x, Grid.RoadY, jz)
+	end
+end
+
+-- Returns the neighbouring intersections of (i, j).
+function Grid.Neighbours(i: number, j: number): { { number } }
+	local out = {}
+	for _, d in { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } } do
+		local ni, nj = i + d[1], j + d[2]
+		if Grid.InBounds(ni, nj) then
+			table.insert(out, { ni, nj })
+		end
+	end
+	return out
+end
+
+return Grid
+]]></ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX00000000000000000000000000000018"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Folder" referent="RBX0000000000000000000000000000000E"><Properties><string name="Name">Server</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">AIDriver</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Server-side driver for AI cars (police and race rivals). Each AI has a `think` callback
+-- that picks a goal; AIDriver handles road-grid navigation, steering, unsticking and
+-- runs the shared arcade physics.
+
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local CarPhysics = require(Shared:WaitForChild("CarPhysics"))
+local Grid = require(Shared:WaitForChild("Grid"))
+
+local AIDriver = {}
+
+export type AI = {
+	model: Model,
+	state: CarPhysics.State,
+	stats: CarPhysics.Stats,
+	input: CarPhysics.Input,
+	kind: string,
+	think: (ai: AI, dt: number) -> (),
+	nav: { number }?,
+	prev: { number }?,
+	stuck: number,
+	stuckTotal: number,
+	reverse: number,
+	flipped: number,
+	alive: boolean,
+	data: { [string]: any },
+}
+
+local ais: { AI } = {}
+local losParams = RaycastParams.new()
+losParams.FilterType = Enum.RaycastFilterType.Include
+
+function AIDriver.SetBuildings(folder: Folder)
+	losParams.FilterDescendantsInstances = { folder }
+end
+
+-- True when nothing solid in the city blocks the line between a and b.
+function AIDriver.ClearLine(a: Vector3, b: Vector3, radius: number?): boolean
+	local from = Vector3.new(a.X, Grid.RoadY + 3, a.Z)
+	local to = Vector3.new(b.X, Grid.RoadY + 3, b.Z)
+	local dir = to - from
+	if dir.Magnitude < 1 then
+		return true
+	end
+	local hit
+	if radius then
+		hit = workspace:Spherecast(from, radius, dir, losParams)
+	else
+		hit = workspace:Raycast(from, dir, losParams)
+	end
+	return hit == nil
+end
+
+function AIDriver.Add(model: Model, stats: CarPhysics.Stats, kind: string, think: (ai: AI, dt: number) -> ()): AI
+	local ai: AI = {
+		model = model,
+		state = CarPhysics.NewState(model),
+		stats = stats,
+		input = { throttle = 0, steer = 0, handbrake = false, nitro = false },
+		kind = kind,
+		think = think,
+		nav = nil,
+		prev = nil,
+		stuck = 0,
+		stuckTotal = 0,
+		reverse = 0,
+		flipped = 0,
+		alive = true,
+		data = {},
+	}
+	table.insert(ais, ai)
+	local root = model.PrimaryPart :: BasePart
+	pcall(function()
+		root:SetNetworkOwner(nil)
+	end)
+	return ai
+end
+
+function AIDriver.Remove(ai: AI)
+	ai.alive = false
+	local idx = table.find(ais, ai)
+	if idx then
+		table.remove(ais, idx)
+	end
+end
+
+function AIDriver.All(): { AI }
+	return ais
+end
+
+local function chooseNav(ai: AI, pos: Vector3, goal: Vector3): { number }
+	local ci, cj = Grid.NearestIntersection(pos)
+	local cpos = Grid.Intersection(ci, cj)
+	local flatDist = Vector3.new(pos.X - cpos.X, 0, pos.Z - cpos.Z).Magnitude
+	if flatDist > 40 then
+		-- mid-segment: pick the better end of the road we're on
+		local candidates: { { number } } = {}
+		if math.abs(pos.X - cpos.X) < math.abs(pos.Z - cpos.Z) then
+			local f = (pos.Z + Grid.Half) / Grid.Cell
+			local j0 = math.clamp(math.floor(f), 0, Grid.Size)
+			local j1 = math.clamp(j0 + 1, 0, Grid.Size)
+			candidates = { { ci, j0 }, { ci, j1 } }
+		else
+			local f = (pos.X + Grid.Half) / Grid.Cell
+			local i0 = math.clamp(math.floor(f), 0, Grid.Size)
+			local i1 = math.clamp(i0 + 1, 0, Grid.Size)
+			candidates = { { i0, cj }, { i1, cj } }
+		end
+		local best, bestScore = candidates[1], math.huge
+		for _, c in candidates do
+			local p = Grid.Intersection(c[1], c[2])
+			local score = (p - pos).Magnitude * 0.35 + (p - goal).Magnitude
+			if score < bestScore then
+				best, bestScore = c, score
+			end
+		end
+		return best
+	end
+	local best, bestScore = nil, math.huge
+	for _, n in Grid.Neighbours(ci, cj) do
+		local p = Grid.Intersection(n[1], n[2])
+		local score = (p - goal).Magnitude + math.random() * 20
+		local prev = ai.prev
+		if prev and prev[1] == n[1] and prev[2] == n[2] then
+			score += 250 -- avoid ping-ponging
+		end
+		if score < bestScore then
+			best, bestScore = n, score
+		end
+	end
+	ai.prev = { ci, cj }
+	return best or { ci, cj }
+end
+
+-- Sets ai.input to drive towards `goal`, using the road grid when there's no clear line.
+function AIDriver.DriveTo(ai: AI, goal: Vector3, aggressive: boolean?)
+	local root = ai.state.root
+	local pos = root.Position
+	local waypoint = goal
+	if AIDriver.ClearLine(pos, goal, 3.5) then
+		ai.nav = nil
+	else
+		local nav = ai.nav
+		if nav then
+			local np = Grid.Intersection(nav[1], nav[2])
+			if Vector3.new(np.X - pos.X, 0, np.Z - pos.Z).Magnitude < 26 then
+				ai.prev = nav
+				nav = nil
+			end
+		end
+		if not nav then
+			nav = chooseNav(ai, pos, goal)
+			ai.nav = nav
+		end
+		local n = nav :: { number }
+		waypoint = Grid.Intersection(n[1], n[2])
+	end
+
+	local steer, angle, dist = CarPhysics.SteerTowards(ai.state, waypoint)
+	local speed = ai.state.speed
+	local throttle = 1
+	local handbrake = false
+	local absAngle = math.abs(angle)
+	if absAngle > 1.0 and speed > 45 then
+		handbrake = true
+		throttle = 0.4
+	elseif absAngle > 0.5 and speed > 90 and dist < 120 then
+		throttle = -0.3
+	end
+	if absAngle > 2.2 and speed < 15 then
+		-- target behind us at low speed: back up while turning
+		throttle = -1
+		steer = -steer
+	end
+	if not aggressive and dist < 12 then
+		throttle = 0.2
+	end
+	ai.input.throttle = throttle
+	ai.input.steer = steer
+	ai.input.handbrake = handbrake
+end
+
+local function uprightAt(ai: AI, pos: Vector3, look: Vector3)
+	local flat = Vector3.new(look.X, 0, look.Z)
+	if flat.Magnitude < 0.1 then
+		flat = -Vector3.zAxis
+	end
+	local root = ai.state.root
+	local target = Vector3.new(pos.X, Grid.RoadY + root.Size.Y / 2 + 0.5, pos.Z)
+	ai.model:PivotTo(CFrame.lookAt(target, target + flat.Unit))
+	root.AssemblyLinearVelocity = Vector3.zero
+	root.AssemblyAngularVelocity = Vector3.zero
+end
+AIDriver.Place = uprightAt
+
+RunService.Heartbeat:Connect(function(dt: number)
+	dt = math.min(dt, 1 / 20)
+	for idx = #ais, 1, -1 do
+		local ai = ais[idx]
+		if not ai.alive or not ai.model.Parent or not ai.model.PrimaryPart then
+			ai.alive = false
+			table.remove(ais, idx)
+			continue
+		end
+		local ok, err = pcall(function()
+			ai.think(ai, dt)
+		end)
+		if not ok then
+			warn("[AIDriver] think error:", err)
+		end
+		local root = ai.state.root
+		if root.Anchored then
+			continue
+		end
+
+		-- unstick: back up when pushing against something
+		if ai.reverse > 0 then
+			ai.reverse -= dt
+			ai.input.throttle = -1
+			ai.input.steer = -ai.input.steer
+			ai.input.handbrake = false
+		elseif ai.input.throttle > 0.3 and math.abs(ai.state.speed) < 5 then
+			ai.stuck += dt
+			ai.stuckTotal += dt
+			if ai.stuck > 1.2 then
+				ai.stuck = 0
+				ai.reverse = 1.1
+			end
+		else
+			ai.stuck = 0
+			ai.stuckTotal = math.max(0, ai.stuckTotal - dt * 0.5)
+		end
+
+		if root.CFrame.UpVector.Y < 0.3 then
+			ai.flipped += dt
+		else
+			ai.flipped = 0
+		end
+		if ai.flipped > 1.5 or ai.stuckTotal > 6 or root.Position.Y < -30 then
+			ai.flipped = 0
+			ai.stuckTotal = 0
+			ai.nav = nil
+			local snapped = Grid.SnapToRoad(root.Position)
+			uprightAt(ai, snapped, root.CFrame.LookVector)
+		end
+
+		CarPhysics.Step(ai.state, ai.input, ai.stats, dt)
+	end
+end)
+
+return AIDriver
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000006"><Properties><string name="Name">CarBuilder</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Builds car models from parts at runtime (no meshes needed), for players, police and rivals.
+
+local CarBuilder = {}
+
+export type BuildOptions = {
+	style: string,
+	color: Color3,
+	name: string,
+	police: boolean?,
+	heavy: boolean?,
+	seat: boolean?,
+	effectColor: Color3?,
+	label: string?,
+}
+
+type Dims = {
+	size: Vector3, -- chassis size
+	bodyH: number,
+	cabin: Vector3,
+	cabinZ: number,
+	spoiler: boolean,
+	scoop: boolean,
+}
+
+local STYLES: { [string]: Dims } = {
+	coupe = { size = Vector3.new(7, 1.6, 13), bodyH = 1.8, cabin = Vector3.new(6, 1.7, 6), cabinZ = 0.8, spoiler = false, scoop = false },
+	hyper = { size = Vector3.new(7.4, 1.4, 13.6), bodyH = 1.4, cabin = Vector3.new(5.8, 1.4, 5), cabinZ = 0.4, spoiler = true, scoop = false },
+	muscle = { size = Vector3.new(7.4, 1.8, 14.2), bodyH = 2, cabin = Vector3.new(6.2, 1.7, 5.6), cabinZ = 1.4, spoiler = false, scoop = true },
+	suv = { size = Vector3.new(8, 2.2, 14), bodyH = 2.6, cabin = Vector3.new(7.6, 2.4, 8.5), cabinZ = 1.4, spoiler = false, scoop = false },
+}
+
+local function part(props: { [string]: any }): Part
+	local p = Instance.new("Part")
+	p.Anchored = false
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.Massless = true
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	for k, v in props do
+		(p :: any)[k] = v
+	end
+	return p
+end
+
+local function weld(a: BasePart, b: BasePart)
+	local w = Instance.new("WeldConstraint")
+	w.Part0 = a
+	w.Part1 = b
+	w.Parent = b
+end
+
+local function addText(target: BasePart, face: Enum.NormalId, text: string, color: Color3)
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = face
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 40
+	gui.LightInfluence = 0
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.fromScale(1, 1)
+	label.Text = text
+	label.TextScaled = true
+	label.Font = Enum.Font.GothamBlack
+	label.TextColor3 = color
+	label.Parent = gui
+	gui.Parent = target
+end
+
+function CarBuilder.Build(opts: BuildOptions): Model
+	local style = if opts.heavy then "suv" else opts.style
+	local d = STYLES[style] or STYLES.coupe
+	local model = Instance.new("Model")
+	model.Name = opts.name
+
+	local size = d.size
+	local chassis = Instance.new("Part")
+	chassis.Name = "Chassis"
+	chassis.Size = size
+	chassis.Transparency = 1
+	chassis.CanCollide = true
+	chassis.Anchored = false
+	chassis.CustomPhysicalProperties = PhysicalProperties.new(if opts.heavy then 1.4 else 0.8, 0, 0, 100, 1)
+	chassis.RootPriority = 10
+	chassis.CFrame = CFrame.new(0, size.Y / 2, 0)
+	chassis.Parent = model
+	model.PrimaryPart = chassis
+
+	-- Keep the car upright (primary axis = attachment X axis, pointed up)
+	local att = Instance.new("Attachment")
+	att.Name = "UprightAttachment"
+	att.CFrame = CFrame.fromMatrix(Vector3.zero, Vector3.yAxis, -Vector3.xAxis)
+	att.Parent = chassis
+	local align = Instance.new("AlignOrientation")
+	align.Name = "Upright"
+	align.Mode = Enum.OrientationAlignmentMode.OneAttachment
+	align.AlignType = Enum.AlignType.PrimaryAxisParallel
+	align.PrimaryAxis = Vector3.yAxis
+	align.Attachment0 = att
+	align.Responsiveness = 25
+	align.MaxTorque = 5e6
+	align.Parent = chassis
+
+	local bottom = 0
+	local bodyColor = opts.color
+	local bodyY = bottom + 0.6 + d.bodyH / 2
+
+	local body = part({
+		Name = "Body",
+		Size = Vector3.new(size.X + 0.2, d.bodyH, size.Z + 0.4),
+		CFrame = CFrame.new(0, bodyY, 0),
+		Color = bodyColor,
+		Material = Enum.Material.SmoothPlastic,
+		Reflectance = 0.15,
+	})
+	body.Parent = model
+	weld(chassis, body)
+
+	local cabinY = bodyY + d.bodyH / 2 + d.cabin.Y / 2
+	local cabin = part({
+		Name = "Cabin",
+		Size = d.cabin,
+		CFrame = CFrame.new(0, cabinY, d.cabinZ),
+		Color = Color3.fromRGB(20, 25, 35),
+		Material = Enum.Material.Glass,
+		Transparency = 0.35,
+		Reflectance = 0.3,
+	})
+	cabin.Parent = model
+	weld(chassis, cabin)
+
+	local roof = part({
+		Name = "Roof",
+		Size = Vector3.new(d.cabin.X - 0.4, 0.3, d.cabin.Z - 1),
+		CFrame = CFrame.new(0, cabinY + d.cabin.Y / 2 + 0.15, d.cabinZ + 0.3),
+		Color = if opts.police then Color3.fromRGB(245, 245, 245) else bodyColor,
+		Material = Enum.Material.SmoothPlastic,
+	})
+	roof.Parent = model
+	weld(chassis, roof)
+
+	if d.spoiler then
+		local wing = part({
+			Name = "Spoiler",
+			Size = Vector3.new(size.X, 0.3, 1.4),
+			CFrame = CFrame.new(0, bodyY + d.bodyH / 2 + 1.2, size.Z / 2 - 0.6),
+			Color = Color3.fromRGB(20, 20, 20),
+		})
+		wing.Parent = model
+		weld(chassis, wing)
+		for _, x in { -size.X / 2 + 1, size.X / 2 - 1 } do
+			local strut = part({
+				Size = Vector3.new(0.3, 1.1, 0.5),
+				CFrame = CFrame.new(x, bodyY + d.bodyH / 2 + 0.55, size.Z / 2 - 0.6),
+				Color = Color3.fromRGB(20, 20, 20),
+			})
+			strut.Parent = model
+			weld(chassis, strut)
+		end
+	end
+
+	if d.scoop then
+		local scoop = part({
+			Name = "Scoop",
+			Size = Vector3.new(2.2, 0.6, 3),
+			CFrame = CFrame.new(0, bodyY + d.bodyH / 2 + 0.3, -size.Z / 2 + 3.5),
+			Color = Color3.fromRGB(15, 15, 15),
+		})
+		scoop.Parent = model
+		weld(chassis, scoop)
+	end
+
+	-- Racing stripe for player / rival cars
+	if not opts.police then
+		local stripe = part({
+			Name = "Stripe",
+			Size = Vector3.new(1.2, 0.05, size.Z + 0.42),
+			CFrame = CFrame.new(0, bodyY + d.bodyH / 2 + 0.02, 0),
+			Color = Color3.fromRGB(255, 255, 255),
+			Material = Enum.Material.SmoothPlastic,
+		})
+		stripe.Parent = model
+		weld(chassis, stripe)
+	end
+
+	-- Wheels
+	local wheelRadius = 1.35
+	for _, x in { -1, 1 } do
+		for _, z in { -1, 1 } do
+			local wheel = part({
+				Name = "Wheel",
+				Shape = Enum.PartType.Cylinder,
+				Size = Vector3.new(1.3, wheelRadius * 2, wheelRadius * 2),
+				CFrame = CFrame.new(x * (size.X / 2), bottom + wheelRadius - 0.1, z * (size.Z / 2 - 2.4)),
+				Color = Color3.fromRGB(25, 25, 25),
+				Material = Enum.Material.SmoothPlastic,
+			})
+			wheel.Parent = model
+			weld(chassis, wheel)
+			local rim = part({
+				Name = "Rim",
+				Shape = Enum.PartType.Cylinder,
+				Size = Vector3.new(1.35, wheelRadius * 1.1, wheelRadius * 1.1),
+				CFrame = wheel.CFrame,
+				Color = Color3.fromRGB(190, 190, 200),
+				Material = Enum.Material.Metal,
+			})
+			rim.Parent = model
+			weld(chassis, rim)
+		end
+	end
+
+	-- Headlights / taillights
+	for _, x in { -1, 1 } do
+		local head = part({
+			Name = "Headlight",
+			Size = Vector3.new(1.4, 0.5, 0.2),
+			CFrame = CFrame.new(x * (size.X / 2 - 1.1), bodyY + 0.2, -size.Z / 2 - 0.25),
+			Color = Color3.fromRGB(255, 250, 220),
+			Material = Enum.Material.Neon,
+		})
+		head.Parent = model
+		weld(chassis, head)
+		local tail = part({
+			Name = "Taillight",
+			Size = Vector3.new(1.6, 0.45, 0.2),
+			CFrame = CFrame.new(x * (size.X / 2 - 1.1), bodyY + 0.2, size.Z / 2 + 0.25),
+			Color = Color3.fromRGB(255, 30, 40),
+			Material = Enum.Material.Neon,
+		})
+		tail.Parent = model
+		weld(chassis, tail)
+	end
+	local beamPart = model:FindFirstChild("Headlight") :: BasePart
+	local spot = Instance.new("SpotLight")
+	spot.Face = Enum.NormalId.Front
+	spot.Range = 60
+	spot.Angle = 70
+	spot.Brightness = 2.5
+	spot.Color = Color3.fromRGB(255, 245, 220)
+	spot.Parent = beamPart
+
+	-- Police livery and light bar
+	if opts.police then
+		body.Color = Color3.fromRGB(15, 15, 20)
+		for _, side in { -1, 1 } do
+			local door = part({
+				Name = "Door",
+				Size = Vector3.new(0.1, d.bodyH * 0.8, size.Z * 0.45),
+				CFrame = CFrame.new(side * (size.X / 2 + 0.12), bodyY, 0.5),
+				Color = Color3.fromRGB(245, 245, 245),
+				Material = Enum.Material.SmoothPlastic,
+			})
+			door.Parent = model
+			weld(chassis, door)
+			addText(door, if side < 0 then Enum.NormalId.Left else Enum.NormalId.Right, "POLICE", Color3.fromRGB(20, 40, 140))
+		end
+		local barY = roof.Position.Y + 0.4
+		local sirens = {
+			{ x = -1, color = Color3.fromRGB(255, 20, 30), name = "SirenRed" },
+			{ x = 1, color = Color3.fromRGB(20, 80, 255), name = "SirenBlue" },
+		}
+		for _, info in sirens do
+			local light = part({
+				Name = info.name,
+				Size = Vector3.new(1.8, 0.5, 0.9),
+				CFrame = CFrame.new(info.x * 1.1, barY, roof.Position.Z),
+				Color = info.color,
+				Material = Enum.Material.Neon,
+			})
+			light.Parent = model
+			weld(chassis, light)
+			local pl = Instance.new("PointLight")
+			pl.Color = info.color
+			pl.Range = 24
+			pl.Brightness = 4
+			pl.Parent = light
+		end
+		model:SetAttribute("Police", true)
+	end
+
+	-- Underglow + nitro / driving effect emitters
+	local effectColor = opts.effectColor or Color3.fromRGB(0, 255, 255)
+	local glow = Instance.new("PointLight")
+	glow.Name = "Underglow"
+	glow.Color = if opts.police then Color3.fromRGB(80, 80, 255) else effectColor
+	glow.Range = 14
+	glow.Brightness = if opts.police then 0 else 2
+	glow.Parent = chassis
+
+	local exhaust = Instance.new("Attachment")
+	exhaust.Name = "Exhaust"
+	exhaust.Position = Vector3.new(0, 0.4, size.Z / 2 + 0.5)
+	exhaust.Parent = chassis
+	local flame = Instance.new("ParticleEmitter")
+	flame.Name = "NitroFlame"
+	flame.Enabled = false
+	flame.Color = ColorSequence.new(Color3.fromRGB(80, 170, 255), effectColor)
+	flame.LightEmission = 1
+	flame.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1.2), NumberSequenceKeypoint.new(1, 0) })
+	flame.Lifetime = NumberRange.new(0.15, 0.3)
+	flame.Rate = 120
+	flame.Speed = NumberRange.new(20, 30)
+	flame.EmissionDirection = Enum.NormalId.Back
+	flame.Parent = exhaust
+
+	-- Unbound style "wings" trails off the rear corners
+	for _, side in { -1, 1 } do
+		local a0 = Instance.new("Attachment")
+		a0.Position = Vector3.new(side * size.X / 2, 0.5, size.Z / 2)
+		a0.Parent = chassis
+		local a1 = Instance.new("Attachment")
+		a1.Position = Vector3.new(side * (size.X / 2 + 1.8), 2.2, size.Z / 2)
+		a1.Parent = chassis
+		local trail = Instance.new("Trail")
+		trail.Name = "EffectTrail"
+		trail.Attachment0 = a0
+		trail.Attachment1 = a1
+		trail.Color = ColorSequence.new(effectColor)
+		trail.LightEmission = 1
+		trail.Lifetime = 0.45
+		trail.Transparency = NumberSequence.new(0.1, 1)
+		trail.Enabled = false
+		trail.Parent = chassis
+	end
+
+	-- Drift smoke
+	local smokeAtt = Instance.new("Attachment")
+	smokeAtt.Name = "Smoke"
+	smokeAtt.Position = Vector3.new(0, -0.6, size.Z / 2 - 2)
+	smokeAtt.Parent = chassis
+	local smoke = Instance.new("ParticleEmitter")
+	smoke.Name = "DriftSmoke"
+	smoke.Enabled = false
+	smoke.Color = ColorSequence.new(Color3.fromRGB(220, 220, 225))
+	smoke.Transparency = NumberSequence.new(0.4, 1)
+	smoke.Size = NumberSequence.new(2, 7)
+	smoke.Lifetime = NumberRange.new(0.8, 1.4)
+	smoke.Rate = 60
+	smoke.Speed = NumberRange.new(2, 5)
+	smoke.SpreadAngle = Vector2.new(40, 40)
+	smoke.Parent = smokeAtt
+
+	if opts.seat then
+		local seat = Instance.new("VehicleSeat")
+		seat.Name = "DriverSeat"
+		seat.Size = Vector3.new(2, 0.6, 2)
+		seat.CFrame = CFrame.new(0, bodyY + d.bodyH / 2 - 0.8, d.cabinZ + 0.5)
+		seat.Transparency = 1
+		seat.CanCollide = false
+		seat.Massless = true
+		seat.MaxSpeed = 0
+		seat.Torque = 0
+		seat.TurnSpeed = 0
+		seat.HeadsUpDisplay = false
+		seat.Parent = model
+		weld(chassis, seat)
+	end
+
+	if opts.label then
+		local bb = Instance.new("BillboardGui")
+		bb.Name = "Tag"
+		bb.Size = UDim2.fromOffset(200, 40)
+		bb.StudsOffset = Vector3.new(0, 6, 0)
+		bb.AlwaysOnTop = true
+		bb.MaxDistance = 250
+		local t = Instance.new("TextLabel")
+		t.BackgroundTransparency = 1
+		t.Size = UDim2.fromScale(1, 1)
+		t.Text = opts.label
+		t.TextScaled = true
+		t.Font = Enum.Font.GothamBlack
+		t.TextColor3 = Color3.new(1, 1, 1)
+		t.TextStrokeTransparency = 0.3
+		t.Parent = bb
+		bb.Parent = chassis
+	end
+
+	return model
+end
+
+return CarBuilder
+]]></ProtectedString></Properties></Item><Item class="Script" referent="RBX00000000000000000000000000000007"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
+-- WANTED: UNBOUND - server entry point.
+
+local Lighting = game:GetService("Lighting")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared:WaitForChild("Config"))
+local Grid = require(Shared:WaitForChild("Grid"))
+
+local MapBuilder = require(script.Parent.MapBuilder)
+local PlayerData = require(script.Parent.PlayerData)
+local Session = require(script.Parent.Session)
+local Vehicles = require(script.Parent.Vehicles)
+local Police = require(script.Parent.Police)
+local Races = require(script.Parent.Races)
+
+---------------------------------------------------------------------------
+-- Remotes
+---------------------------------------------------------------------------
+local remotes = Instance.new("Folder")
+remotes.Name = "Remotes"
+local function remote(className: string, name: string): Instance
+	local r = Instance.new(className)
+	r.Name = name
+	r.Parent = remotes
+	return r
+end
+remote("RemoteEvent", "Notify")
+local nitroEvent = remote("RemoteEvent", "NitroState") :: RemoteEvent
+local raceEvent = remote("RemoteEvent", "RequestRace") :: RemoteEvent
+local respawnEvent = remote("RemoteEvent", "RespawnCar") :: RemoteEvent
+local rivalEvent = remote("RemoteEvent", "ChallengeRival") :: RemoteEvent
+local quitEvent = remote("RemoteEvent", "QuitRace") :: RemoteEvent
+local shopFunction = remote("RemoteFunction", "Shop") :: RemoteFunction
+remotes.Parent = ReplicatedStorage
+Session.SetRemotes(remotes)
+
+---------------------------------------------------------------------------
+-- World
+---------------------------------------------------------------------------
+local mapInfo = MapBuilder.Build()
+Vehicles.SetSpawns(mapInfo.safehouseSpawns)
+Police.Init(mapInfo)
+Police.SetBustedCallback(function(s)
+	Races.Cancel(s)
+end)
+
+Players.CharacterAutoLoads = true
+local spawnLocation = Instance.new("SpawnLocation")
+spawnLocation.Anchored = true
+spawnLocation.Transparency = 1
+spawnLocation.CanCollide = false
+spawnLocation.Size = Vector3.new(6, 1, 6)
+spawnLocation.CFrame = CFrame.new(mapInfo.safehouse + Vector3.new(0, 4, 40))
+spawnLocation.Neutral = true
+spawnLocation.Duration = 0
+spawnLocation.Parent = workspace
+
+-- Lighting / atmosphere for a neon night city
+Lighting.ClockTime = 20
+Lighting.Brightness = 2
+Lighting.OutdoorAmbient = Color3.fromRGB(90, 90, 120)
+Lighting.EnvironmentDiffuseScale = 0.5
+Lighting.EnvironmentSpecularScale = 0.8
+do
+	local atmosphere = Instance.new("Atmosphere")
+	atmosphere.Density = 0.32
+	atmosphere.Haze = 1.5
+	atmosphere.Color = Color3.fromRGB(200, 170, 255)
+	atmosphere.Decay = Color3.fromRGB(90, 60, 130)
+	atmosphere.Parent = Lighting
+	local bloom = Instance.new("BloomEffect")
+	bloom.Intensity = 0.6
+	bloom.Size = 30
+	bloom.Threshold = 1.4
+	bloom.Parent = Lighting
+	local cc = Instance.new("ColorCorrectionEffect")
+	cc.Saturation = 0.2
+	cc.Contrast = 0.1
+	cc.Parent = Lighting
+end
+
+-- day / night cycle
+task.spawn(function()
+	local wasNight = Config.IsNight(Lighting.ClockTime)
+	while true do
+		local dt = task.wait(0.5)
+		Lighting.ClockTime = (Lighting.ClockTime + dt * 24 / Config.DayLengthSeconds) % 24
+		local night = Config.IsNight(Lighting.ClockTime)
+		if night ~= wasNight then
+			wasNight = night
+			for _, s in Session.All() do
+				if night then
+					Session.Notify(s.player, "NIGHT HAS FALLEN - x" .. Config.NightMultiplier .. " payouts, cops hunt harder", Color3.fromRGB(170, 120, 255))
+				else
+					Session.Notify(s.player, "Sunrise - payouts back to normal", Color3.fromRGB(255, 220, 120))
+				end
+			end
+		end
+	end
+end)
+
+---------------------------------------------------------------------------
+-- Players
+---------------------------------------------------------------------------
+local function makeLeaderstats(player: Player)
+	local ls = Instance.new("Folder")
+	ls.Name = "leaderstats"
+	for _, name in { "Cash", "Bounty", "Heat" } do
+		local v = Instance.new("IntValue")
+		v.Name = name
+		v.Parent = ls
+	end
+	ls.Parent = player
+end
+
+local function onCharacter(s: Session.Session, character: Model)
+	local humanoid = character:WaitForChild("Humanoid", 10) :: Humanoid?
+	if not humanoid then
+		return
+	end
+	task.wait(0.3)
+	if s.car and s.car.Parent then
+		Vehicles.SeatCharacter(s)
+	else
+		Vehicles.Spawn(s, Vehicles.NextSafehouseSpawn())
+	end
+end
+
+local function onPlayerAdded(player: Player)
+	local profile = PlayerData.Load(player)
+	if not player.Parent then
+		return
+	end
+	local s = Session.Create(player, profile)
+	makeLeaderstats(player)
+	Session.Sync(s)
+	player.CharacterAdded:Connect(function(character)
+		onCharacter(s, character)
+	end)
+	if player.Character then
+		task.spawn(onCharacter, s, player.Character)
+	end
+	Session.Notify(player, "Welcome to " .. Config.GameName .. "!  Race, raise your heat, escape the cops and climb the Blacklist.", Color3.fromRGB(0, 255, 220))
+end
+
+Players.PlayerAdded:Connect(onPlayerAdded)
+for _, p in Players:GetPlayers() do
+	task.spawn(onPlayerAdded, p)
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	local s = Session.Get(player)
+	if s then
+		Races.Cancel(s)
+		Police.Cleanup(s)
+		if s.car then
+			s.car:Destroy()
+		end
+		Session.Remove(player)
+	end
+	PlayerData.Release(player)
+end)
+
+game:BindToClose(function()
+	for _, p in Players:GetPlayers() do
+		PlayerData.Save(p)
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(120)
+		for _, p in Players:GetPlayers() do
+			PlayerData.Save(p)
+		end
+	end
+end)
+
+---------------------------------------------------------------------------
+-- Remote handlers
+---------------------------------------------------------------------------
+local lastRespawn: { [Player]: number } = {}
+respawnEvent.OnServerEvent:Connect(function(player)
+	local s = Session.Get(player)
+	if not s or os.clock() - (lastRespawn[player] or 0) < 3 then
+		return
+	end
+	lastRespawn[player] = os.clock()
+	if s.car and s.car.Parent then
+		Vehicles.ResetToRoad(s)
+	else
+		Vehicles.Spawn(s, Vehicles.NextSafehouseSpawn())
+	end
+end)
+
+nitroEvent.OnServerEvent:Connect(function(player, on)
+	local s = Session.Get(player)
+	if not s or not s.car or type(on) ~= "boolean" then
+		return
+	end
+	for _, d in s.car:GetDescendants() do
+		if d.Name == "NitroFlame" and d:IsA("ParticleEmitter") then
+			d.Enabled = on
+		elseif d.Name == "EffectTrail" and d:IsA("Trail") then
+			d.Enabled = on
+		end
+	end
+end)
+
+raceEvent.OnServerEvent:Connect(function(player, raceId)
+	local s = Session.Get(player)
+	if not s or type(raceId) ~= "string" then
+		return
+	end
+	local def = Config.GetRace(raceId)
+	local pos = Session.CarPosition(s)
+	if not def or not pos then
+		return
+	end
+	local first = def.route[1]
+	local start = Grid.Intersection(first[1], first[2])
+	if (pos - start).Magnitude > 60 then
+		Session.Notify(player, "Drive to the race start marker first", Color3.fromRGB(255, 90, 90))
+		return
+	end
+	local ok, msg = Races.Start(s, def, nil)
+	if not ok then
+		Session.Notify(player, msg, Color3.fromRGB(255, 90, 90))
+	end
+end)
+
+quitEvent.OnServerEvent:Connect(function(player)
+	local s = Session.Get(player)
+	if s and s.race then
+		Races.Cancel(s)
+	end
+end)
+
+rivalEvent.OnServerEvent:Connect(function(player, rank)
+	local s = Session.Get(player)
+	if not s or type(rank) ~= "number" then
+		return
+	end
+	local rival = Config.GetRival(rank)
+	if not rival then
+		return
+	end
+	local nextRank = 5 - s.profile.blacklistBeaten
+	if rank ~= nextRank then
+		Session.Notify(player, "Beat Blacklist #" .. nextRank .. " first", Color3.fromRGB(255, 90, 90))
+		return
+	end
+	if s.profile.totalBounty < rival.bountyReq or s.profile.racesWon < rival.winsReq then
+		Session.Notify(player, "You need $" .. rival.bountyReq .. " total bounty and " .. rival.winsReq .. " race wins", Color3.fromRGB(255, 90, 90))
+		return
+	end
+	if not s.atSafehouse then
+		Session.Notify(player, "Challenge the Blacklist from the safehouse", Color3.fromRGB(255, 90, 90))
+		return
+	end
+	local ok, msg = Races.Start(s, Races.RivalDef(rival), rival)
+	if not ok then
+		Session.Notify(player, msg, Color3.fromRGB(255, 90, 90))
+	end
+end)
+
+local function snapshot(s: Session.Session)
+	local p = s.profile
+	return {
+		cash = p.cash,
+		owned = p.owned,
+		selected = p.selected,
+		upgrades = p.upgrades,
+		paint = p.paint,
+		effects = p.effects,
+		effect = p.effect,
+		totalBounty = p.totalBounty,
+		racesWon = p.racesWon,
+		blacklistBeaten = p.blacklistBeaten,
+	}
+end
+
+local function upgradeCost(carId: string, kind: string, nextLevel: number): number?
+	local car = Config.GetCar(carId)
+	local up = (Config.Upgrades :: any)[kind]
+	if not car or not up or nextLevel > up.maxLevel then
+		return nil
+	end
+	return math.floor(up.cost[nextLevel] * (Config.ClassCostMult[car.class] or 1))
+end
+
+shopFunction.OnServerInvoke = function(player, action, a, b)
+	local s = Session.Get(player)
+	if not s then
+		return false, "Not ready", nil
+	end
+	local p = s.profile
+	if action == "Get" then
+		return true, "", snapshot(s)
+	end
+	if not s.atSafehouse or s.mode ~= "idle" or s.race then
+		return false, "Garage is only available at the safehouse (and without cops on you)", snapshot(s)
+	end
+	local msg = ""
+	if action == "BuyCar" and type(a) == "string" then
+		local car = Config.GetCar(a)
+		if not car or car.blacklistOnly then
+			return false, "Not for sale", snapshot(s)
+		end
+		if p.owned[a] then
+			return false, "Already owned", snapshot(s)
+		end
+		if p.cash < car.price then
+			return false, "Not enough cash", snapshot(s)
+		end
+		p.cash -= car.price
+		p.owned[a] = true
+		p.selected = a
+		Vehicles.Spawn(s, Vehicles.NextSafehouseSpawn())
+		msg = "Bought " .. car.name .. "!"
+	elseif action == "SelectCar" and type(a) == "string" then
+		if not p.owned[a] then
+			return false, "You don't own that car", snapshot(s)
+		end
+		p.selected = a
+		Vehicles.Spawn(s, Vehicles.NextSafehouseSpawn())
+		msg = "Switched car"
+	elseif action == "Upgrade" and type(a) == "string" and type(b) == "string" then
+		local carId = p.selected
+		local levels = PlayerData.Upgrades(p, carId)
+		local cur = levels[b]
+		if cur == nil then
+			return false, "Unknown upgrade", snapshot(s)
+		end
+		local cost = upgradeCost(carId, b, cur + 1)
+		if not cost then
+			return false, "Maxed out", snapshot(s)
+		end
+		if p.cash < cost then
+			return false, "Not enough cash", snapshot(s)
+		end
+		p.cash -= cost
+		levels[b] = cur + 1
+		Vehicles.Spawn(s)
+		msg = (Config.Upgrades :: any)[b].name .. " upgraded to level " .. (cur + 1)
+	elseif action == "Paint" and type(a) == "number" then
+		if not Config.PaintColors[a] then
+			return false, "Bad colour", snapshot(s)
+		end
+		p.paint[p.selected] = a
+		Vehicles.Spawn(s)
+		msg = "Fresh paint!"
+	elseif action == "Effect" and type(a) == "string" then
+		local effect = Config.GetEffect(a)
+		if effect.id ~= a then
+			return false, "Unknown effect", snapshot(s)
+		end
+		if not p.effects[a] then
+			if p.cash < effect.price then
+				return false, "Not enough cash", snapshot(s)
+			end
+			p.cash -= effect.price
+			p.effects[a] = true
+		end
+		p.effect = a
+		Vehicles.Spawn(s)
+		msg = "Driving effect: " .. effect.name
+	else
+		return false, "Unknown action", snapshot(s)
+	end
+	Session.Sync(s)
+	return true, msg, snapshot(s)
+end
+
+---------------------------------------------------------------------------
+-- World loop: safehouse banking, drift combos, speed cameras, races, sync
+---------------------------------------------------------------------------
+task.spawn(function()
+	while true do
+		local dt = task.wait(0.1)
+		for _, s in Session.All() do
+			local car = s.car
+			local root = car and car.PrimaryPart
+			if not car or not root or not car.Parent then
+				Session.Sync(s)
+				continue
+			end
+			local pos = root.Position
+			local vel = root.AssemblyLinearVelocity
+			local speed = vel.Magnitude
+
+			-- fell out of the world
+			if pos.Y < -40 then
+				Vehicles.ResetToRoad(s)
+				continue
+			end
+
+			-- make sure the driver is seated
+			local seat = car:FindFirstChild("DriverSeat") :: VehicleSeat?
+			if seat and not seat.Occupant and s.player.Character then
+				Vehicles.SeatCharacter(s)
+			end
+
+			-- safehouse: bank unbanked cash and clear heat (Unbound)
+			local flat = Vector3.new(pos.X - mapInfo.safehouse.X, 0, pos.Z - mapInfo.safehouse.Z)
+			s.atSafehouse = flat.Magnitude < 70
+			if s.atSafehouse and s.mode == "idle" and not s.race then
+				if s.unbanked > 0 then
+					local amount = math.floor(s.unbanked)
+					s.profile.cash += amount
+					s.unbanked = 0
+					Session.Notify(s.player, "BANKED $" .. amount .. " at the safehouse", Color3.fromRGB(80, 255, 140))
+					PlayerData.Save(s.player)
+				end
+				if s.heat > 0 then
+					s.heat = 0
+					Session.Notify(s.player, "You laid low. Heat cleared.", Color3.fromRGB(120, 200, 255))
+				end
+			end
+
+			-- drift combo (computed from the replicated velocity)
+			local right = root.CFrame.RightVector
+			local lateral = math.abs(vel:Dot(right))
+			local driftGain = 0
+			if lateral > 12 and speed > 38 then
+				driftGain = lateral * dt * 12 * (1 + speed / 150)
+				s.driftCombo += driftGain
+				s.driftIdle = 0
+			else
+				s.driftIdle += dt
+				if s.driftIdle > 1.2 and s.driftCombo > 0 then
+					local combo = s.driftCombo
+					s.driftCombo = 0
+					if combo > 400 and not s.race then
+						Session.AddUnbanked(s, combo / 25 * Session.NightMult(), "DRIFT x" .. math.floor(combo))
+					end
+				end
+			end
+
+			-- speed cameras
+			for idx, cam in mapInfo.speedCams do
+				if (Vector3.new(pos.X, cam.Y, pos.Z) - cam).Magnitude < 34 and os.clock() > (s.camCooldown[idx] or 0) then
+					s.camCooldown[idx] = os.clock() + 20
+					local mph = math.floor(speed * Config.MphPerStud)
+					if mph > 60 then
+						Session.AddUnbanked(s, (mph - 60) * Config.SpeedCameraCashPerMph * Session.NightMult(), "SPEED CAMERA " .. mph .. " MPH")
+						if s.mode ~= "idle" then
+							s.heat = math.min(5, s.heat + 0.25)
+						end
+					end
+				end
+			end
+
+			if s.race then
+				local ok, err = pcall(function()
+					Races.Update(s, driftGain)
+				end)
+				if not ok then
+					warn("[Races] update error:", err)
+				end
+			end
+			Session.Sync(s)
+		end
+	end
+end)
+
+print("[" .. Config.GameName .. "] server ready")
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000008"><Properties><string name="Name">MapBuilder</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Procedurally builds the city of Neon Bay: road grid, skyscrapers, the safehouse,
+-- a park, covered hiding spots, pursuit breakers, speed cameras and ramps.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared:WaitForChild("Config"))
+local Grid = require(Shared:WaitForChild("Grid"))
+
+local MapBuilder = {}
+
+export type Breaker = {
+	model: Model,
+	position: Vector3, -- trigger centre
+	parts: { { part: BasePart, cframe: CFrame } },
+	armed: boolean,
+}
+
+export type MapInfo = {
+	safehouse: Vector3,
+	safehouseSpawns: { CFrame },
+	hidingZones: { { center: Vector3, size: Vector3 } },
+	breakers: { Breaker },
+	speedCams: { Vector3 },
+	buildings: Folder,
+}
+
+local rng = Random.new(22)
+local G = Config.Grid
+local SURFACE = Grid.RoadY
+local ROAD = G.RoadWidth
+local BLOCK = G.BlockSize
+
+local function anchored(props: { [string]: any }, parent: Instance): Part
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	for k, v in props do
+		(p :: any)[k] = v
+	end
+	p.Parent = parent
+	return p
+end
+
+local function billboard(parent: BasePart, text: string, color: Color3, height: number, maxDist: number?)
+	local bb = Instance.new("BillboardGui")
+	bb.Size = UDim2.fromOffset(260, 60)
+	bb.StudsOffsetWorldSpace = Vector3.new(0, height, 0)
+	bb.AlwaysOnTop = false
+	bb.MaxDistance = maxDist or 400
+	bb.LightInfluence = 0
+	local t = Instance.new("TextLabel")
+	t.BackgroundTransparency = 1
+	t.Size = UDim2.fromScale(1, 1)
+	t.Text = text
+	t.TextScaled = true
+	t.Font = Enum.Font.GothamBlack
+	t.TextColor3 = color
+	t.TextStrokeTransparency = 0.2
+	t.Parent = bb
+	bb.Parent = parent
+end
+
+local BUILDING_COLORS = {
+	Color3.fromRGB(35, 38, 50),
+	Color3.fromRGB(50, 45, 60),
+	Color3.fromRGB(28, 40, 48),
+	Color3.fromRGB(60, 55, 52),
+	Color3.fromRGB(40, 40, 42),
+	Color3.fromRGB(72, 62, 80),
+}
+local NEON_COLORS = {
+	Color3.fromRGB(255, 40, 160),
+	Color3.fromRGB(0, 240, 255),
+	Color3.fromRGB(255, 190, 30),
+	Color3.fromRGB(150, 60, 255),
+	Color3.fromRGB(60, 255, 120),
+}
+local SIGN_TEXTS = { "WANTED", "UNBOUND", "NEON BAY", "NITRO", "24/7", "MOTEL", "GARAGE", "HOTEL", "CLUB", "RAMEN" }
+
+local function buildRoads(folder: Folder)
+	local N = Grid.Size
+	local asphalt = Color3.fromRGB(38, 38, 42)
+	local segLen = Grid.Cell - ROAD
+	for i = 0, N do
+		for j = 0, N do
+			local c = Grid.Intersection(i, j)
+			anchored({
+				Name = "Intersection",
+				Size = Vector3.new(ROAD, 1, ROAD),
+				CFrame = CFrame.new(c.X, SURFACE - 0.5, c.Z),
+				Color = asphalt,
+				Material = Enum.Material.Asphalt,
+			}, folder)
+			if i < N then
+				local mid = Grid.SegmentMid(i, j, "x")
+				anchored({
+					Name = "Road",
+					Size = Vector3.new(segLen, 1, ROAD),
+					CFrame = CFrame.new(mid.X, SURFACE - 0.5, mid.Z),
+					Color = asphalt,
+					Material = Enum.Material.Asphalt,
+				}, folder)
+				anchored({
+					Name = "Line",
+					Size = Vector3.new(segLen - 10, 0.05, 0.8),
+					CFrame = CFrame.new(mid.X, SURFACE + 0.02, mid.Z),
+					Color = Color3.fromRGB(255, 200, 40),
+					Material = Enum.Material.Neon,
+					CanCollide = false,
+					CanQuery = false,
+				}, folder)
+			end
+			if j < N then
+				local mid = Grid.SegmentMid(i, j, "z")
+				anchored({
+					Name = "Road",
+					Size = Vector3.new(ROAD, 1, segLen),
+					CFrame = CFrame.new(mid.X, SURFACE - 0.5, mid.Z),
+					Color = asphalt,
+					Material = Enum.Material.Asphalt,
+				}, folder)
+				anchored({
+					Name = "Line",
+					Size = Vector3.new(0.8, 0.05, segLen - 10),
+					CFrame = CFrame.new(mid.X, SURFACE + 0.02, mid.Z),
+					Color = Color3.fromRGB(255, 200, 40),
+					Material = Enum.Material.Neon,
+					CanCollide = false,
+					CanQuery = false,
+				}, folder)
+			end
+		end
+	end
+end
+
+local function streetLight(pos: Vector3, props: Folder)
+	anchored({
+		Name = "Pole",
+		Size = Vector3.new(0.8, 22, 0.8),
+		CFrame = CFrame.new(pos + Vector3.new(0, 11, 0)),
+		Color = Color3.fromRGB(60, 60, 65),
+		Material = Enum.Material.Metal,
+		CanCollide = false,
+	}, props)
+	local lamp = anchored({
+		Name = "Lamp",
+		Size = Vector3.new(2.5, 0.6, 2.5),
+		CFrame = CFrame.new(pos + Vector3.new(0, 22, 0)),
+		Color = Color3.fromRGB(255, 220, 160),
+		Material = Enum.Material.Neon,
+		CanCollide = false,
+	}, props)
+	local light = Instance.new("PointLight")
+	light.Range = 45
+	light.Brightness = 1.4
+	light.Color = Color3.fromRGB(255, 200, 140)
+	light.Parent = lamp
+end
+
+local function building(center: Vector3, footprint: Vector3, height: number, buildings: Folder, props: Folder)
+	local color = BUILDING_COLORS[rng:NextInteger(1, #BUILDING_COLORS)]
+	local neon = NEON_COLORS[rng:NextInteger(1, #NEON_COLORS)]
+	local b = anchored({
+		Name = "Building",
+		Size = Vector3.new(footprint.X, height, footprint.Z),
+		CFrame = CFrame.new(center.X, SURFACE + height / 2, center.Z),
+		Color = color,
+		Material = if rng:NextNumber() < 0.5 then Enum.Material.Concrete else Enum.Material.Glass,
+		Reflectance = 0.05,
+	}, buildings)
+	-- neon roof trim
+	anchored({
+		Name = "Trim",
+		Size = Vector3.new(footprint.X + 1, 1.2, footprint.Z + 1),
+		CFrame = CFrame.new(center.X, SURFACE + height + 0.6, center.Z),
+		Color = neon,
+		Material = Enum.Material.Neon,
+		CanCollide = false,
+	}, props)
+	-- window bands
+	local bands = math.floor(height / 24)
+	for k = 1, bands do
+		if rng:NextNumber() < 0.55 then
+			anchored({
+				Name = "Windows",
+				Size = Vector3.new(footprint.X + 0.4, 2, footprint.Z + 0.4),
+				CFrame = CFrame.new(center.X, SURFACE + k * 24 - 6, center.Z),
+				Color = if rng:NextNumber() < 0.7 then Color3.fromRGB(255, 230, 170) else neon,
+				Material = Enum.Material.Neon,
+				Transparency = 0.25,
+				CanCollide = false,
+				CanQuery = false,
+			}, props)
+		end
+	end
+	-- occasional rooftop sign
+	if height > 90 and rng:NextNumber() < 0.35 then
+		local sign = anchored({
+			Name = "Sign",
+			Size = Vector3.new(footprint.X * 0.8, 14, 1),
+			CFrame = CFrame.new(center.X, SURFACE + height + 9, center.Z),
+			Color = Color3.fromRGB(10, 10, 14),
+			CanCollide = false,
+		}, props)
+		for _, face in { Enum.NormalId.Front, Enum.NormalId.Back } do
+			local gui = Instance.new("SurfaceGui")
+			gui.Face = face
+			gui.LightInfluence = 0
+			gui.Brightness = 3
+			local t = Instance.new("TextLabel")
+			t.BackgroundTransparency = 1
+			t.Size = UDim2.fromScale(1, 1)
+			t.Text = SIGN_TEXTS[rng:NextInteger(1, #SIGN_TEXTS)]
+			t.TextScaled = true
+			t.Font = Enum.Font.GothamBlack
+			t.TextColor3 = neon
+			t.Parent = gui
+			gui.Parent = sign
+		end
+	end
+	return b
+end
+
+local function cityBlock(bx: number, bz: number, buildings: Folder, props: Folder, ground: Folder)
+	local c = Grid.BlockCenter(bx, bz)
+	anchored({
+		Name = "Sidewalk",
+		Size = Vector3.new(BLOCK, 1, BLOCK),
+		CFrame = CFrame.new(c.X, SURFACE - 0.5, c.Z),
+		Color = Color3.fromRGB(95, 95, 100),
+		Material = Enum.Material.Concrete,
+	}, ground)
+	-- distance from centre makes downtown taller
+	local d = (Vector3.new(c.X, 0, c.Z)).Magnitude / Grid.Half
+	for _, ox in { -1, 1 } do
+		for _, oz in { -1, 1 } do
+			if rng:NextNumber() < 0.9 then
+				local fx = rng:NextNumber(70, 98)
+				local fz = rng:NextNumber(70, 98)
+				local h = rng:NextNumber(35, 80) + (1 - math.clamp(d, 0, 1)) * rng:NextNumber(40, 170)
+				building(c + Vector3.new(ox * 57, 0, oz * 57), Vector3.new(fx, 0, fz), h, buildings, props)
+			end
+		end
+	end
+	for _, o in { -1, 1 } do
+		streetLight(c + Vector3.new(o * (BLOCK / 2 - 4), 0, o * (BLOCK / 2 - 4)), props)
+	end
+end
+
+local function safehouse(bx: number, bz: number, buildings: Folder, props: Folder, ground: Folder): (Vector3, { CFrame })
+	local c = Grid.BlockCenter(bx, bz)
+	anchored({
+		Name = "SafehouseLot",
+		Size = Vector3.new(BLOCK, 1, BLOCK),
+		CFrame = CFrame.new(c.X, SURFACE - 0.5, c.Z),
+		Color = Color3.fromRGB(30, 30, 36),
+		Material = Enum.Material.Asphalt,
+	}, ground)
+	-- garage building at the back (+Z)
+	local garage = anchored({
+		Name = "Garage",
+		Size = Vector3.new(180, 40, 60),
+		CFrame = CFrame.new(c.X, SURFACE + 20, c.Z + 85),
+		Color = Color3.fromRGB(25, 25, 30),
+		Material = Enum.Material.Concrete,
+	}, buildings)
+	local sign = anchored({
+		Name = "GarageSign",
+		Size = Vector3.new(120, 12, 1),
+		CFrame = CFrame.new(c.X, SURFACE + 34, c.Z + 54.4),
+		Color = Color3.fromRGB(10, 10, 12),
+		CanCollide = false,
+	}, props)
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = Enum.NormalId.Front
+	gui.LightInfluence = 0
+	gui.Brightness = 4
+	local t = Instance.new("TextLabel")
+	t.BackgroundTransparency = 1
+	t.Size = UDim2.fromScale(1, 1)
+	t.Text = "SAFEHOUSE"
+	t.TextScaled = true
+	t.Font = Enum.Font.GothamBlack
+	t.TextColor3 = Color3.fromRGB(0, 255, 200)
+	t.Parent = gui
+	gui.Parent = sign
+	sign.CFrame = CFrame.lookAt(sign.Position, sign.Position - Vector3.zAxis)
+	local door = anchored({
+		Name = "GarageDoor",
+		Size = Vector3.new(60, 24, 1),
+		CFrame = CFrame.new(c.X, SURFACE + 12, c.Z + 54.6),
+		Color = Color3.fromRGB(0, 255, 200),
+		Material = Enum.Material.Neon,
+		Transparency = 0.4,
+		CanCollide = false,
+	}, props)
+	local _ = garage
+	local _ = door
+
+	local pad = anchored({
+		Name = "SafehousePad",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(0.2, 80, 80),
+		CFrame = CFrame.new(c.X, SURFACE + 0.05, c.Z) * CFrame.Angles(0, 0, math.rad(90)),
+		Color = Color3.fromRGB(0, 255, 200),
+		Material = Enum.Material.Neon,
+		Transparency = 0.6,
+		CanCollide = false,
+		CanQuery = false,
+	}, props)
+	billboard(pad, "SAFEHOUSE - bank cash / garage", Color3.fromRGB(0, 255, 200), 18, 600)
+
+	local spawns = {}
+	for k = -3, 3 do
+		local pos = Vector3.new(c.X + k * 22, SURFACE, c.Z + 20)
+		table.insert(spawns, CFrame.lookAt(pos, pos - Vector3.zAxis))
+	end
+	return Vector3.new(c.X, SURFACE, c.Z), spawns
+end
+
+local function park(bx: number, bz: number, props: Folder, ground: Folder)
+	local c = Grid.BlockCenter(bx, bz)
+	anchored({
+		Name = "Park",
+		Size = Vector3.new(BLOCK, 1, BLOCK),
+		CFrame = CFrame.new(c.X, SURFACE - 0.5, c.Z),
+		Color = Color3.fromRGB(50, 110, 55),
+		Material = Enum.Material.Grass,
+	}, ground)
+	for _ = 1, 14 do
+		local p = c + Vector3.new(rng:NextNumber(-110, 110), 0, rng:NextNumber(-110, 110))
+		if math.abs(p.X - c.X) > 50 or math.abs(p.Z - c.Z) > 50 then
+			anchored({
+				Name = "Trunk",
+				Size = Vector3.new(2, 10, 2),
+				CFrame = CFrame.new(p + Vector3.new(0, 5, 0)),
+				Color = Color3.fromRGB(90, 60, 40),
+				Material = Enum.Material.Wood,
+			}, props)
+			anchored({
+				Name = "Leaves",
+				Shape = Enum.PartType.Ball,
+				Size = Vector3.new(12, 12, 12),
+				CFrame = CFrame.new(p + Vector3.new(0, 13, 0)),
+				Color = Color3.fromRGB(40, 140, 60),
+				Material = Enum.Material.Grass,
+				CanCollide = false,
+			}, props)
+		end
+	end
+	-- centre kicker ramps
+	for _, dir in { Vector3.xAxis, -Vector3.xAxis } do
+		local pos = c + dir * 25 + Vector3.new(0, 3, 0)
+		local w = Instance.new("WedgePart")
+		w.Anchored = true
+		w.Size = Vector3.new(20, 6, 26)
+		w.CFrame = CFrame.lookAt(pos, pos + dir)
+		w.Color = Color3.fromRGB(255, 140, 0)
+		w.Material = Enum.Material.DiamondPlate
+		w.Parent = props
+	end
+end
+
+local function hidingSpot(bx: number, bz: number, buildings: Folder, props: Folder, ground: Folder)
+	local c = Grid.BlockCenter(bx, bz)
+	anchored({
+		Name = "GarageFloor",
+		Size = Vector3.new(BLOCK, 1, BLOCK),
+		CFrame = CFrame.new(c.X, SURFACE - 0.5, c.Z),
+		Color = Color3.fromRGB(55, 55, 60),
+		Material = Enum.Material.Concrete,
+	}, ground)
+	local size = BLOCK - 30
+	anchored({
+		Name = "GarageRoof",
+		Size = Vector3.new(size, 3, size),
+		CFrame = CFrame.new(c.X, SURFACE + 22, c.Z),
+		Color = Color3.fromRGB(70, 70, 75),
+		Material = Enum.Material.Concrete,
+	}, buildings)
+	for x = -2, 2 do
+		for z = -2, 2 do
+			if (x + z) % 2 == 0 then
+				anchored({
+					Name = "Pillar",
+					Size = Vector3.new(3, 21, 3),
+					CFrame = CFrame.new(c.X + x * 45, SURFACE + 10.5, c.Z + z * 45),
+					Color = Color3.fromRGB(90, 90, 95),
+					Material = Enum.Material.Concrete,
+				}, buildings)
+			end
+		end
+	end
+	local marker = anchored({
+		Name = "HideMarker",
+		Size = Vector3.new(size, 0.2, 2),
+		CFrame = CFrame.new(c.X, SURFACE + 20, c.Z - size / 2),
+		Color = Color3.fromRGB(80, 255, 120),
+		Material = Enum.Material.Neon,
+		CanCollide = false,
+		CanQuery = false,
+	}, props)
+	billboard(marker, "HIDING SPOT", Color3.fromRGB(80, 255, 120), 6, 350)
+end
+
+local function pursuitBreaker(i: number, j: number, folder: Folder): Breaker
+	local c = Grid.Intersection(i, j)
+	local base = c + Vector3.new(36, 0, 36)
+	local model = Instance.new("Model")
+	model.Name = "PursuitBreaker"
+	local partsList = {}
+	local function add(p: BasePart)
+		p.Parent = model
+		table.insert(partsList, { part = p, cframe = p.CFrame })
+	end
+	for _, off in { Vector3.new(-6, 0, 0), Vector3.new(6, 0, 0) } do
+		local leg = Instance.new("Part")
+		leg.Anchored = true
+		leg.Size = Vector3.new(2, 38, 2)
+		leg.CFrame = CFrame.new(base + off + Vector3.new(0, 19 + SURFACE, 0))
+		leg.Color = Color3.fromRGB(120, 120, 125)
+		leg.Material = Enum.Material.Metal
+		add(leg)
+	end
+	local panel = Instance.new("Part")
+	panel.Anchored = true
+	panel.Size = Vector3.new(30, 14, 2)
+	panel.CFrame = CFrame.lookAt(base + Vector3.new(0, 44 + SURFACE, 0), c + Vector3.new(0, 44 + SURFACE, 0))
+	panel.Color = Color3.fromRGB(255, 60, 60)
+	panel.Material = Enum.Material.Neon
+	add(panel)
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = Enum.NormalId.Front
+	gui.LightInfluence = 0
+	local t = Instance.new("TextLabel")
+	t.BackgroundTransparency = 1
+	t.Size = UDim2.fromScale(1, 1)
+	t.Text = "MEGA BURGER"
+	t.TextScaled = true
+	t.Font = Enum.Font.GothamBlack
+	t.TextColor3 = Color3.new(1, 1, 1)
+	t.Parent = gui
+	gui.Parent = panel
+
+	local ring = Instance.new("Part")
+	ring.Name = "BreakerRing"
+	ring.Anchored = true
+	ring.CanCollide = false
+	ring.CanQuery = false
+	ring.Shape = Enum.PartType.Cylinder
+	ring.Size = Vector3.new(0.2, 24, 24)
+	ring.CFrame = CFrame.new(base.X, SURFACE + 0.06, base.Z) * CFrame.Angles(0, 0, math.rad(90))
+	ring.Color = Color3.fromRGB(255, 60, 60)
+	ring.Material = Enum.Material.Neon
+	ring.Transparency = 0.5
+	ring.Parent = model
+
+	model.Parent = folder
+	return { model = model, position = Vector3.new(base.X, SURFACE, base.Z), parts = partsList, armed = true }
+end
+
+local function speedCamera(pos: Vector3, axis: string, props: Folder)
+	local side = if axis == "x" then Vector3.new(0, 0, ROAD / 2 + 3) else Vector3.new(ROAD / 2 + 3, 0, 0)
+	local base = pos + side
+	anchored({
+		Name = "CamPole",
+		Size = Vector3.new(1, 16, 1),
+		CFrame = CFrame.new(base + Vector3.new(0, 8, 0)),
+		Color = Color3.fromRGB(200, 200, 60),
+		CanCollide = false,
+	}, props)
+	local cam = anchored({
+		Name = "SpeedCam",
+		Size = Vector3.new(3, 2.5, 3),
+		CFrame = CFrame.new(base + Vector3.new(0, 16, 0)),
+		Color = Color3.fromRGB(30, 30, 30),
+		CanCollide = false,
+	}, props)
+	billboard(cam, "SPEED CAMERA", Color3.fromRGB(255, 230, 60), 5, 300)
+end
+
+local function ramp(pos: Vector3, axis: string, props: Folder)
+	local dir = if axis == "x" then Vector3.xAxis else Vector3.zAxis
+	for _, s in { 1, -1 } do
+		local travel = dir * s
+		local right = travel:Cross(Vector3.yAxis)
+		local p = pos + right * 14 + Vector3.new(0, 3 + SURFACE, 0)
+		local w = Instance.new("WedgePart")
+		w.Name = "Ramp"
+		w.Anchored = true
+		w.Size = Vector3.new(22, 6, 34)
+		w.CFrame = CFrame.lookAt(p, p - travel)
+		w.Color = Color3.fromRGB(255, 150, 0)
+		w.Material = Enum.Material.DiamondPlate
+		w.Parent = props
+	end
+end
+
+function MapBuilder.Build(): MapInfo
+	local existing = workspace:FindFirstChild("Map")
+	if existing then
+		existing:Destroy()
+	end
+	local map = Instance.new("Folder")
+	map.Name = "Map"
+	local ground = Instance.new("Folder")
+	ground.Name = "Ground"
+	ground.Parent = map
+	local roads = Instance.new("Folder")
+	roads.Name = "Roads"
+	roads.Parent = map
+	local buildings = Instance.new("Folder")
+	buildings.Name = "Buildings"
+	buildings.Parent = map
+	local props = Instance.new("Folder")
+	props.Name = "Props"
+	props.Parent = map
+	local breakersFolder = Instance.new("Folder")
+	breakersFolder.Name = "PursuitBreakers"
+	breakersFolder.Parent = map
+
+	local H = Grid.Half
+	anchored({
+		Name = "Base",
+		Size = Vector3.new(H * 2 + 600, 2, H * 2 + 600),
+		CFrame = CFrame.new(0, SURFACE - 1.1, 0),
+		Color = Color3.fromRGB(30, 45, 35),
+		Material = Enum.Material.Grass,
+	}, ground)
+	-- invisible boundary walls
+	local wallDist = H + ROAD / 2 + 8
+	for _, info in { { Vector3.new(wallDist, 0, 0), Vector3.new(4, 120, wallDist * 2) }, { Vector3.new(-wallDist, 0, 0), Vector3.new(4, 120, wallDist * 2) }, { Vector3.new(0, 0, wallDist), Vector3.new(wallDist * 2, 120, 4) }, { Vector3.new(0, 0, -wallDist), Vector3.new(wallDist * 2, 120, 4) } } do
+		anchored({
+			Name = "Boundary",
+			Size = info[2],
+			CFrame = CFrame.new(info[1] + Vector3.new(0, 60, 0)),
+			Transparency = 1,
+		}, buildings)
+		local alongZ = info[2].Z > info[2].X
+		anchored({
+			Name = "BarrierGlow",
+			Size = if alongZ then Vector3.new(2, 1.5, info[2].Z) else Vector3.new(info[2].X, 1.5, 2),
+			CFrame = CFrame.new(info[1] + Vector3.new(0, SURFACE + 0.75, 0)),
+			Color = Color3.fromRGB(255, 40, 160),
+			Material = Enum.Material.Neon,
+		}, props)
+	end
+
+	buildRoads(roads)
+
+	local info: MapInfo = {
+		safehouse = Vector3.zero,
+		safehouseSpawns = {},
+		hidingZones = {},
+		breakers = {},
+		speedCams = {},
+		buildings = buildings,
+	}
+
+	local function isSpecial(bx: number, bz: number): string?
+		local s = Config.Blocks.Safehouse
+		if bx == s[1] and bz == s[2] then
+			return "safehouse"
+		end
+		local p = Config.Blocks.Park
+		if bx == p[1] and bz == p[2] then
+			return "park"
+		end
+		for _, h in Config.Blocks.HidingSpots do
+			if bx == h[1] and bz == h[2] then
+				return "hide"
+			end
+		end
+		return nil
+	end
+
+	for bx = 0, Grid.Size - 1 do
+		for bz = 0, Grid.Size - 1 do
+			local kind = isSpecial(bx, bz)
+			if kind == "safehouse" then
+				info.safehouse, info.safehouseSpawns = safehouse(bx, bz, buildings, props, ground)
+			elseif kind == "park" then
+				park(bx, bz, props, ground)
+			elseif kind == "hide" then
+				hidingSpot(bx, bz, buildings, props, ground)
+				table.insert(info.hidingZones, { center = Grid.BlockCenter(bx, bz), size = Vector3.new(BLOCK - 30, 40, BLOCK - 30) })
+			else
+				cityBlock(bx, bz, buildings, props, ground)
+			end
+		end
+	end
+
+	for _, b in Config.PursuitBreakers do
+		table.insert(info.breakers, pursuitBreaker(b[1], b[2], breakersFolder))
+	end
+	for _, cam in Config.SpeedCameras do
+		local pos = Grid.SegmentMid(cam.i, cam.j, cam.axis)
+		speedCamera(pos, cam.axis, props)
+		table.insert(info.speedCams, pos)
+	end
+	for _, r in Config.Ramps do
+		ramp(Grid.SegmentMid(r.i, r.j, r.axis), r.axis, props)
+	end
+
+	-- race start markers
+	local markers = Instance.new("Folder")
+	markers.Name = "RaceMarkers"
+	markers.Parent = map
+	for _, race in Config.Races do
+		local p = race.route[1]
+		local pos = Grid.Intersection(p[1], p[2])
+		local m = anchored({
+			Name = race.id,
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(0.3, 36, 36),
+			CFrame = CFrame.new(pos + Vector3.new(0, 0.1, 0)) * CFrame.Angles(0, 0, math.rad(90)),
+			Color = if race.kind == "drift" then Color3.fromRGB(255, 120, 0) else Color3.fromRGB(255, 40, 160),
+			Material = Enum.Material.Neon,
+			Transparency = 0.45,
+			CanCollide = false,
+			CanQuery = false,
+		}, markers)
+		billboard(m, string.upper(race.kind) .. ": " .. race.name .. "  ($" .. race.buyIn .. " buy-in)", Color3.new(1, 1, 1), 12, 500)
+	end
+
+	map.Parent = workspace
+	return info
+end
+
+-- Resets a pursuit breaker after it collapsed.
+function MapBuilder.ResetBreaker(b: Breaker)
+	for _, entry in b.parts do
+		entry.part.Anchored = true
+		entry.part.AssemblyLinearVelocity = Vector3.zero
+		entry.part.AssemblyAngularVelocity = Vector3.zero
+		entry.part.CFrame = entry.cframe
+		entry.part.CanCollide = true
+	end
+	b.armed = true
+	local ring = b.model:FindFirstChild("BreakerRing") :: BasePart?
+	if ring then
+		ring.Transparency = 0.5
+	end
+end
+
+-- Collapse a pursuit breaker onto the road.
+function MapBuilder.CollapseBreaker(b: Breaker, towards: Vector3)
+	b.armed = false
+	local ring = b.model:FindFirstChild("BreakerRing") :: BasePart?
+	if ring then
+		ring.Transparency = 1
+	end
+	local dir = towards - b.position
+	dir = Vector3.new(dir.X, 0, dir.Z)
+	if dir.Magnitude < 1 then
+		dir = Vector3.xAxis
+	end
+	dir = dir.Unit
+	for _, entry in b.parts do
+		entry.part.Anchored = false
+		entry.part.CanCollide = true
+		entry.part.AssemblyLinearVelocity = dir * 40 + Vector3.new(0, 10, 0)
+		entry.part.AssemblyAngularVelocity = dir:Cross(Vector3.yAxis) * -2
+	end
+end
+
+return MapBuilder
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000009"><Properties><string name="Name">PlayerData</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Saves and loads player progress with DataStoreService (falls back to memory in Studio
+-- when API access is disabled).
+
+local DataStoreService = game:GetService("DataStoreService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+
+local PlayerData = {}
+
+export type Profile = {
+	cash: number,
+	owned: { [string]: boolean },
+	selected: string,
+	upgrades: { [string]: { [string]: number } },
+	paint: { [string]: number }, -- index into Config.PaintColors
+	effects: { [string]: boolean },
+	effect: string,
+	totalBounty: number,
+	racesWon: number,
+	blacklistBeaten: number, -- how many rivals beaten (rank 5 first)
+}
+
+local STORE_NAME = "WantedUnbound_v1"
+local store: DataStore? = nil
+do
+	local ok, result = pcall(function()
+		return DataStoreService:GetDataStore(STORE_NAME)
+	end)
+	if ok then
+		store = result
+	else
+		warn("[WantedUnbound] DataStore unavailable, progress will not save:", result)
+	end
+end
+
+local profiles: { [Player]: Profile } = {}
+
+local function default(): Profile
+	return {
+		cash = Config.StartingCash,
+		owned = { [Config.StarterCar] = true },
+		selected = Config.StarterCar,
+		upgrades = {},
+		paint = {},
+		effects = { neon = true },
+		effect = "neon",
+		totalBounty = 0,
+		racesWon = 0,
+		blacklistBeaten = 0,
+	}
+end
+
+local function reconcile(data: any): Profile
+	local base = default()
+	if type(data) ~= "table" then
+		return base
+	end
+	for k, v in pairs(base :: any) do
+		if data[k] == nil or type(data[k]) ~= type(v) then
+			data[k] = v
+		end
+	end
+	if not data.owned[data.selected] then
+		data.selected = Config.StarterCar
+	end
+	return data :: Profile
+end
+
+function PlayerData.Load(player: Player): Profile
+	local data = nil
+	if store then
+		local s = store :: DataStore
+		for attempt = 1, 3 do
+			local ok, result = pcall(function()
+				return s:GetAsync("player_" .. player.UserId)
+			end)
+			if ok then
+				data = result
+				break
+			end
+			warn("[WantedUnbound] load failed (attempt " .. attempt .. "):", result)
+			task.wait(1)
+		end
+	end
+	local profile = reconcile(data)
+	profiles[player] = profile
+	return profile
+end
+
+function PlayerData.Get(player: Player): Profile?
+	return profiles[player]
+end
+
+function PlayerData.Save(player: Player)
+	local profile = profiles[player]
+	if not profile or not store then
+		return
+	end
+	local s = store :: DataStore
+	local ok, err = pcall(function()
+		s:SetAsync("player_" .. player.UserId, profile)
+	end)
+	if not ok then
+		warn("[WantedUnbound] save failed:", err)
+	end
+end
+
+function PlayerData.Release(player: Player)
+	PlayerData.Save(player)
+	profiles[player] = nil
+end
+
+function PlayerData.All(): { [Player]: Profile }
+	return profiles
+end
+
+function PlayerData.Upgrades(profile: Profile, carId: string): { [string]: number }
+	local u = profile.upgrades[carId]
+	if not u then
+		u = { engine = 0, nitro = 0, handling = 0 }
+		profile.upgrades[carId] = u
+	end
+	return u
+end
+
+return PlayerData
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000A"><Properties><string name="Name">Police</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Most Wanted style police: patrols, heat levels, pursuits, evasion + cooldown,
+-- busts, roadblocks, a helicopter at heat 5, wrecking cops and pursuit breakers.
+
+local Debris = game:GetService("Debris")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared:WaitForChild("Config"))
+local Grid = require(Shared:WaitForChild("Grid"))
+local CarPhysics = require(Shared:WaitForChild("CarPhysics"))
+local AIDriver = require(script.Parent.AIDriver)
+local CarBuilder = require(script.Parent.CarBuilder)
+local MapBuilder = require(script.Parent.MapBuilder)
+local Session = require(script.Parent.Session)
+local Vehicles = require(script.Parent.Vehicles)
+
+local Police = {}
+
+local P = Config.Police
+local mapInfo: MapBuilder.MapInfo
+local patrols: { AIDriver.AI } = {}
+local roadblocks: { [Player]: { Model } } = {}
+local helis: { [Player]: Model } = {}
+local onBusted: ((s: Session.Session) -> ())? = nil
+
+local policeFolder = Instance.new("Folder")
+policeFolder.Name = "Police"
+policeFolder.Parent = workspace
+
+local RED = Color3.fromRGB(255, 70, 70)
+local BLUE = Color3.fromRGB(90, 160, 255)
+
+local function level(s: Session.Session): Config.HeatLevel
+	return Config.HeatLevels[math.max(1, Session.HeatLevel(s))]
+end
+
+local function copStats(heavy: boolean): CarPhysics.Stats
+	return {
+		maxSpeed = P.BaseSpeed * (if heavy then 0.95 else 1),
+		accel = P.Accel * (if heavy then 0.9 else 1),
+		brake = 100,
+		turn = P.Turn * (if heavy then 0.85 else 1),
+		grip = P.Grip,
+		nitroMult = 1.2,
+	}
+end
+
+local function randomIntersection(): Vector3
+	return Grid.Intersection(math.random(0, Grid.Size), math.random(0, Grid.Size))
+end
+
+local function inHiding(pos: Vector3): boolean
+	for _, z in mapInfo.hidingZones do
+		if math.abs(pos.X - z.center.X) < z.size.X / 2 and math.abs(pos.Z - z.center.Z) < z.size.Z / 2 then
+			return true
+		end
+	end
+	return false
+end
+
+local function playerCarFromPart(part: BasePart): (Model?, Session.Session?)
+	local model = part:FindFirstAncestorOfClass("Model")
+	while model and model.Parent ~= Vehicles.Folder do
+		model = model.Parent and model.Parent:FindFirstAncestorOfClass("Model")
+	end
+	if not model then
+		return nil, nil
+	end
+	local owner = model:GetAttribute("Owner")
+	if type(owner) ~= "number" then
+		return nil, nil
+	end
+	local player = Players:GetPlayerByUserId(owner)
+	if not player then
+		return nil, nil
+	end
+	return model, Session.Get(player)
+end
+
+---------------------------------------------------------------------------
+-- Pursuit state changes
+---------------------------------------------------------------------------
+local function startPursuit(s: Session.Session, reason: string)
+	if s.mode ~= "idle" or s.race then
+		return
+	end
+	s.mode = "pursuit"
+	s.heat = math.max(s.heat, 1)
+	s.evade = 0
+	s.cooldown = 0
+	s.bust = 0
+	s.bounty = 0
+	s.pursuitTime = 0
+	s.copsWrecked = 0
+	s.lastCopSpawn = os.clock()
+	s.lastRoadblock = os.clock()
+	Session.Notify(s.player, "PURSUIT!  " .. reason, RED)
+end
+Police.StartPursuit = startPursuit
+
+local function releaseCop(ai: AIDriver.AI)
+	ai.data.mode = "leave"
+	ai.data.session = nil
+	ai.data.roam = randomIntersection()
+	task.delay(6, function()
+		AIDriver.Remove(ai)
+		if ai.model.Parent then
+			ai.model:Destroy()
+		end
+	end)
+end
+
+local function clearRoadblocks(player: Player)
+	local list = roadblocks[player]
+	if list then
+		for _, m in list do
+			m:Destroy()
+		end
+	end
+	roadblocks[player] = nil
+end
+
+local function endPursuit(s: Session.Session)
+	s.mode = "idle"
+	s.evade = 0
+	s.cooldown = 0
+	s.bust = 0
+	s.bounty = 0
+	for _, ai in s.cops do
+		if ai.alive then
+			releaseCop(ai)
+		end
+	end
+	s.cops = {}
+	local heli = helis[s.player]
+	if heli then
+		helis[s.player] = nil
+		heli:SetAttribute("Leaving", true)
+		Debris:AddItem(heli, 6)
+	end
+	s.heli = nil
+	clearRoadblocks(s.player)
+end
+Police.EndPursuit = endPursuit
+
+local function busted(s: Session.Session)
+	local lost = math.floor(s.unbanked)
+	Session.Notify(s.player, "BUSTED!  You lost $" .. lost .. " of unbanked cash", RED)
+	s.unbanked = 0
+	s.heat = 0
+	endPursuit(s)
+	if onBusted then
+		onBusted(s)
+	end
+	Vehicles.Spawn(s, Vehicles.NextSafehouseSpawn())
+	Vehicles.Freeze(s, 2)
+end
+
+local function escaped(s: Session.Session)
+	local reward = math.floor(s.bounty)
+	s.profile.totalBounty += reward
+	Session.Notify(s.player, "ESCAPED!  Pursuit bounty banked to your record", Color3.fromRGB(80, 255, 140))
+	Session.AddUnbanked(s, reward, "Bounty cash (take it to the safehouse)")
+	endPursuit(s)
+end
+
+---------------------------------------------------------------------------
+-- Cop cars
+---------------------------------------------------------------------------
+local wreck: (ai: AIDriver.AI, by: Session.Session?) -> ()
+
+local function copThink(ai: AIDriver.AI, _dt: number)
+	local mode = ai.data.mode
+	local state = ai.state
+	local pos = state.root.Position
+	if mode == "chase" or mode == "search" then
+		local s = ai.data.session :: Session.Session?
+		if not s then
+			ai.data.mode = "patrol"
+			return
+		end
+		local target = Session.CarPosition(s)
+		local lvl = level(s)
+		if mode == "chase" and target then
+			local car = s.car :: Model
+			local vel = (car.PrimaryPart :: BasePart).AssemblyLinearVelocity
+			local dist = (target - pos).Magnitude
+			local mult = lvl.speedMult
+			if dist > 260 then
+				mult *= 1.3
+			elseif dist > 120 then
+				mult *= 1.12
+			end
+			state.speedMult = mult
+			local lead = math.clamp(dist / 200, 0.1, 0.6)
+			AIDriver.DriveTo(ai, target + vel * lead, dist < 60)
+		else
+			local goal = ai.data.searchGoal or s.lastSeen or pos
+			if (goal - pos).Magnitude < 35 then
+				ai.data.searchGoal = (s.lastSeen or pos) + Vector3.new(math.random(-400, 400), 0, math.random(-400, 400))
+			end
+			state.speedMult = lvl.speedMult * 0.8
+			AIDriver.DriveTo(ai, goal)
+		end
+	else
+		-- patrol / leave: cruise between random intersections
+		local goal = ai.data.roam :: Vector3?
+		if not goal or (goal - pos).Magnitude < 35 then
+			local i, j = Grid.NearestIntersection(pos)
+			goal = Grid.Intersection(math.clamp(i + math.random(-3, 3), 0, Grid.Size), math.clamp(j + math.random(-3, 3), 0, Grid.Size))
+			ai.data.roam = goal
+		end
+		state.speedMult = if mode == "leave" then 0.9 else 0.5
+		AIDriver.DriveTo(ai, goal :: Vector3)
+	end
+end
+
+local function spawnCop(pos: Vector3, look: Vector3, heavy: boolean, mode: string, s: Session.Session?): AIDriver.AI
+	local model = CarBuilder.Build({
+		style = "coupe",
+		color = Color3.fromRGB(15, 15, 20),
+		name = if heavy then "PoliceHeavy" else "Police",
+		police = true,
+		heavy = heavy,
+	})
+	model:SetAttribute("Siren", mode ~= "patrol")
+	local root = model.PrimaryPart :: BasePart
+	local flat = Vector3.new(look.X, 0, look.Z)
+	if flat.Magnitude < 0.1 then
+		flat = Vector3.zAxis
+	end
+	local p = Vector3.new(pos.X, Grid.RoadY + root.Size.Y / 2 + 0.5, pos.Z)
+	model:PivotTo(CFrame.lookAt(p, p + flat.Unit))
+	model.Parent = policeFolder
+	local ai = AIDriver.Add(model, copStats(heavy), "cop", copThink)
+	ai.data.mode = mode
+	ai.data.session = s
+	ai.data.health = if heavy then P.CopHealth * 1.7 else P.CopHealth
+	ai.data.lastHit = 0
+
+	root.Touched:Connect(function(hit)
+		if not ai.alive or ai.data.wrecked then
+			return
+		end
+		local car, owner = playerCarFromPart(hit)
+		if not car or not owner then
+			return
+		end
+		local now = os.clock()
+		if now - ai.data.lastHit < 0.4 then
+			return
+		end
+		local carRoot = car.PrimaryPart :: BasePart
+		local rel = (carRoot.AssemblyLinearVelocity - root.AssemblyLinearVelocity).Magnitude
+		if rel < 25 then
+			return
+		end
+		ai.data.lastHit = now
+		ai.data.health -= (rel - 20) * 1.1
+		if owner.mode == "idle" then
+			if not owner.race then
+				startPursuit(owner, "Ramming a police vehicle!")
+				if ai.data.mode == "patrol" then
+					local idx = table.find(patrols, ai)
+					if idx then
+						table.remove(patrols, idx)
+					end
+					ai.data.mode = "chase"
+					ai.data.session = owner
+					model:SetAttribute("Siren", true)
+					table.insert(owner.cops, ai)
+				end
+			end
+		else
+			owner.heat = math.min(5, owner.heat + 0.05)
+		end
+		if ai.data.health <= 0 then
+			wreck(ai, owner)
+		end
+	end)
+	return ai
+end
+
+wreck = function(ai: AIDriver.AI, by: Session.Session?)
+	if ai.data.wrecked then
+		return
+	end
+	ai.data.wrecked = true
+	AIDriver.Remove(ai)
+	local idx = table.find(patrols, ai)
+	if idx then
+		table.remove(patrols, idx)
+	end
+	local owner = ai.data.session :: Session.Session?
+	if owner then
+		local i2 = table.find(owner.cops, ai)
+		if i2 then
+			table.remove(owner.cops, i2)
+		end
+	end
+	local model = ai.model
+	model:SetAttribute("Siren", false)
+	local root = model.PrimaryPart :: BasePart
+	local boom = Instance.new("Explosion")
+	boom.BlastPressure = 0
+	boom.BlastRadius = 0
+	boom.DestroyJointRadiusPercent = 0
+	boom.ExplosionType = Enum.ExplosionType.NoCraters
+	boom.Position = root.Position
+	boom.Parent = workspace
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") and d.Name ~= "Chassis" then
+			d.Color = d.Color:Lerp(Color3.fromRGB(20, 20, 20), 0.7)
+		elseif d:IsA("Light") then
+			d.Enabled = false
+		end
+	end
+	local fire = Instance.new("Fire")
+	fire.Size = 8
+	fire.Parent = root
+	local align = root:FindFirstChild("Upright") :: AlignOrientation?
+	if align then
+		align.Enabled = false
+	end
+	root.AssemblyLinearVelocity += Vector3.new(0, 30, 0)
+	root.AssemblyAngularVelocity = Vector3.new(math.random() * 4, math.random() * 2, math.random() * 4)
+	Debris:AddItem(model, 6)
+	if by and by.mode ~= "idle" then
+		by.copsWrecked += 1
+		by.bounty += Config.Bounty.CopWrecked * Session.NightMult()
+		by.heat = math.min(5, by.heat + 0.12)
+		Session.Notify(by.player, "COP WRECKED  +" .. Config.Bounty.CopWrecked .. " bounty", Color3.fromRGB(255, 160, 60))
+	end
+end
+
+local function spawnCopFor(s: Session.Session)
+	local target = Session.CarPosition(s)
+	if not target then
+		return
+	end
+	local candidates = {}
+	for i = 0, Grid.Size do
+		for j = 0, Grid.Size do
+			local p = Grid.Intersection(i, j)
+			local d = (p - target).Magnitude
+			if d > 220 and d < 460 then
+				table.insert(candidates, p)
+			end
+		end
+	end
+	if #candidates == 0 then
+		return
+	end
+	local p = candidates[math.random(1, #candidates)]
+	local lvl = level(s)
+	local heavy = lvl.heavy and math.random() < 0.4
+	local ai = spawnCop(p, target - p, heavy, if s.mode == "pursuit" then "chase" else "search", s)
+	table.insert(s.cops, ai)
+end
+
+---------------------------------------------------------------------------
+-- Roadblocks
+---------------------------------------------------------------------------
+local function spawnRoadblock(s: Session.Session)
+	local car = s.car
+	if not car or not car.PrimaryPart then
+		return
+	end
+	local root = car.PrimaryPart
+	local vel = root.AssemblyLinearVelocity
+	if vel.Magnitude < 40 then
+		return
+	end
+	local dx, dz = 0, 0
+	if math.abs(vel.X) > math.abs(vel.Z) then
+		dx = math.sign(vel.X)
+	else
+		dz = math.sign(vel.Z)
+	end
+	local i, j = Grid.NearestIntersection(root.Position)
+	local ti, tj = i + dx * 2, j + dz * 2
+	if not Grid.InBounds(ti, tj) then
+		ti, tj = i + dx, j + dz
+		if not Grid.InBounds(ti, tj) then
+			return
+		end
+	end
+	local dir = Vector3.new(dx, 0, dz)
+	local across = dir:Cross(Vector3.yAxis)
+	local center = Grid.Intersection(ti, tj) - dir * 45
+	local model = Instance.new("Model")
+	model.Name = "Roadblock"
+	for _, off in { -24, -12, 12, 24 } do
+		local cop = CarBuilder.Build({ style = "coupe", color = Color3.fromRGB(15, 15, 20), name = "RoadblockCar", police = true })
+		cop:SetAttribute("Siren", true)
+		local croot = cop.PrimaryPart :: BasePart
+		local pos = center + across * off + Vector3.new(0, croot.Size.Y / 2 + 0.5, 0)
+		cop:PivotTo(CFrame.lookAt(pos, pos + across))
+		croot.Anchored = true
+		cop.Parent = model
+		local smashed = false
+		croot.Touched:Connect(function(hit)
+			if smashed then
+				return
+			end
+			local pcar, owner = playerCarFromPart(hit)
+			if not pcar or not owner then
+				return
+			end
+			local speed = (pcar.PrimaryPart :: BasePart).AssemblyLinearVelocity.Magnitude
+			if speed < 70 then
+				return
+			end
+			smashed = true
+			croot.Anchored = false
+			croot.AssemblyLinearVelocity = dir * 50 + Vector3.new(0, 25, 0)
+			croot.AssemblyAngularVelocity = Vector3.new(3, 2, 1)
+			if owner.mode ~= "idle" then
+				owner.bounty += Config.Bounty.RoadblockSmashed * Session.NightMult()
+				Session.Notify(owner.player, "ROADBLOCK SMASHED  +" .. Config.Bounty.RoadblockSmashed .. " bounty", Color3.fromRGB(255, 160, 60))
+			end
+		end)
+	end
+	for k = -2, 2 do
+		local cone = Instance.new("Part")
+		cone.Name = "Cone"
+		cone.Size = Vector3.new(1.5, 2.5, 1.5)
+		cone.Color = Color3.fromRGB(255, 120, 0)
+		cone.Material = Enum.Material.Neon
+		cone.CFrame = CFrame.new(center - dir * 20 + across * (k * 6) + Vector3.new(0, Grid.RoadY + 1.25, 0))
+		cone.Parent = model
+	end
+	model.Parent = policeFolder
+	local list = roadblocks[s.player] or {}
+	table.insert(list, model)
+	roadblocks[s.player] = list
+	Debris:AddItem(model, 40)
+	Session.Notify(s.player, "ROADBLOCK AHEAD!", RED)
+end
+
+---------------------------------------------------------------------------
+-- Helicopter (heat 5)
+---------------------------------------------------------------------------
+local function spawnHeli(s: Session.Session)
+	local pos = Session.CarPosition(s)
+	if not pos then
+		return
+	end
+	local model = Instance.new("Model")
+	model.Name = "PoliceHeli"
+	local function add(props: { [string]: any }): Part
+		local p = Instance.new("Part")
+		p.Anchored = true
+		p.CanCollide = false
+		p.CanQuery = false
+		p.CanTouch = false
+		for k, v in props do
+			(p :: any)[k] = v
+		end
+		p.Parent = model
+		return p
+	end
+	local body = add({ Name = "Body", Size = Vector3.new(8, 7, 14), Color = Color3.fromRGB(20, 25, 40), Material = Enum.Material.SmoothPlastic })
+	add({ Name = "Tail", Size = Vector3.new(1.5, 1.5, 14), Color = Color3.fromRGB(20, 25, 40) })
+	add({ Name = "Rotor", Size = Vector3.new(34, 0.3, 2), Color = Color3.fromRGB(40, 40, 40) })
+	local lamp = add({ Name = "Lamp", Size = Vector3.new(2, 1, 2), Color = Color3.new(1, 1, 1), Material = Enum.Material.Neon })
+	local spot = Instance.new("SpotLight")
+	spot.Face = Enum.NormalId.Bottom
+	spot.Range = 140
+	spot.Angle = 35
+	spot.Brightness = 6
+	spot.Parent = lamp
+	for _, info in { { x = -3, color = RED }, { x = 3, color = BLUE } } do
+		local l = add({ Name = "Beacon", Size = Vector3.new(0.8, 0.8, 0.8), Color = info.color, Material = Enum.Material.Neon })
+		l:SetAttribute("Offset", Vector3.new(info.x, -3.5, 5))
+	end
+	model.PrimaryPart = body
+	body.CFrame = CFrame.new(pos + Vector3.new(200, 130, 200))
+	model:SetAttribute("Owner", s.player.UserId)
+	model.Parent = policeFolder
+	helis[s.player] = model
+	s.heli = model
+	Session.Notify(s.player, "HELICOPTER INBOUND!", RED)
+end
+
+local rotorAngle = 0
+RunService.Heartbeat:Connect(function(dt: number)
+	rotorAngle += dt * 25
+	for player, heli in helis do
+		local s = Session.Get(player)
+		local body = heli.PrimaryPart
+		if not s or not body then
+			continue
+		end
+		local target = Session.CarPosition(s)
+		local cur = body.CFrame
+		local goal = cur.Position
+		if target then
+			goal = target + Vector3.new(0, 110, 0)
+		end
+		local newPos = cur.Position:Lerp(goal, math.min(1, dt * 0.9))
+		local flat = Vector3.new(goal.X - newPos.X, 0, goal.Z - newPos.Z)
+		local cf = if flat.Magnitude > 2 then CFrame.lookAt(newPos, newPos + flat) else CFrame.new(newPos) * cur.Rotation
+		body.CFrame = cf
+		for _, p in heli:GetChildren() do
+			if not p:IsA("BasePart") or p == body then
+				continue
+			end
+			if p.Name == "Tail" then
+				p.CFrame = cf * CFrame.new(0, 1, 12)
+			elseif p.Name == "Rotor" then
+				p.CFrame = cf * CFrame.new(0, 4, 0) * CFrame.Angles(0, rotorAngle, 0)
+			elseif p.Name == "Lamp" then
+				p.CFrame = cf * CFrame.new(0, -4, -5)
+			elseif p.Name == "Beacon" then
+				p.CFrame = cf * CFrame.new(p:GetAttribute("Offset") :: Vector3)
+			end
+		end
+	end
+	-- helicopters that are leaving climb away
+	for _, heli in policeFolder:GetChildren() do
+		if heli:IsA("Model") and heli:GetAttribute("Leaving") then
+			heli:PivotTo(heli:GetPivot() + Vector3.new(0, dt * 40, dt * 60))
+		end
+	end
+end)
+
+---------------------------------------------------------------------------
+-- Main update (10 Hz)
+---------------------------------------------------------------------------
+local function canSee(from: Vector3, to: Vector3, radius: number): boolean
+	return (from - to).Magnitude < radius and AIDriver.ClearLine(from, to)
+end
+
+local function updatePursuit(s: Session.Session, pos: Vector3, dt: number)
+	local lvl = level(s)
+	local now = os.clock()
+	for idx = #s.cops, 1, -1 do
+		if not s.cops[idx].alive then
+			table.remove(s.cops, idx)
+		end
+	end
+	local speed = Session.CarSpeed(s)
+	local detect = lvl.detectRadius * (if s.hiding then 0.4 else 1)
+	local seen = false
+	local nearest = math.huge
+	for _, ai in s.cops do
+		local cp = ai.state.root.Position
+		local d = (cp - pos).Magnitude
+		nearest = math.min(nearest, d)
+		if not seen and canSee(cp, pos, if s.mode == "cooldown" then detect * 0.75 else detect) then
+			seen = true
+		end
+	end
+	local heli = s.heli
+	if heli and heli.PrimaryPart and not s.hiding then
+		local hp = heli.PrimaryPart.Position
+		if Vector3.new(hp.X - pos.X, 0, hp.Z - pos.Z).Magnitude < 220 then
+			seen = true
+		end
+	end
+	if seen then
+		s.lastSeen = pos
+	end
+
+	-- bust meter
+	if nearest < P.BustRadius and speed < P.BustSpeed then
+		s.bust = math.min(1, s.bust + dt / P.BustTime)
+	else
+		s.bust = math.max(0, s.bust - dt / 2)
+	end
+	if s.bust >= 1 then
+		busted(s)
+		return
+	end
+
+	local night = Session.NightMult()
+	if s.mode == "pursuit" then
+		s.pursuitTime += dt
+		local before = Session.HeatLevel(s)
+		s.heat = math.min(5, s.heat + dt * P.HeatPerMinute / 60 * night)
+		if Session.HeatLevel(s) > before then
+			Session.Notify(s.player, "HEAT LEVEL " .. Session.HeatLevel(s) .. "!", RED)
+		end
+		s.bounty += lvl.bountyPerSecond * dt * night
+		if seen then
+			s.evade = math.max(0, s.evade - dt * 1.5)
+		else
+			s.evade += dt / lvl.evadeTime
+			if s.evade >= 1 then
+				s.mode = "cooldown"
+				s.cooldown = 0
+				for _, ai in s.cops do
+					ai.data.mode = "search"
+					ai.data.searchGoal = s.lastSeen
+				end
+				Session.Notify(s.player, "Out of sight - lie low for COOLDOWN", BLUE)
+			end
+		end
+		if #s.cops < lvl.maxCops and now - s.lastCopSpawn > lvl.spawnInterval then
+			s.lastCopSpawn = now
+			spawnCopFor(s)
+		end
+		if lvl.roadblocks and now - s.lastRoadblock > P.RoadblockInterval then
+			s.lastRoadblock = now
+			spawnRoadblock(s)
+		end
+		if lvl.heli and not s.heli then
+			spawnHeli(s)
+		end
+	elseif s.mode == "cooldown" then
+		if seen then
+			s.mode = "pursuit"
+			s.evade = 0
+			for _, ai in s.cops do
+				ai.data.mode = "chase"
+			end
+			Session.Notify(s.player, "SPOTTED!  Pursuit resumed", RED)
+		else
+			s.cooldown += dt / lvl.cooldownTime * (if s.hiding then 3 else 1)
+			if s.cooldown >= 1 then
+				escaped(s)
+			end
+		end
+	end
+end
+
+local function maintainPatrols()
+	for idx = #patrols, 1, -1 do
+		if not patrols[idx].alive then
+			table.remove(patrols, idx)
+		end
+	end
+	local want = P.PatrolCount + math.floor(#Players:GetPlayers() / 2)
+	if #patrols >= want then
+		return
+	end
+	-- spawn away from every player
+	for _ = 1, 10 do
+		local i, j = math.random(0, Grid.Size), math.random(0, Grid.Size)
+		local p = Grid.Intersection(i, j)
+		local ok = true
+		for _, s in Session.All() do
+			local cp = Session.CarPosition(s)
+			if cp and (cp - p).Magnitude < 300 then
+				ok = false
+				break
+			end
+		end
+		if ok then
+			local look = Grid.Intersection(math.clamp(i + 1, 0, Grid.Size), j) - p
+			table.insert(patrols, spawnCop(p, look, false, "patrol", nil))
+			return
+		end
+	end
+end
+
+local function checkPatrolSpotting(s: Session.Session, pos: Vector3)
+	if s.race or s.atSafehouse or os.clock() < s.frozenUntil then
+		return
+	end
+	local speed = Session.CarSpeed(s)
+	local heatLvl = Session.HeatLevel(s)
+	local radius = P.SpotRadius + heatLvl * 20
+	for idx, ai in patrols do
+		if not ai.alive then
+			continue
+		end
+		local cp = ai.state.root.Position
+		if (heatLvl >= 1 or speed > P.SpeedLimit) and canSee(cp, pos, radius) then
+			local reason = if heatLvl >= 1
+				then "Known street racer spotted!"
+				else ("Speeding at " .. math.floor(speed * Config.MphPerStud) .. " MPH")
+			startPursuit(s, reason)
+			table.remove(patrols, idx)
+			ai.data.mode = "chase"
+			ai.data.session = s
+			ai.model:SetAttribute("Siren", true)
+			table.insert(s.cops, ai)
+			return
+		end
+	end
+end
+
+local function checkBreakers(s: Session.Session, pos: Vector3)
+	if s.mode == "idle" then
+		return
+	end
+	for _, b in mapInfo.breakers do
+		if b.armed and (Vector3.new(pos.X, b.position.Y, pos.Z) - b.position).Magnitude < 30 and Session.CarSpeed(s) > 45 then
+			MapBuilder.CollapseBreaker(b, pos)
+			local taken = 0
+			for _, ai in table.clone(AIDriver.All()) do
+				if ai.kind == "cop" and (ai.state.root.Position - b.position).Magnitude < 110 then
+					wreck(ai, nil)
+					taken += 1
+				end
+			end
+			s.bounty += Config.Bounty.PursuitBreaker * Session.NightMult()
+			s.copsWrecked += taken
+			s.bounty += taken * Config.Bounty.CopWrecked
+			Session.Notify(s.player, "PURSUIT BREAKER!  " .. taken .. " cops taken out", Color3.fromRGB(255, 160, 60))
+			task.delay(90, function()
+				MapBuilder.ResetBreaker(b)
+			end)
+		end
+	end
+end
+
+function Police.Init(info: MapBuilder.MapInfo)
+	mapInfo = info
+	AIDriver.SetBuildings(info.buildings)
+	task.spawn(function()
+		local last = os.clock()
+		while true do
+			task.wait(0.1)
+			local now = os.clock()
+			local dt = now - last
+			last = now
+			for _, s in Session.All() do
+				local pos = Session.CarPosition(s)
+				if not pos then
+					continue
+				end
+				s.hiding = inHiding(pos)
+				local ok, err = pcall(function()
+					if s.mode == "idle" then
+						checkPatrolSpotting(s, pos)
+					else
+						updatePursuit(s, pos, dt)
+						checkBreakers(s, pos)
+					end
+				end)
+				if not ok then
+					warn("[Police] update error:", err)
+				end
+			end
+			maintainPatrols()
+		end
+	end)
+end
+
+function Police.SetBustedCallback(fn: (s: Session.Session) -> ())
+	onBusted = fn
+end
+
+function Police.Cleanup(s: Session.Session)
+	endPursuit(s)
+end
+
+return Police
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000B"><Properties><string name="Name">Races</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Street races (Unbound buy-in style) and Blacklist challenges (Most Wanted style).
+
+local Debris = game:GetService("Debris")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared:WaitForChild("Config"))
+local Grid = require(Shared:WaitForChild("Grid"))
+local AIDriver = require(script.Parent.AIDriver)
+local CarBuilder = require(script.Parent.CarBuilder)
+local Session = require(script.Parent.Session)
+local Vehicles = require(script.Parent.Vehicles)
+
+local Races = {}
+
+type Racer = {
+	name: string,
+	ai: AIDriver.AI?,
+	cp: number, -- index of next checkpoint
+	finished: boolean,
+	place: number?,
+}
+
+type Race = {
+	def: Config.RaceDef,
+	session: Session.Session,
+	checkpoints: { Vector3 },
+	perLap: number,
+	racers: { Racer },
+	player: Racer,
+	state: string, -- "countdown" | "racing" | "done"
+	startTime: number,
+	finishedCount: number,
+	rival: Config.Rival?,
+	driftScore: number,
+	folder: Folder,
+}
+
+local racesFolder = Instance.new("Folder")
+racesFolder.Name = "Races"
+racesFolder.Parent = workspace
+
+local GOLD = Color3.fromRGB(255, 215, 60)
+local RIVAL_NAMES = { "Jax", "Mika", "Dre", "Suki", "Blaze", "Rook", "Zee", "Kai", "Nitro Nell", "Vex" }
+
+local function setAttrs(player: Player, attrs: { [string]: any })
+	for k, v in attrs do
+		player:SetAttribute(k, v)
+	end
+end
+
+local function clearAttrs(player: Player)
+	setAttrs(player, {
+		RaceActive = false,
+		RaceName = "",
+		RaceKind = "",
+		RacePos = 0,
+		RaceRacers = 0,
+		RaceCP = 0,
+		RaceCPTotal = 0,
+		RaceLap = 0,
+		RaceLaps = 0,
+		RaceTime = 0,
+		RaceCountdown = -1,
+		RaceNext = Vector3.zero,
+		RaceScore = 0,
+		RaceTarget = 0,
+	})
+end
+
+local function buildCheckpoints(def: Config.RaceDef): ({ Vector3 }, number)
+	local route = {}
+	for _, p in def.route do
+		table.insert(route, Grid.Intersection(p[1], p[2]))
+	end
+	local lap = {}
+	for k = 2, #route do
+		table.insert(lap, route[k])
+	end
+	if def.kind == "circuit" then
+		table.insert(lap, route[1])
+	end
+	local cps = {}
+	local laps = if def.kind == "circuit" then def.laps else 1
+	for _ = 1, laps do
+		for _, p in lap do
+			table.insert(cps, p)
+		end
+	end
+	return cps, #lap
+end
+
+local function progress(race: Race, racer: Racer, pos: Vector3): number
+	if racer.finished then
+		return 1e9 - (racer.place or 0)
+	end
+	local nextCp = race.checkpoints[racer.cp]
+	return racer.cp * 10000 - (nextCp - pos).Magnitude
+end
+
+local function racerPos(race: Race, racer: Racer): Vector3?
+	if racer.ai then
+		local ai = racer.ai :: AIDriver.AI
+		if ai.alive and ai.model.PrimaryPart then
+			return ai.model.PrimaryPart.Position
+		end
+		return nil
+	end
+	return Session.CarPosition(race.session)
+end
+
+local function cleanup(race: Race)
+	for _, r in race.racers do
+		if r.ai then
+			local ai = r.ai :: AIDriver.AI
+			AIDriver.Remove(ai)
+			Debris:AddItem(ai.model, 3)
+		end
+	end
+	Debris:AddItem(race.folder, 3)
+	race.session.race = nil
+	clearAttrs(race.session.player)
+end
+
+local function finishPlayer(race: Race, place: number?)
+	local s = race.session
+	local def = race.def
+	race.state = "done"
+	local night = Session.NightMult()
+	local heatMult = Session.HeatPayoutMult(s)
+	if def.kind == "drift" then
+		local target = def.driftTarget or 1
+		if race.driftScore >= target then
+			local ratio = math.min(race.driftScore / target, 2)
+			local payout = def.reward * ratio * night * heatMult
+			s.profile.racesWon += 1
+			Session.Notify(s.player, "DRIFT EVENT COMPLETE!  Score " .. math.floor(race.driftScore), GOLD)
+			Session.AddUnbanked(s, payout, def.name .. " winnings")
+		else
+			Session.Notify(s.player, "Drift target missed (" .. math.floor(race.driftScore) .. "/" .. target .. ")", Color3.fromRGB(255, 90, 90))
+		end
+	elseif place then
+		local frac = Config.PlacePayout[place] or 0
+		if race.rival then
+			local rival = race.rival :: Config.Rival
+			if place == 1 then
+				s.profile.blacklistBeaten = math.max(s.profile.blacklistBeaten, 6 - rival.rank)
+				s.profile.racesWon += 1
+				s.profile.owned[rival.carId] = true
+				local carDef = Config.GetCar(rival.carId)
+				Session.Notify(s.player, "BLACKLIST #" .. rival.rank .. " " .. string.upper(rival.name) .. " DEFEATED!", GOLD)
+				Session.Notify(s.player, "PINK SLIP: " .. (if carDef then carDef.name else rival.carId) .. " is now in your garage", GOLD)
+				Session.AddUnbanked(s, rival.reward, "Blacklist reward")
+			else
+				Session.Notify(s.player, string.upper(rival.name) .. " beat you. Try again!", Color3.fromRGB(255, 90, 90))
+			end
+		else
+			if place == 1 then
+				s.profile.racesWon += 1
+				Session.Notify(s.player, "1ST PLACE!  " .. def.name, GOLD)
+			else
+				Session.Notify(s.player, "Finished " .. place .. (if place == 2 then "nd" elseif place == 3 then "rd" else "th"), Color3.new(1, 1, 1))
+			end
+			if frac > 0 then
+				Session.AddUnbanked(s, (def.reward + def.buyIn) * frac * night * heatMult, def.name .. " winnings")
+			end
+		end
+	else
+		Session.Notify(s.player, "Race abandoned", Color3.fromRGB(255, 90, 90))
+	end
+	if place or def.kind == "drift" then
+		local before = Session.HeatLevel(s)
+		s.heat = math.min(5, s.heat + def.heat * night)
+		if Session.HeatLevel(s) > before then
+			Session.Notify(s.player, "Your HEAT is now level " .. Session.HeatLevel(s) .. " - bigger payouts, angrier cops", Color3.fromRGB(255, 70, 70))
+		end
+	end
+	cleanup(race)
+end
+
+local function rivalThink(race: Race, racer: Racer)
+	return function(ai: AIDriver.AI, _dt: number)
+		if race.state ~= "racing" or racer.finished then
+			ai.input.throttle = 0
+			ai.input.handbrake = true
+			ai.input.steer = 0
+			return
+		end
+		local target = race.checkpoints[racer.cp]
+		-- rubber band against the player
+		local pos = ai.state.root.Position
+		local ppos = Session.CarPosition(race.session)
+		local mult = 1
+		if ppos then
+			local diff = progress(race, racer, pos) - progress(race, race.player, ppos)
+			if diff > 250 then
+				mult = 0.86
+			elseif diff < -250 then
+				mult = 1.14
+			end
+		end
+		ai.state.speedMult = mult
+		ai.input.nitro = mult > 1
+		AIDriver.DriveTo(ai, target)
+	end
+end
+
+function Races.Start(s: Session.Session, def: Config.RaceDef, rival: Config.Rival?): (boolean, string)
+	if s.race then
+		return false, "Already racing"
+	end
+	if s.mode ~= "idle" then
+		return false, "Lose the cops first!"
+	end
+	if not s.car then
+		return false, "No car"
+	end
+	if s.profile.cash < def.buyIn then
+		return false, "Not enough cash for the $" .. def.buyIn .. " buy-in"
+	end
+	s.profile.cash -= def.buyIn
+
+	local checkpoints, perLap = buildCheckpoints(def)
+	local folder = Instance.new("Folder")
+	folder.Name = s.player.Name .. "_Race"
+	folder.Parent = racesFolder
+
+	local playerRacer: Racer = { name = s.player.DisplayName, ai = nil, cp = 1, finished = false }
+	local race: Race = {
+		def = def,
+		session = s,
+		checkpoints = checkpoints,
+		perLap = perLap,
+		racers = { playerRacer },
+		player = playerRacer,
+		state = "countdown",
+		startTime = 0,
+		finishedCount = 0,
+		rival = rival,
+		driftScore = 0,
+		folder = folder,
+	}
+	s.race = race
+
+	-- starting grid, placed along the first segment of the route
+	local first = def.route[1]
+	local startPos = Grid.Intersection(first[1], first[2])
+	local dir
+	if #def.route > 1 then
+		local second = def.route[2]
+		dir = (Grid.Intersection(second[1], second[2]) - startPos).Unit
+	else
+		dir = -Vector3.zAxis
+	end
+	local right = dir:Cross(Vector3.yAxis)
+	local function slot(k: number): CFrame
+		local row = math.floor(k / 2)
+		local side = if k % 2 == 0 then -11 else 11
+		local p = startPos + dir * (70 - row * 22) + right * side
+		return CFrame.lookAt(p, p + dir)
+	end
+
+	Vehicles.Spawn(s, slot(if def.kind == "drift" then 0 else 2))
+	Vehicles.Freeze(s, 3.2)
+
+	local rivals = if rival then 1 else def.rivals
+	local slotOrder = { 0, 1, 3, 4, 5 }
+	for k = 1, rivals do
+		local carDef
+		local name
+		local speed = def.rivalSpeed
+		if rival then
+			carDef = Config.GetCar(rival.carId)
+			name = "#" .. rival.rank .. " " .. rival.name
+			speed = rival.speed
+		else
+			carDef = Config.Cars[math.random(1, 5)]
+			name = RIVAL_NAMES[math.random(1, #RIVAL_NAMES)]
+		end
+		assert(carDef, "rival car missing")
+		local model = CarBuilder.Build({
+			style = carDef.style,
+			color = carDef.color,
+			name = "Rival_" .. name,
+			effectColor = Config.DrivingEffects[math.random(1, #Config.DrivingEffects)].color,
+			label = name,
+		})
+		local cf = slot(slotOrder[k])
+		model:PivotTo(Vehicles.GroundCFrame(cf, model))
+		model.Parent = folder
+		local root = model.PrimaryPart :: BasePart
+		root.Anchored = true
+		local racer: Racer = { name = name, ai = nil, cp = 1, finished = false }
+		local stats = {
+			maxSpeed = speed,
+			accel = carDef.accel * (speed / carDef.maxSpeed),
+			brake = carDef.brake,
+			turn = carDef.turn,
+			grip = carDef.grip + 1,
+			nitroMult = 1.15,
+		}
+		racer.ai = AIDriver.Add(model, stats, "rival", rivalThink(race, racer))
+		table.insert(race.racers, racer)
+	end
+
+	setAttrs(s.player, {
+		RaceActive = true,
+		RaceName = if rival then ("BLACKLIST #" .. rival.rank .. " vs " .. rival.name) else def.name,
+		RaceKind = def.kind,
+		RaceRacers = #race.racers,
+		RaceCP = 0,
+		RaceCPTotal = #checkpoints,
+		RaceLap = 1,
+		RaceLaps = if def.kind == "circuit" then def.laps else 1,
+		RaceTime = 0,
+		RaceNext = checkpoints[1] or startPos,
+		RaceScore = 0,
+		RaceTarget = def.driftTarget or 0,
+	})
+
+	task.spawn(function()
+		for n = 3, 1, -1 do
+			if s.race ~= race then
+				return
+			end
+			s.player:SetAttribute("RaceCountdown", n)
+			task.wait(1)
+		end
+		if s.race ~= race then
+			return
+		end
+		s.player:SetAttribute("RaceCountdown", 0)
+		race.state = "racing"
+		race.startTime = os.clock()
+		for _, r in race.racers do
+			if r.ai then
+				(r.ai :: AIDriver.AI).state.root.Anchored = false
+				pcall(function()
+					((r.ai :: AIDriver.AI).state.root :: BasePart):SetNetworkOwner(nil)
+				end)
+			end
+		end
+		task.delay(1, function()
+			if s.race == race then
+				s.player:SetAttribute("RaceCountdown", -1)
+			end
+		end)
+	end)
+
+	return true, "Race started"
+end
+
+function Races.Cancel(s: Session.Session)
+	local race = s.race
+	if race then
+		finishPlayer(race, nil)
+	end
+end
+
+-- Called every 0.1s from the main loop
+function Races.Update(s: Session.Session, driftGain: number)
+	local race = s.race :: Race?
+	if not race or race.state ~= "racing" then
+		return
+	end
+	local elapsed = os.clock() - race.startTime
+	local player = s.player
+	player:SetAttribute("RaceTime", elapsed)
+
+	if race.def.kind == "drift" then
+		race.driftScore += driftGain
+		player:SetAttribute("RaceScore", math.floor(race.driftScore))
+		local left = (race.def.duration or 60) - elapsed
+		player:SetAttribute("RaceTimeLeft", left)
+		if left <= 0 then
+			finishPlayer(race, 1)
+		end
+		return
+	end
+
+	for _, r in race.racers do
+		if r.finished then
+			continue
+		end
+		local pos = racerPos(race, r)
+		if not pos then
+			continue
+		end
+		local cp = race.checkpoints[r.cp]
+		if Vector3.new(pos.X - cp.X, 0, pos.Z - cp.Z).Magnitude < 38 then
+			r.cp += 1
+			if r.cp > #race.checkpoints then
+				r.finished = true
+				race.finishedCount += 1
+				r.place = race.finishedCount
+				if r == race.player then
+					finishPlayer(race, r.place)
+					return
+				end
+			end
+		end
+	end
+
+	-- standings
+	local ppos = Session.CarPosition(s)
+	if ppos then
+		local mine = progress(race, race.player, ppos)
+		local place = 1
+		for _, r in race.racers do
+			if r ~= race.player then
+				local p = racerPos(race, r)
+				if p and progress(race, r, p) > mine then
+					place += 1
+				end
+			end
+		end
+		player:SetAttribute("RacePos", place)
+	end
+	player:SetAttribute("RaceCP", race.player.cp - 1)
+	player:SetAttribute("RaceLap", math.min(math.floor((race.player.cp - 1) / race.perLap) + 1, player:GetAttribute("RaceLaps") :: number))
+	player:SetAttribute("RaceNext", race.checkpoints[race.player.cp] or Vector3.zero)
+
+	if elapsed > 300 then
+		Session.Notify(player, "Time's up!", Color3.fromRGB(255, 90, 90))
+		finishPlayer(race, nil)
+	end
+end
+
+-- Build a RaceDef for a Blacklist rival.
+function Races.RivalDef(rival: Config.Rival): Config.RaceDef
+	return {
+		id = "blacklist_" .. rival.rank,
+		name = "Blacklist #" .. rival.rank .. ": " .. rival.name,
+		kind = if rival.laps > 1 then "circuit" else "sprint",
+		route = rival.route,
+		laps = rival.laps,
+		buyIn = 0,
+		reward = 0,
+		heat = 1,
+		rivals = 1,
+		rivalSpeed = rival.speed,
+	}
+end
+
+return Races
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000C"><Properties><string name="Name">Session</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Runtime (non-saved) state for every player in the server, plus money helpers.
+
+local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local PlayerData = require(script.Parent.PlayerData)
+
+local Session = {}
+
+export type Session = {
+	player: Player,
+	profile: PlayerData.Profile,
+	car: Model?,
+	stats: Config.Stats?,
+	unbanked: number,
+	heat: number,
+	mode: string, -- "idle" | "pursuit" | "cooldown"
+	evade: number,
+	cooldown: number,
+	bust: number,
+	bounty: number,
+	pursuitTime: number,
+	copsWrecked: number,
+	cops: { any },
+	lastSeen: Vector3?,
+	lastCopSpawn: number,
+	lastRoadblock: number,
+	heli: Model?,
+	race: any?,
+	driftCombo: number,
+	driftIdle: number,
+	camCooldown: { [number]: number },
+	atSafehouse: boolean,
+	hiding: boolean,
+	frozenUntil: number,
+}
+
+local sessions: { [Player]: Session } = {}
+local remotes: Folder? = nil
+
+function Session.SetRemotes(folder: Folder)
+	remotes = folder
+end
+
+function Session.Create(player: Player, profile: PlayerData.Profile): Session
+	local s: Session = {
+		player = player,
+		profile = profile,
+		car = nil,
+		stats = nil,
+		unbanked = 0,
+		heat = 0,
+		mode = "idle",
+		evade = 0,
+		cooldown = 0,
+		bust = 0,
+		bounty = 0,
+		pursuitTime = 0,
+		copsWrecked = 0,
+		cops = {},
+		lastSeen = nil,
+		lastCopSpawn = 0,
+		lastRoadblock = 0,
+		heli = nil,
+		race = nil,
+		driftCombo = 0,
+		driftIdle = 0,
+		camCooldown = {},
+		atSafehouse = false,
+		hiding = false,
+		frozenUntil = 0,
+	}
+	sessions[player] = s
+	return s
+end
+
+function Session.Get(player: Player): Session?
+	return sessions[player]
+end
+
+function Session.Remove(player: Player)
+	sessions[player] = nil
+end
+
+function Session.All(): { [Player]: Session }
+	return sessions
+end
+
+function Session.IsNight(): boolean
+	return Config.IsNight(Lighting.ClockTime)
+end
+
+function Session.NightMult(): number
+	return if Session.IsNight() then Config.NightMultiplier else 1
+end
+
+function Session.HeatLevel(s: Session): number
+	return math.clamp(math.floor(s.heat), 0, 5)
+end
+
+-- Unbound: higher heat = bigger race payouts
+function Session.HeatPayoutMult(s: Session): number
+	return 1 + 0.25 * Session.HeatLevel(s)
+end
+
+function Session.Notify(player: Player, text: string, color: Color3?)
+	if not remotes then
+		return
+	end
+	local ev = (remotes :: Folder):FindFirstChild("Notify") :: RemoteEvent?
+	if ev then
+		ev:FireClient(player, text, color or Color3.new(1, 1, 1))
+	end
+end
+
+function Session.Sync(s: Session)
+	local p = s.player
+	p:SetAttribute("Cash", s.profile.cash)
+	p:SetAttribute("Unbanked", math.floor(s.unbanked))
+	p:SetAttribute("Heat", s.heat)
+	p:SetAttribute("PursuitMode", s.mode)
+	p:SetAttribute("Evade", s.evade)
+	p:SetAttribute("Cooldown", s.cooldown)
+	p:SetAttribute("Bust", s.bust)
+	p:SetAttribute("Bounty", math.floor(s.bounty))
+	p:SetAttribute("TotalBounty", s.profile.totalBounty)
+	p:SetAttribute("RacesWon", s.profile.racesWon)
+	p:SetAttribute("BlacklistBeaten", s.profile.blacklistBeaten)
+	p:SetAttribute("DriftCombo", math.floor(s.driftCombo))
+	p:SetAttribute("AtSafehouse", s.atSafehouse)
+	p:SetAttribute("Hiding", s.hiding)
+	p:SetAttribute("Night", Session.IsNight())
+	local ls = p:FindFirstChild("leaderstats")
+	if ls then
+		local cash = ls:FindFirstChild("Cash") :: IntValue?
+		local bounty = ls:FindFirstChild("Bounty") :: IntValue?
+		local heat = ls:FindFirstChild("Heat") :: IntValue?
+		if cash then
+			cash.Value = s.profile.cash
+		end
+		if bounty then
+			bounty.Value = s.profile.totalBounty
+		end
+		if heat then
+			heat.Value = Session.HeatLevel(s)
+		end
+	end
+end
+
+function Session.AddUnbanked(s: Session, amount: number, reason: string)
+	amount = math.floor(amount)
+	if amount <= 0 then
+		return
+	end
+	s.unbanked += amount
+	Session.Notify(s.player, reason .. "  +$" .. amount, Color3.fromRGB(255, 200, 60))
+end
+
+function Session.CarSpeed(s: Session): number
+	local car = s.car
+	if car and car.PrimaryPart then
+		return car.PrimaryPart.AssemblyLinearVelocity.Magnitude
+	end
+	return 0
+end
+
+function Session.CarPosition(s: Session): Vector3?
+	local car = s.car
+	if car and car.PrimaryPart and car.Parent then
+		return car.PrimaryPart.Position
+	end
+	return nil
+end
+
+return Session
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000D"><Properties><string name="Name">Vehicles</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Spawns, refreshes and resets player cars.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared:WaitForChild("Config"))
+local Grid = require(Shared:WaitForChild("Grid"))
+local CarBuilder = require(script.Parent.CarBuilder)
+local PlayerData = require(script.Parent.PlayerData)
+local Session = require(script.Parent.Session)
+
+local Vehicles = {}
+
+local carsFolder = Instance.new("Folder")
+carsFolder.Name = "Cars"
+carsFolder.Parent = workspace
+Vehicles.Folder = carsFolder
+
+local safehouseSpawns: { CFrame } = {}
+local spawnIndex = 0
+
+function Vehicles.SetSpawns(spawns: { CFrame })
+	safehouseSpawns = spawns
+end
+
+function Vehicles.NextSafehouseSpawn(): CFrame
+	spawnIndex = spawnIndex % math.max(#safehouseSpawns, 1) + 1
+	return safehouseSpawns[spawnIndex] or CFrame.new(0, 5, 0)
+end
+
+-- Chassis-centre CFrame for a car standing on the ground at `ground`.
+function Vehicles.GroundCFrame(ground: CFrame, car: Model): CFrame
+	local root = car.PrimaryPart :: BasePart
+	return ground + Vector3.new(0, root.Size.Y / 2 + 0.4, 0)
+end
+
+local function seatCharacter(s: Session.Session)
+	local car = s.car
+	local character = s.player.Character
+	if not car or not character then
+		return
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local seat = car:FindFirstChild("DriverSeat") :: VehicleSeat?
+	if humanoid and seat and humanoid.Health > 0 then
+		if seat.Occupant ~= humanoid then
+			local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+			if hrp then
+				character:PivotTo(seat.CFrame + Vector3.new(0, 3, 0))
+			end
+			seat:Sit(humanoid)
+		end
+	end
+end
+Vehicles.SeatCharacter = seatCharacter
+
+function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
+	local profile = s.profile
+	local def = Config.GetCar(profile.selected) or Config.GetCar(Config.StarterCar)
+	assert(def, "starter car missing")
+	local ground = groundCFrame
+	if not ground then
+		local old = s.car
+		if old and old.PrimaryPart and old.Parent then
+			local p = old.PrimaryPart.Position
+			local look = old.PrimaryPart.CFrame.LookVector
+			local flatLook = Vector3.new(look.X, 0, look.Z)
+			if flatLook.Magnitude < 0.1 then
+				flatLook = -Vector3.zAxis
+			end
+			local gp = Vector3.new(p.X, Grid.RoadY, p.Z)
+			ground = CFrame.lookAt(gp, gp + flatLook.Unit)
+		else
+			ground = Vehicles.NextSafehouseSpawn()
+		end
+	end
+
+	if s.car then
+		s.car:Destroy()
+		s.car = nil
+	end
+
+	local paintIndex = profile.paint[def.id]
+	local color = if paintIndex then Config.PaintColors[paintIndex] or def.color else def.color
+	local effect = Config.GetEffect(profile.effect)
+	local stats = Config.ComputeStats(def, PlayerData.Upgrades(profile, def.id))
+
+	local car = CarBuilder.Build({
+		style = def.style,
+		color = color,
+		name = s.player.Name .. "_Car",
+		seat = true,
+		effectColor = effect.color,
+		label = s.player.DisplayName,
+	})
+	car:SetAttribute("Owner", s.player.UserId)
+	car:SetAttribute("CarId", def.id)
+	car:SetAttribute("CarName", def.name)
+	for k, v in stats :: any do
+		car:SetAttribute(k, v)
+	end
+	car:PivotTo(Vehicles.GroundCFrame(ground :: CFrame, car))
+	car.Parent = carsFolder
+	s.car = car
+	s.stats = stats
+
+	local root = car.PrimaryPart :: BasePart
+	pcall(function()
+		root:SetNetworkOwner(s.player)
+	end)
+	seatCharacter(s)
+	return car
+end
+
+-- Respawn the car upright on the closest road, facing along it.
+function Vehicles.ResetToRoad(s: Session.Session)
+	local pos = Session.CarPosition(s)
+	if not pos then
+		Vehicles.Spawn(s, Vehicles.NextSafehouseSpawn())
+		return
+	end
+	local snapped = Grid.SnapToRoad(pos)
+	local i, j = Grid.NearestIntersection(snapped)
+	local ix = Grid.Intersection(i, j)
+	local dir
+	if math.abs(snapped.X - ix.X) < 1 and math.abs(snapped.Z - ix.Z) >= 1 then
+		dir = Vector3.new(0, 0, math.sign(snapped.Z - ix.Z))
+	else
+		dir = Vector3.new(math.sign(snapped.X - ix.X), 0, 0)
+	end
+	if dir.Magnitude < 0.5 then
+		dir = -Vector3.zAxis
+	end
+	-- keep the heading the car had if it was roughly aligned
+	local car = s.car :: Model
+	local look = (car.PrimaryPart :: BasePart).CFrame.LookVector
+	if look:Dot(dir) < 0 then
+		dir = -dir
+	end
+	Vehicles.Spawn(s, CFrame.lookAt(snapped, snapped + dir))
+end
+
+function Vehicles.Freeze(s: Session.Session, seconds: number)
+	local car = s.car
+	if not car or not car.PrimaryPart then
+		return
+	end
+	local root = car.PrimaryPart
+	root.Anchored = true
+	s.frozenUntil = os.clock() + seconds
+	task.delay(seconds, function()
+		if s.car == car and root.Parent and os.clock() >= s.frozenUntil - 0.05 then
+			root.Anchored = false
+			pcall(function()
+				root:SetNetworkOwner(s.player)
+			end)
+		end
+	end)
+end
+
+return Vehicles
+]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX00000000000000000000000000000019"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX00000000000000000000000000000014"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000013"><Properties><string name="Name">Client</string></Properties><Item class="ModuleScript" referent="RBX0000000000000000000000000000000F"><Properties><string name="Name">DriveController</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Drives the local player's car: input, arcade physics (we own the car's physics),
+-- nitro, drift smoke and the chase camera.
+
+local ContextActionService = game:GetService("ContextActionService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local CarPhysics = require(Shared:WaitForChild("CarPhysics"))
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local NitroState = Remotes:WaitForChild("NitroState") :: RemoteEvent
+local RespawnCar = Remotes:WaitForChild("RespawnCar") :: RemoteEvent
+
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+
+local Drive = {}
+
+Drive.Car = nil :: Model?
+Drive.State = nil :: CarPhysics.State?
+Drive.Speed = 0
+Drive.Nitro = 1
+Drive.NitroCapacity = 1
+Drive.NitroOn = false
+Drive.Drifting = false
+
+local seat: VehicleSeat? = nil
+local handbrake = false
+local nitroHeld = false
+local keyThrottle = 0
+local keySteer = 0
+local sentNitro = false
+local camPos: Vector3? = nil
+local camLook: Vector3? = nil
+
+local function stat(car: Model, name: string, default: number): number
+	local v = car:GetAttribute(name)
+	return if type(v) == "number" then v else default
+end
+
+local function setNitroVisual(on: boolean)
+	if on ~= sentNitro then
+		sentNitro = on
+		NitroState:FireServer(on)
+	end
+end
+
+local function attach(newSeat: VehicleSeat?)
+	seat = nil
+	Drive.Car = nil
+	Drive.State = nil
+	if not newSeat or newSeat.Name ~= "DriverSeat" then
+		return
+	end
+	local car = newSeat.Parent
+	if not car or not car:IsA("Model") or car:GetAttribute("Owner") ~= player.UserId then
+		return
+	end
+	seat = newSeat
+	Drive.Car = car
+	local state = CarPhysics.NewState(car)
+	if player.Character then
+		CarPhysics.SetIgnore(state, { player.Character })
+	end
+	Drive.State = state
+	Drive.NitroCapacity = stat(car, "nitroCapacity", 1)
+	Drive.Nitro = math.min(Drive.Nitro, Drive.NitroCapacity)
+	camPos = nil
+end
+
+local function onCharacter(character: Model)
+	local humanoid = character:WaitForChild("Humanoid") :: Humanoid
+	humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+	humanoid.Seated:Connect(function(active, seatPart)
+		if active and seatPart and seatPart:IsA("VehicleSeat") then
+			attach(seatPart)
+		else
+			attach(nil)
+		end
+	end)
+	if humanoid.SeatPart and humanoid.SeatPart:IsA("VehicleSeat") then
+		attach(humanoid.SeatPart)
+	end
+end
+
+player.CharacterAdded:Connect(onCharacter)
+if player.Character then
+	task.spawn(onCharacter, player.Character)
+end
+
+---------------------------------------------------------------------------
+-- Input
+---------------------------------------------------------------------------
+local function handleHandbrake(_name: string, inputState: Enum.UserInputState, _obj: InputObject)
+	handbrake = inputState == Enum.UserInputState.Begin
+	return if Drive.Car then Enum.ContextActionResult.Sink else Enum.ContextActionResult.Pass
+end
+
+local function handleNitro(_name: string, inputState: Enum.UserInputState, _obj: InputObject)
+	nitroHeld = inputState == Enum.UserInputState.Begin
+	return Enum.ContextActionResult.Sink
+end
+
+local function handleReset(_name: string, inputState: Enum.UserInputState, _obj: InputObject)
+	if inputState == Enum.UserInputState.Begin then
+		RespawnCar:FireServer()
+	end
+	return Enum.ContextActionResult.Sink
+end
+
+ContextActionService:BindActionAtPriority("WU_Handbrake", handleHandbrake, true, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Space, Enum.KeyCode.ButtonX)
+ContextActionService:BindActionAtPriority("WU_Nitro", handleNitro, true, Enum.ContextActionPriority.High.Value, Enum.KeyCode.LeftShift, Enum.KeyCode.ButtonA)
+ContextActionService:BindActionAtPriority("WU_Reset", handleReset, true, Enum.ContextActionPriority.High.Value, Enum.KeyCode.R, Enum.KeyCode.ButtonY)
+ContextActionService:SetTitle("WU_Handbrake", "DRIFT")
+ContextActionService:SetTitle("WU_Nitro", "NOS")
+ContextActionService:SetTitle("WU_Reset", "RESET")
+pcall(function()
+	ContextActionService:SetPosition("WU_Nitro", UDim2.new(1, -170, 1, -170))
+	ContextActionService:SetPosition("WU_Handbrake", UDim2.new(1, -95, 1, -230))
+	ContextActionService:SetPosition("WU_Reset", UDim2.new(1, -95, 0, 80))
+end)
+
+-- Fallback keyboard reading in case the default vehicle controls are disabled.
+local function readKeys()
+	if UserInputService:GetFocusedTextBox() then
+		keyThrottle, keySteer = 0, 0
+		return
+	end
+	local t, s = 0, 0
+	if UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.Up) then
+		t += 1
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.S) or UserInputService:IsKeyDown(Enum.KeyCode.Down) then
+		t -= 1
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.D) or UserInputService:IsKeyDown(Enum.KeyCode.Right) then
+		s += 1
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.Left) then
+		s -= 1
+	end
+	keyThrottle, keySteer = t, s
+end
+
+---------------------------------------------------------------------------
+-- Physics (runs before each physics step)
+---------------------------------------------------------------------------
+RunService.PreSimulation:Connect(function(dt: number)
+	local car = Drive.Car
+	local state = Drive.State
+	local s = seat
+	if not car or not state or not s or not car.Parent or not car.PrimaryPart then
+		Drive.Speed = 0
+		setNitroVisual(false)
+		return
+	end
+	readKeys()
+	local throttle = s.ThrottleFloat
+	local steer = s.SteerFloat
+	if math.abs(keyThrottle) > math.abs(throttle) then
+		throttle = keyThrottle
+	end
+	if math.abs(keySteer) > math.abs(steer) then
+		steer = keySteer
+	end
+
+	local capacity = stat(car, "nitroCapacity", 1)
+	Drive.NitroCapacity = capacity
+	local nitroOn = nitroHeld and Drive.Nitro > 0.02 and throttle > 0
+	if nitroOn then
+		Drive.Nitro = math.max(0, Drive.Nitro - dt * 0.3)
+	end
+	Drive.NitroOn = nitroOn
+	setNitroVisual(nitroOn)
+
+	local stats: CarPhysics.Stats = {
+		maxSpeed = stat(car, "maxSpeed", 130),
+		accel = stat(car, "accel", 40),
+		brake = stat(car, "brake", 90),
+		turn = stat(car, "turn", 2.3),
+		grip = stat(car, "grip", 6),
+		nitroMult = stat(car, "nitroMult", 1.3),
+	}
+	CarPhysics.Step(state, { throttle = throttle, steer = steer, handbrake = handbrake, nitro = nitroOn }, stats, dt)
+
+	local speed = state.root.AssemblyLinearVelocity.Magnitude
+	Drive.Speed = speed
+	local drifting = state.grounded and math.abs(state.lateral) > 12 and speed > 35
+	Drive.Drifting = drifting
+
+	-- Unbound style nitro refill: drifting, airtime and raw speed all earn boost
+	if not nitroOn then
+		local gain = 0.01
+		if drifting then
+			gain += 0.22
+		end
+		if not state.grounded and state.airTime > 0.3 then
+			gain += 0.35
+		end
+		if speed > 110 then
+			gain += 0.03
+		end
+		Drive.Nitro = math.min(capacity, Drive.Nitro + gain * dt)
+	end
+
+	local smokeAtt = state.root:FindFirstChild("Smoke")
+	local smoke = smokeAtt and smokeAtt:FindFirstChild("DriftSmoke") :: ParticleEmitter?
+	if smoke then
+		smoke.Enabled = drifting
+	end
+end)
+
+---------------------------------------------------------------------------
+-- Chase camera
+---------------------------------------------------------------------------
+RunService:BindToRenderStep("WU_ChaseCam", Enum.RenderPriority.Camera.Value + 1, function(dt)
+	local car = Drive.Car
+	local root = car and car.PrimaryPart
+	if not car or not root then
+		if camera.CameraType == Enum.CameraType.Scriptable then
+			camera.CameraType = Enum.CameraType.Custom
+		end
+		return
+	end
+	camera.CameraType = Enum.CameraType.Scriptable
+	local cf = root.CFrame
+	local vel = root.AssemblyLinearVelocity
+	local flatLook = Vector3.new(cf.LookVector.X, 0, cf.LookVector.Z)
+	if flatLook.Magnitude < 0.1 then
+		flatLook = -Vector3.zAxis
+	end
+	flatLook = flatLook.Unit
+	-- blend towards travel direction when drifting fast, like arcade racers
+	local flatVel = Vector3.new(vel.X, 0, vel.Z)
+	local dir = flatLook
+	if flatVel.Magnitude > 30 and flatVel.Unit:Dot(flatLook) > 0 then
+		dir = flatLook:Lerp(flatVel.Unit, 0.35).Unit
+	end
+	local speed = vel.Magnitude
+	local back = 20 + math.clamp(speed / 12, 0, 8)
+	local height = 7 + math.clamp(speed / 50, 0, 2)
+	local desired = root.Position - dir * back + Vector3.new(0, height, 0)
+	local lookAt = root.Position + dir * 12 + Vector3.new(0, 2.5, 0)
+	local alpha = 1 - math.exp(-dt * 10)
+	camPos = if camPos then (camPos :: Vector3):Lerp(desired, alpha) else desired
+	camLook = if camLook then (camLook :: Vector3):Lerp(lookAt, alpha) else lookAt
+
+	-- keep the camera out of buildings
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local ignore: { Instance } = { car }
+	if player.Character then
+		table.insert(ignore, player.Character)
+	end
+	params.FilterDescendantsInstances = ignore
+	local from = root.Position + Vector3.new(0, 3, 0)
+	local hit = workspace:Raycast(from, (camPos :: Vector3) - from, params)
+	local finalPos = camPos :: Vector3
+	if hit then
+		finalPos = hit.Position + (from - hit.Position).Unit * 1.5
+	end
+	camera.CFrame = CFrame.lookAt(finalPos, camLook :: Vector3)
+	local targetFov = 70 + math.clamp(speed / 6, 0, 22) + (if Drive.NitroOn then 10 else 0)
+	camera.FieldOfView += (targetFov - camera.FieldOfView) * math.min(1, dt * 4)
+end)
+
+return Drive
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000010"><Properties><string name="Name">Garage</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Safehouse garage: buy / select cars, upgrades, paint, driving effects and the Blacklist.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared:WaitForChild("Config"))
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local Shop = Remotes:WaitForChild("Shop") :: RemoteFunction
+local ChallengeRival = Remotes:WaitForChild("ChallengeRival") :: RemoteEvent
+
+local HUD = require(script.Parent.HUD)
+
+local Garage = {}
+Garage.Open = false
+Garage.Toggle = function(_open: boolean?) end
+
+local PINK = Color3.fromRGB(255, 40, 160)
+local CYAN = Color3.fromRGB(0, 240, 255)
+local PANEL = Color3.fromRGB(16, 16, 26)
+local CARD = Color3.fromRGB(28, 28, 44)
+
+local function new(className: string, props: { [string]: any }, parent: Instance?): any
+	local inst = Instance.new(className)
+	for k, v in props do
+		(inst :: any)[k] = v
+	end
+	if parent then
+		inst.Parent = parent
+	end
+	return inst
+end
+
+local function corner(parent: Instance, r: number?)
+	new("UICorner", { CornerRadius = UDim.new(0, r or 8) }, parent)
+end
+
+local function text(parent: Instance, props: { [string]: any }): TextLabel
+	local base = {
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		TextColor3 = Color3.new(1, 1, 1),
+		TextScaled = true,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}
+	for k, v in props do
+		base[k] = v
+	end
+	return new("TextLabel", base, parent)
+end
+
+local function button(parent: Instance, props: { [string]: any }, onClick: () -> ()): TextButton
+	local base = {
+		BackgroundColor3 = PINK,
+		Font = Enum.Font.GothamBlack,
+		TextColor3 = Color3.new(1, 1, 1),
+		TextScaled = true,
+		AutoButtonColor = true,
+	}
+	for k, v in props do
+		base[k] = v
+	end
+	local b = new("TextButton", base, parent)
+	corner(b, 8)
+	new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, b)
+	b.Activated:Connect(onClick)
+	return b
+end
+
+local window = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.new(0.8, 0, 0.75, 0),
+	BackgroundColor3 = PANEL,
+	BackgroundTransparency = 0.05,
+	Visible = false,
+	ZIndex = 10,
+}, HUD.Gui)
+corner(window, 16)
+new("UIStroke", { Color = PINK, Thickness = 3 }, window)
+new("UISizeConstraint", { MaxSize = Vector2.new(900, 600), MinSize = Vector2.new(320, 300) }, window)
+
+text(window, { Position = UDim2.fromOffset(20, 10), Size = UDim2.new(0.5, 0, 0, 36), Text = "SAFEHOUSE GARAGE", Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
+local cashText = text(window, { Position = UDim2.new(0.5, 0, 0, 14), Size = UDim2.new(0.5, -70, 0, 28), Text = "", TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = Color3.fromRGB(120, 255, 150) })
+button(window, { Position = UDim2.new(1, -56, 0, 10), Size = UDim2.fromOffset(44, 36), Text = "X", BackgroundColor3 = Color3.fromRGB(80, 30, 50) }, function()
+	Garage.Toggle(false)
+end)
+
+local tabs = new("Frame", { Position = UDim2.fromOffset(20, 56), Size = UDim2.new(1, -40, 0, 36), BackgroundTransparency = 1 }, window)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8) }, tabs)
+
+local content = new("ScrollingFrame", {
+	Position = UDim2.fromOffset(20, 102),
+	Size = UDim2.new(1, -40, 1, -150),
+	BackgroundTransparency = 1,
+	ScrollBarThickness = 6,
+	CanvasSize = UDim2.new(),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	BorderSizePixel = 0,
+}, window)
+
+local statusText = text(window, { Position = UDim2.new(0, 20, 1, -40), Size = UDim2.new(1, -40, 0, 26), Text = "", TextColor3 = Color3.fromRGB(255, 200, 80) })
+
+local data: any = nil
+local currentTab = "Cars"
+local render: () -> ()
+
+local function refresh()
+	local ok, _, snap = Shop:InvokeServer("Get")
+	if ok then
+		data = snap
+	end
+end
+
+local function act(action: string, a: any?, b: any?)
+	local ok, msg, snap = Shop:InvokeServer(action, a, b)
+	if snap then
+		data = snap
+	end
+	statusText.Text = msg or ""
+	statusText.TextColor3 = if ok then Color3.fromRGB(120, 255, 150) else Color3.fromRGB(255, 100, 100)
+	render()
+end
+
+local function clear()
+	for _, c in content:GetChildren() do
+		c:Destroy()
+	end
+end
+
+local function card(height: number): Frame
+	local f = new("Frame", { Size = UDim2.new(1, -10, 0, height), BackgroundColor3 = CARD }, content)
+	corner(f, 10)
+	return f
+end
+
+local function statBar(parent: Instance, y: number, name: string, value: number, max: number)
+	text(parent, { Position = UDim2.fromOffset(12, y), Size = UDim2.fromOffset(80, 14), Text = name, TextColor3 = Color3.fromRGB(180, 180, 200) })
+	local back = new("Frame", { Position = UDim2.fromOffset(96, y + 2), Size = UDim2.new(0.45, -96, 0, 10), BackgroundColor3 = Color3.fromRGB(50, 50, 70) }, parent)
+	corner(back, 5)
+	local fill = new("Frame", { Size = UDim2.fromScale(math.clamp(value / max, 0, 1), 1), BackgroundColor3 = CYAN }, back)
+	corner(fill, 5)
+end
+
+local function renderCars()
+	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, content)
+	for idx, car in Config.Cars do
+		local owned = data.owned[car.id] == true
+		if car.blacklistOnly and not owned then
+			continue
+		end
+		local f = card(92)
+		f.LayoutOrder = idx
+		local swatch = new("Frame", { Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(12, 68), BackgroundColor3 = car.color }, f)
+		corner(swatch, 4)
+		text(f, { Position = UDim2.fromOffset(34, 8), Size = UDim2.new(0.5, 0, 0, 24), Text = car.name .. "   [" .. car.class .. "]", Font = Enum.Font.GothamBlack })
+		local stats = Config.ComputeStats(car, data.upgrades[car.id])
+		local holder = new("Frame", { Position = UDim2.fromOffset(22, 34), Size = UDim2.new(1, -22, 0, 56), BackgroundTransparency = 1 }, f)
+		statBar(holder, 0, "Top speed", stats.maxSpeed, 240)
+		statBar(holder, 18, "Accel", stats.accel, 90)
+		statBar(holder, 36, "Handling", stats.turn * stats.grip, 21)
+		local label, color, action
+		if data.selected == car.id then
+			label, color = "DRIVING", Color3.fromRGB(60, 60, 80)
+		elseif owned then
+			label, color, action = "SELECT", CYAN, function()
+				act("SelectCar", car.id)
+			end
+		else
+			label, color, action = "BUY $" .. HUD.Commas(car.price), PINK, function()
+				act("BuyCar", car.id)
+			end
+		end
+		button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(150, 40), Text = label, BackgroundColor3 = color }, action or function() end)
+	end
+end
+
+local function renderUpgrades()
+	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, content)
+	local car = Config.GetCar(data.selected)
+	if not car then
+		return
+	end
+	local levels = data.upgrades[car.id] or {}
+	local head = card(40)
+	head.LayoutOrder = 0
+	text(head, { Position = UDim2.fromOffset(12, 6), Size = UDim2.new(1, -24, 0, 28), Text = "Tuning: " .. car.name, Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
+	for idx, kind in Config.UpgradeOrder do
+		local up = (Config.Upgrades :: any)[kind]
+		local lvl = levels[kind] or 0
+		local f = card(64)
+		f.LayoutOrder = idx
+		text(f, { Position = UDim2.fromOffset(12, 8), Size = UDim2.new(0.5, 0, 0, 24), Text = up.name, Font = Enum.Font.GothamBlack })
+		local pips = ""
+		for k = 1, up.maxLevel do
+			pips ..= if k <= lvl then "■ " else "□ "
+		end
+		text(f, { Position = UDim2.fromOffset(12, 34), Size = UDim2.new(0.5, 0, 0, 20), Text = pips, TextColor3 = PINK })
+		if lvl >= up.maxLevel then
+			button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(150, 40), Text = "MAXED", BackgroundColor3 = Color3.fromRGB(60, 60, 80) }, function() end)
+		else
+			local cost = math.floor(up.cost[lvl + 1] * (Config.ClassCostMult[car.class] or 1))
+			button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(150, 40), Text = "UPGRADE $" .. HUD.Commas(cost) }, function()
+				act("Upgrade", car.id, kind)
+			end)
+		end
+	end
+end
+
+local function renderPaint()
+	new("UIGridLayout", { CellSize = UDim2.fromOffset(90, 90), CellPadding = UDim2.fromOffset(10, 10) }, content)
+	for idx, color in Config.PaintColors do
+		local b = button(content, { Text = "", BackgroundColor3 = color }, function()
+			act("Paint", idx)
+		end)
+		b.LayoutOrder = idx
+		new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = if data.paint[data.selected] == idx then 4 else 0 }, b)
+	end
+end
+
+local function renderEffects()
+	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, content)
+	for idx, e in Config.DrivingEffects do
+		local f = card(56)
+		f.LayoutOrder = idx
+		local sw = new("Frame", { Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(32, 32), BackgroundColor3 = e.color }, f)
+		corner(sw, 16)
+		text(f, { Position = UDim2.fromOffset(56, 14), Size = UDim2.new(0.5, 0, 0, 26), Text = e.name, Font = Enum.Font.GothamBlack })
+		local label, color = "", PINK
+		if data.effect == e.id then
+			label, color = "EQUIPPED", Color3.fromRGB(60, 60, 80)
+		elseif data.effects[e.id] then
+			label, color = "EQUIP", CYAN
+		else
+			label = "BUY $" .. HUD.Commas(e.price)
+		end
+		button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(150, 38), Text = label, BackgroundColor3 = color }, function()
+			act("Effect", e.id)
+		end)
+	end
+end
+
+local function renderBlacklist()
+	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, content)
+	local head = card(50)
+	head.LayoutOrder = 0
+	text(head, {
+		Position = UDim2.fromOffset(12, 6),
+		Size = UDim2.new(1, -24, 0, 38),
+		Text = string.format("THE BLACKLIST   -   Your bounty: %s   |   Race wins: %d", HUD.Commas(data.totalBounty), data.racesWon),
+		TextColor3 = Color3.fromRGB(255, 90, 90),
+		Font = Enum.Font.GothamBlack,
+	})
+	local nextRank = 5 - data.blacklistBeaten
+	for idx, rival in Config.Blacklist do
+		local beaten = rival.rank > nextRank
+		local f = card(96)
+		f.LayoutOrder = idx
+		text(f, { Position = UDim2.fromOffset(12, 6), Size = UDim2.new(0.6, 0, 0, 28), Text = "#" .. rival.rank .. "  " .. string.upper(rival.name), Font = Enum.Font.GothamBlack, TextColor3 = if beaten then Color3.fromRGB(120, 255, 150) else Color3.new(1, 1, 1) })
+		text(f, { Position = UDim2.fromOffset(12, 36), Size = UDim2.new(0.65, 0, 0, 18), Text = rival.bio, TextColor3 = Color3.fromRGB(190, 190, 210), Font = Enum.Font.Gotham })
+		local car = Config.GetCar(rival.carId)
+		text(f, {
+			Position = UDim2.fromOffset(12, 60),
+			Size = UDim2.new(0.65, 0, 0, 18),
+			Text = string.format("Needs %s bounty + %d wins   |   Pink slip: %s   |   $%s", HUD.Commas(rival.bountyReq), rival.winsReq, if car then car.name else "?", HUD.Commas(rival.reward)),
+			TextColor3 = Color3.fromRGB(255, 200, 80),
+			Font = Enum.Font.Gotham,
+		})
+		local label, color = "LOCKED", Color3.fromRGB(60, 60, 80)
+		local canRace = false
+		if beaten then
+			label, color = "DEFEATED", Color3.fromRGB(40, 120, 70)
+		elseif rival.rank == nextRank then
+			if data.totalBounty >= rival.bountyReq and data.racesWon >= rival.winsReq then
+				label, color, canRace = "CHALLENGE", Color3.fromRGB(255, 60, 60), true
+			else
+				label = "NEED MORE REP"
+			end
+		end
+		button(f, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(160, 40), Text = label, BackgroundColor3 = color }, function()
+			if canRace then
+				ChallengeRival:FireServer(rival.rank)
+				Garage.Toggle(false)
+			end
+		end)
+	end
+end
+
+local TAB_RENDER = {
+	Cars = renderCars,
+	Upgrades = renderUpgrades,
+	Paint = renderPaint,
+	Effects = renderEffects,
+	Blacklist = renderBlacklist,
+}
+local tabButtons: { [string]: TextButton } = {}
+
+render = function()
+	clear()
+	if not data then
+		return
+	end
+	cashText.Text = "$" .. HUD.Commas(data.cash)
+	for name, b in tabButtons do
+		b.BackgroundColor3 = if name == currentTab then PINK else Color3.fromRGB(45, 45, 65)
+	end
+	TAB_RENDER[currentTab]()
+end
+
+for _, name in { "Cars", "Upgrades", "Paint", "Effects", "Blacklist" } do
+	tabButtons[name] = button(tabs, { Size = UDim2.fromOffset(120, 34), Text = string.upper(name), BackgroundColor3 = Color3.fromRGB(45, 45, 65) }, function()
+		currentTab = name
+		render()
+	end)
+end
+
+function Garage.Toggle(open: boolean?)
+	local want = if open == nil then not window.Visible else open
+	window.Visible = want
+	Garage.Open = want
+	if want then
+		statusText.Text = ""
+		refresh()
+		render()
+	end
+end
+
+return Garage
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000011"><Properties><string name="Name">HUD</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Heads-up display: speedometer + nitro, heat stars and pursuit meters, cash, race panel,
+-- drift combo, minimap, notifications and context prompts.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared:WaitForChild("Config"))
+local Grid = require(Shared:WaitForChild("Grid"))
+
+local player = Players.LocalPlayer
+
+local HUD = {}
+
+local FONT = Enum.Font.GothamBlack
+local FONT2 = Enum.Font.GothamBold
+local PINK = Color3.fromRGB(255, 40, 160)
+local CYAN = Color3.fromRGB(0, 240, 255)
+local RED = Color3.fromRGB(255, 60, 60)
+local BLUE = Color3.fromRGB(70, 140, 255)
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "WantedUnboundHUD"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = player:WaitForChild("PlayerGui")
+HUD.Gui = gui
+
+local function new(className: string, props: { [string]: any }, parent: Instance?): any
+	local inst = Instance.new(className)
+	for k, v in props do
+		(inst :: any)[k] = v
+	end
+	if parent then
+		inst.Parent = parent
+	end
+	return inst
+end
+
+local function label(props: { [string]: any }, parent: Instance): TextLabel
+	local base = {
+		BackgroundTransparency = 1,
+		Font = FONT,
+		TextColor3 = Color3.new(1, 1, 1),
+		TextScaled = true,
+		TextStrokeTransparency = 0.5,
+	}
+	for k, v in props do
+		base[k] = v
+	end
+	return new("TextLabel", base, parent)
+end
+
+local function corner(parent: Instance, r: number?)
+	new("UICorner", { CornerRadius = UDim.new(0, r or 8) }, parent)
+end
+
+local function commas(n: number): string
+	local s = tostring(math.floor(n))
+	local formatted, k = s, 0
+	repeat
+		formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", "%1,%2")
+	until k == 0
+	return formatted
+end
+HUD.Commas = commas
+
+---------------------------------------------------------------------------
+-- Speedometer (bottom right)
+---------------------------------------------------------------------------
+local speedo = new("Frame", {
+	AnchorPoint = Vector2.new(1, 1),
+	Position = UDim2.new(1, -20, 1, -20),
+	Size = UDim2.fromOffset(230, 120),
+	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
+	BackgroundTransparency = 0.35,
+}, gui)
+corner(speedo, 14)
+new("UIStroke", { Color = CYAN, Thickness = 2, Transparency = 0.3 }, speedo)
+local speedLabel = label({ Position = UDim2.fromOffset(10, 4), Size = UDim2.new(1, -80, 0, 70), Text = "0", TextXAlignment = Enum.TextXAlignment.Right }, speedo)
+label({ Position = UDim2.new(1, -68, 0, 34), Size = UDim2.fromOffset(60, 30), Text = "MPH", TextColor3 = CYAN, Font = FONT2 }, speedo)
+local carNameLabel = label({ Position = UDim2.fromOffset(12, 74), Size = UDim2.new(1, -24, 0, 16), Text = "", Font = FONT2, TextColor3 = Color3.fromRGB(190, 190, 210), TextXAlignment = Enum.TextXAlignment.Left }, speedo)
+local nitroBack = new("Frame", {
+	Position = UDim2.fromOffset(12, 96),
+	Size = UDim2.new(1, -24, 0, 14),
+	BackgroundColor3 = Color3.fromRGB(40, 40, 55),
+}, speedo)
+corner(nitroBack, 7)
+local nitroFill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = CYAN }, nitroBack)
+corner(nitroFill, 7)
+label({ Size = UDim2.fromScale(1, 1), Text = "NITROUS", TextColor3 = Color3.new(1, 1, 1), Font = FONT2, TextStrokeTransparency = 0.2, ZIndex = 2 }, nitroBack)
+
+---------------------------------------------------------------------------
+-- Heat + pursuit (top centre)
+---------------------------------------------------------------------------
+local heatFrame = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0, 12),
+	Size = UDim2.fromOffset(360, 100),
+	BackgroundTransparency = 1,
+}, gui)
+local stars: { TextLabel } = {}
+for k = 1, 5 do
+	stars[k] = label({
+		Position = UDim2.fromOffset(40 + (k - 1) * 58, 0),
+		Size = UDim2.fromOffset(52, 44),
+		Text = "★",
+		TextColor3 = Color3.fromRGB(70, 70, 80),
+		Font = Enum.Font.GothamBlack,
+	}, heatFrame)
+end
+local statusLabel = label({ Position = UDim2.fromOffset(0, 46), Size = UDim2.new(1, 0, 0, 22), Text = "", Font = FONT2 }, heatFrame)
+local meterBack = new("Frame", {
+	Position = UDim2.fromOffset(30, 72),
+	Size = UDim2.new(1, -60, 0, 12),
+	BackgroundColor3 = Color3.fromRGB(30, 30, 40),
+	Visible = false,
+}, heatFrame)
+corner(meterBack, 6)
+local meterFill = new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = BLUE }, meterBack)
+corner(meterFill, 6)
+local bustBack = new("Frame", {
+	Position = UDim2.fromOffset(30, 88),
+	Size = UDim2.new(1, -60, 0, 8),
+	BackgroundColor3 = Color3.fromRGB(30, 30, 40),
+	Visible = false,
+}, heatFrame)
+corner(bustBack, 4)
+local bustFill = new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = RED }, bustBack)
+corner(bustFill, 4)
+
+---------------------------------------------------------------------------
+-- Money (top left)
+---------------------------------------------------------------------------
+local money = new("Frame", {
+	Position = UDim2.fromOffset(16, 56),
+	Size = UDim2.fromOffset(260, 110),
+	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
+	BackgroundTransparency = 0.4,
+}, gui)
+corner(money, 12)
+local bankLabel = label({ Position = UDim2.fromOffset(12, 6), Size = UDim2.new(1, -24, 0, 26), Text = "$0", TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(120, 255, 150) }, money)
+local unbankedLabel = label({ Position = UDim2.fromOffset(12, 34), Size = UDim2.new(1, -24, 0, 20), Text = "", Font = FONT2, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(255, 190, 60) }, money)
+local bountyLabel = label({ Position = UDim2.fromOffset(12, 58), Size = UDim2.new(1, -24, 0, 20), Text = "", Font = FONT2, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(255, 120, 120) }, money)
+local timeLabel = label({ Position = UDim2.fromOffset(12, 82), Size = UDim2.new(1, -24, 0, 18), Text = "", Font = FONT2, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(190, 170, 255) }, money)
+
+---------------------------------------------------------------------------
+-- Race panel (right)
+---------------------------------------------------------------------------
+local racePanel = new("Frame", {
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -16, 0, 250),
+	Size = UDim2.fromOffset(230, 150),
+	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
+	BackgroundTransparency = 0.35,
+	Visible = false,
+}, gui)
+corner(racePanel, 12)
+new("UIStroke", { Color = PINK, Thickness = 2 }, racePanel)
+local raceName = label({ Position = UDim2.fromOffset(10, 6), Size = UDim2.new(1, -20, 0, 22), Text = "", TextColor3 = PINK }, racePanel)
+local racePos = label({ Position = UDim2.fromOffset(10, 30), Size = UDim2.new(1, -20, 0, 50), Text = "" }, racePanel)
+local raceInfo = label({ Position = UDim2.fromOffset(10, 84), Size = UDim2.new(1, -20, 0, 22), Text = "", Font = FONT2 }, racePanel)
+local raceTime = label({ Position = UDim2.fromOffset(10, 110), Size = UDim2.new(1, -20, 0, 22), Text = "", Font = FONT2, TextColor3 = Color3.fromRGB(200, 200, 220) }, racePanel)
+
+local countdown = label({
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.38),
+	Size = UDim2.fromOffset(400, 160),
+	Text = "",
+	TextColor3 = PINK,
+	TextStrokeTransparency = 0,
+	Visible = false,
+}, gui)
+
+---------------------------------------------------------------------------
+-- Drift combo (centre)
+---------------------------------------------------------------------------
+local driftLabel = label({
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0, 130),
+	Size = UDim2.fromOffset(360, 40),
+	Text = "",
+	TextColor3 = Color3.fromRGB(255, 150, 40),
+	TextStrokeTransparency = 0.1,
+}, gui)
+
+---------------------------------------------------------------------------
+-- Notifications (centre left)
+---------------------------------------------------------------------------
+local notifyFrame = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0, 180),
+	Size = UDim2.fromOffset(600, 220),
+	BackgroundTransparency = 1,
+}, gui)
+new("UIListLayout", {
+	SortOrder = Enum.SortOrder.LayoutOrder,
+	HorizontalAlignment = Enum.HorizontalAlignment.Center,
+	Padding = UDim.new(0, 4),
+}, notifyFrame)
+local notifyOrder = 0
+
+function HUD.Notify(text: string, color: Color3?)
+	notifyOrder += 1
+	local l = label({
+		Size = UDim2.new(1, 0, 0, 28),
+		Text = text,
+		TextColor3 = color or Color3.new(1, 1, 1),
+		TextStrokeTransparency = 0.1,
+		LayoutOrder = notifyOrder,
+	}, notifyFrame)
+	local kids = {}
+	for _, c in notifyFrame:GetChildren() do
+		if c:IsA("TextLabel") then
+			table.insert(kids, c)
+		end
+	end
+	if #kids > 6 then
+		table.sort(kids, function(a, b)
+			return a.LayoutOrder < b.LayoutOrder
+		end)
+		kids[1]:Destroy()
+	end
+	task.delay(4, function()
+		if l.Parent then
+			local t = TweenService:Create(l, TweenInfo.new(0.6), { TextTransparency = 1, TextStrokeTransparency = 1 })
+			t:Play()
+			t.Completed:Wait()
+			l:Destroy()
+		end
+	end)
+end
+
+---------------------------------------------------------------------------
+-- Prompt (bottom centre)
+---------------------------------------------------------------------------
+local promptButton = new("TextButton", {
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0.5, 0, 1, -30),
+	Size = UDim2.fromOffset(460, 46),
+	BackgroundColor3 = Color3.fromRGB(15, 15, 25),
+	BackgroundTransparency = 0.2,
+	Font = FONT2,
+	TextScaled = true,
+	TextColor3 = Color3.new(1, 1, 1),
+	Text = "",
+	Visible = false,
+	AutoButtonColor = true,
+}, gui)
+corner(promptButton, 10)
+new("UIStroke", { Color = PINK, Thickness = 2 }, promptButton)
+new("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6) }, promptButton)
+HUD.PromptButton = promptButton
+
+function HUD.SetPrompt(text: string?)
+	if text then
+		promptButton.Text = text
+		promptButton.Visible = true
+	else
+		promptButton.Visible = false
+	end
+end
+
+local controlsLabel = label({
+	AnchorPoint = Vector2.new(0, 1),
+	Position = UDim2.new(0, 16, 1, -250),
+	Size = UDim2.fromOffset(300, 16),
+	Text = "WASD drive  |  SPACE drift  |  SHIFT nitro  |  R reset  |  G garage",
+	Font = FONT2,
+	TextColor3 = Color3.fromRGB(200, 200, 220),
+	TextXAlignment = Enum.TextXAlignment.Left,
+}, gui)
+local _ = controlsLabel
+
+---------------------------------------------------------------------------
+-- Minimap (bottom left)
+---------------------------------------------------------------------------
+local MAP_PX = 210
+local worldSize = Grid.Half * 2 + Config.Grid.RoadWidth
+local scale = MAP_PX / worldSize
+local minimap = new("Frame", {
+	AnchorPoint = Vector2.new(0, 1),
+	Position = UDim2.new(0, 16, 1, -20),
+	Size = UDim2.fromOffset(MAP_PX, MAP_PX),
+	BackgroundColor3 = Color3.fromRGB(12, 12, 20),
+	BackgroundTransparency = 0.2,
+	ClipsDescendants = true,
+}, gui)
+corner(minimap, 12)
+new("UIStroke", { Color = PINK, Thickness = 2, Transparency = 0.3 }, minimap)
+
+local function toMap(pos: Vector3): UDim2
+	return UDim2.fromOffset((pos.X + worldSize / 2) * scale, (pos.Z + worldSize / 2) * scale)
+end
+
+local roadPx = math.max(2, Config.Grid.RoadWidth * scale)
+for i = 0, Grid.Size do
+	local p = Grid.Intersection(i, 0)
+	new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromOffset((p.X + worldSize / 2) * scale, 0),
+		Size = UDim2.new(0, roadPx, 1, 0),
+		BackgroundColor3 = Color3.fromRGB(70, 70, 90),
+		BorderSizePixel = 0,
+	}, minimap)
+	local q = Grid.Intersection(0, i)
+	new("Frame", {
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.fromOffset(0, (q.Z + worldSize / 2) * scale),
+		Size = UDim2.new(1, 0, 0, roadPx),
+		BackgroundColor3 = Color3.fromRGB(70, 70, 90),
+		BorderSizePixel = 0,
+	}, minimap)
+end
+
+local function staticDot(pos: Vector3, color: Color3, size: number, text: string?)
+	local d = new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = toMap(pos),
+		Size = UDim2.fromOffset(size, size),
+		BackgroundColor3 = color,
+		ZIndex = 2,
+	}, minimap)
+	corner(d, size)
+	if text then
+		label({ Size = UDim2.fromScale(1, 1), Text = text, ZIndex = 3, TextStrokeTransparency = 1, TextColor3 = Color3.new(0, 0, 0) }, d)
+	end
+end
+
+local sh = Config.Blocks.Safehouse
+staticDot(Grid.BlockCenter(sh[1], sh[2]), Color3.fromRGB(0, 255, 200), 14, "S")
+for _, h in Config.Blocks.HidingSpots do
+	staticDot(Grid.BlockCenter(h[1], h[2]), Color3.fromRGB(80, 255, 120), 9, "H")
+end
+for _, b in Config.PursuitBreakers do
+	staticDot(Grid.Intersection(b[1], b[2]) + Vector3.new(36, 0, 36), Color3.fromRGB(255, 70, 70), 7)
+end
+for _, r in Config.Races do
+	local p = r.route[1]
+	staticDot(Grid.Intersection(p[1], p[2]), if r.kind == "drift" then Color3.fromRGB(255, 140, 0) else PINK, 10, "R")
+end
+
+local dynamic = new("Folder", { Name = "Dynamic" }, minimap)
+local dotPool: { Frame } = {}
+local dotsUsed = 0
+
+local function dot(pos: Vector3, color: Color3, size: number)
+	dotsUsed += 1
+	local d = dotPool[dotsUsed]
+	if not d then
+		local nd: Frame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 4 }, dynamic)
+		corner(nd, 10)
+		dotPool[dotsUsed] = nd
+		d = nd
+	end
+	d.Visible = true
+	d.Position = toMap(pos)
+	d.Size = UDim2.fromOffset(size, size)
+	d.BackgroundColor3 = color
+end
+
+local arrow = label({
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Size = UDim2.fromOffset(18, 18),
+	Text = "▲",
+	TextColor3 = CYAN,
+	ZIndex = 6,
+	TextStrokeTransparency = 0,
+}, minimap)
+
+---------------------------------------------------------------------------
+-- Per-frame update
+---------------------------------------------------------------------------
+local function num(name: string): number
+	local v = player:GetAttribute(name)
+	return if type(v) == "number" then v else 0
+end
+
+local blink = 0
+function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, nitroOn: boolean, car: Model?)
+	blink += dt
+	speedLabel.Text = tostring(math.floor(speed * Config.MphPerStud))
+	nitroFill.Size = UDim2.fromScale(math.clamp(nitro / math.max(capacity, 0.01), 0, 1), 1)
+	nitroFill.BackgroundColor3 = if nitroOn then Color3.fromRGB(255, 255, 255) else CYAN
+	carNameLabel.Text = if car then tostring(car:GetAttribute("CarName") or "") else ""
+
+	-- heat
+	local heat = num("Heat")
+	local mode = player:GetAttribute("PursuitMode") or "idle"
+	local level = math.floor(heat)
+	for k = 1, 5 do
+		local lit = k <= level
+		local color = Color3.fromRGB(70, 70, 80)
+		if lit then
+			if mode ~= "idle" then
+				color = if (math.floor(blink * 4) + k) % 2 == 0 then RED else BLUE
+			else
+				color = Color3.fromRGB(255, 80, 80)
+			end
+		end
+		stars[k].TextColor3 = color
+	end
+
+	if mode == "pursuit" then
+		statusLabel.Text = "PURSUIT  -  lose them!"
+		statusLabel.TextColor3 = RED
+		meterBack.Visible = true
+		meterFill.BackgroundColor3 = Color3.fromRGB(255, 200, 60)
+		meterFill.Size = UDim2.fromScale(num("Evade"), 1)
+	elseif mode == "cooldown" then
+		statusLabel.Text = if player:GetAttribute("Hiding") then "COOLDOWN  -  hiding (x3)" else "COOLDOWN  -  stay out of sight"
+		statusLabel.TextColor3 = BLUE
+		meterBack.Visible = true
+		meterFill.BackgroundColor3 = BLUE
+		meterFill.Size = UDim2.fromScale(num("Cooldown"), 1)
+	else
+		statusLabel.Text = if level > 0 then "HEAT " .. level .. "  -  bank at the safehouse to clear it" else ""
+		statusLabel.TextColor3 = Color3.fromRGB(255, 160, 160)
+		meterBack.Visible = false
+	end
+	local bust = num("Bust")
+	bustBack.Visible = bust > 0.01
+	bustFill.Size = UDim2.fromScale(bust, 1)
+
+	-- money
+	bankLabel.Text = "$" .. commas(num("Cash"))
+	local unbanked = num("Unbanked")
+	unbankedLabel.Text = if unbanked > 0 then "Unbanked: $" .. commas(unbanked) .. "  (at risk!)" else "Unbanked: $0"
+	local bounty = num("Bounty")
+	bountyLabel.Text = if mode ~= "idle" then "Pursuit bounty: " .. commas(bounty) else "Total bounty: " .. commas(num("TotalBounty"))
+	timeLabel.Text = if player:GetAttribute("Night") then "NIGHT  -  x" .. Config.NightMultiplier .. " payouts" else "DAY"
+
+	-- drift combo
+	local combo = num("DriftCombo")
+	driftLabel.Text = if combo > 50 then "DRIFT  " .. commas(combo) else ""
+
+	-- race
+	local racing = player:GetAttribute("RaceActive") == true
+	racePanel.Visible = racing
+	if racing then
+		raceName.Text = tostring(player:GetAttribute("RaceName") or "")
+		local kind = player:GetAttribute("RaceKind")
+		if kind == "drift" then
+			racePos.Text = commas(num("RaceScore"))
+			raceInfo.Text = "Target: " .. commas(num("RaceTarget"))
+			raceTime.Text = string.format("Time left: %.1fs", math.max(0, num("RaceTimeLeft")))
+		else
+			racePos.Text = string.format("%d / %d", num("RacePos"), num("RaceRacers"))
+			local laps = num("RaceLaps")
+			raceInfo.Text = if laps > 1
+				then string.format("Lap %d/%d   CP %d/%d", num("RaceLap"), laps, num("RaceCP"), num("RaceCPTotal"))
+				else string.format("Checkpoint %d/%d", num("RaceCP"), num("RaceCPTotal"))
+			raceTime.Text = string.format("Time: %.1fs", num("RaceTime"))
+		end
+	end
+	local cd = num("RaceCountdown")
+	if racing and player:GetAttribute("RaceCountdown") ~= nil and cd >= 0 then
+		countdown.Visible = true
+		countdown.Text = if cd == 0 then "GO!" else tostring(cd)
+	else
+		countdown.Visible = false
+	end
+
+	-- minimap dynamic dots
+	dotsUsed = 0
+	local blinkOn = math.floor(blink * 5) % 2 == 0
+	local police = workspace:FindFirstChild("Police")
+	if police then
+		for _, m in police:GetChildren() do
+			if m:IsA("Model") and m.PrimaryPart and m.Name ~= "Roadblock" then
+				dot(m.PrimaryPart.Position, if blinkOn then RED else BLUE, if m.Name == "PoliceHeli" then 10 else 7)
+			elseif m:IsA("Model") and m.Name == "Roadblock" then
+				local p = m:GetPivot().Position
+				dot(p, Color3.fromRGB(255, 120, 0), 9)
+			end
+		end
+	end
+	local cars = workspace:FindFirstChild("Cars")
+	if cars then
+		for _, m in cars:GetChildren() do
+			if m:IsA("Model") and m ~= car and m.PrimaryPart then
+				dot(m.PrimaryPart.Position, Color3.new(1, 1, 1), 7)
+			end
+		end
+	end
+	local races = workspace:FindFirstChild("Races")
+	if races then
+		for _, f in races:GetChildren() do
+			for _, m in f:GetChildren() do
+				if m:IsA("Model") and m.PrimaryPart then
+					dot(m.PrimaryPart.Position, Color3.fromRGB(255, 220, 60), 6)
+				end
+			end
+		end
+	end
+	if racing then
+		local nextCp = player:GetAttribute("RaceNext")
+		if typeof(nextCp) == "Vector3" and nextCp.Magnitude > 0 then
+			dot(nextCp, Color3.fromRGB(255, 255, 0), 11)
+		end
+	end
+	for k = dotsUsed + 1, #dotPool do
+		dotPool[k].Visible = false
+	end
+	if car and car.PrimaryPart then
+		local cf = car.PrimaryPart.CFrame
+		arrow.Position = toMap(cf.Position)
+		local look = cf.LookVector
+		arrow.Rotation = math.deg(math.atan2(look.X, -look.Z))
+		arrow.Visible = true
+	else
+		arrow.Visible = false
+	end
+end
+
+return HUD
+]]></ProtectedString></Properties></Item><Item class="LocalScript" referent="RBX00000000000000000000000000000012"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
+-- WANTED: UNBOUND - client entry point.
+
+local ContextActionService = game:GetService("ContextActionService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared:WaitForChild("Config"))
+local Grid = require(Shared:WaitForChild("Grid"))
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local NotifyEvent = Remotes:WaitForChild("Notify") :: RemoteEvent
+local RequestRace = Remotes:WaitForChild("RequestRace") :: RemoteEvent
+local QuitRace = Remotes:WaitForChild("QuitRace") :: RemoteEvent
+
+local Drive = require(script.Parent.DriveController)
+local HUD = require(script.Parent.HUD)
+local Garage = require(script.Parent.Garage)
+
+local player = Players.LocalPlayer
+
+NotifyEvent.OnClientEvent:Connect(function(text: string, color: Color3?)
+	HUD.Notify(text, color)
+end)
+
+---------------------------------------------------------------------------
+-- Context prompt: race starts, garage, quitting races
+---------------------------------------------------------------------------
+type PromptAction = { kind: string, id: string? }
+local promptAction: PromptAction? = nil
+
+local function nearestRace(pos: Vector3): Config.RaceDef?
+	for _, race in Config.Races do
+		local p = race.route[1]
+		local start = Grid.Intersection(p[1], p[2])
+		if Vector3.new(pos.X - start.X, 0, pos.Z - start.Z).Magnitude < 40 then
+			return race
+		end
+	end
+	return nil
+end
+
+local function doPrompt()
+	local action = promptAction
+	if not action then
+		return
+	end
+	if action.kind == "race" and action.id then
+		RequestRace:FireServer(action.id)
+	elseif action.kind == "garage" then
+		Garage.Toggle()
+	elseif action.kind == "quit" then
+		QuitRace:FireServer()
+	end
+end
+
+HUD.PromptButton.Activated:Connect(doPrompt)
+
+ContextActionService:BindAction("WU_Interact", function(_, inputState)
+	if inputState == Enum.UserInputState.Begin then
+		doPrompt()
+	end
+	return Enum.ContextActionResult.Sink
+end, false, Enum.KeyCode.E, Enum.KeyCode.ButtonB)
+
+ContextActionService:BindAction("WU_Garage", function(_, inputState)
+	if inputState == Enum.UserInputState.Begin then
+		if player:GetAttribute("AtSafehouse") or Garage.Open then
+			Garage.Toggle()
+		else
+			HUD.Notify("The garage is at the safehouse (green S on the map)", Color3.fromRGB(0, 255, 200))
+		end
+	end
+	return Enum.ContextActionResult.Sink
+end, false, Enum.KeyCode.G)
+
+local function updatePrompt(pos: Vector3?)
+	promptAction = nil
+	if not pos then
+		HUD.SetPrompt(nil)
+		return
+	end
+	local mode = player:GetAttribute("PursuitMode")
+	if player:GetAttribute("RaceActive") then
+		promptAction = { kind = "quit" }
+		HUD.SetPrompt("[E] Quit race")
+		return
+	end
+	if mode ~= "idle" and mode ~= nil then
+		HUD.SetPrompt(nil)
+		return
+	end
+	if player:GetAttribute("AtSafehouse") then
+		promptAction = { kind = "garage" }
+		HUD.SetPrompt(if Garage.Open then "[E] Close garage" else "[E] Open garage  (cars, tuning, paint, Blacklist)")
+		return
+	end
+	local race = nearestRace(pos)
+	if race then
+		promptAction = { kind = "race", id = race.id }
+		local heat = math.floor((player:GetAttribute("Heat") :: number?) or 0)
+		local mult = (1 + 0.25 * heat) * (if player:GetAttribute("Night") then Config.NightMultiplier else 1)
+		local what = if race.kind == "drift"
+			then string.format("score %s in %ds", HUD.Commas(race.driftTarget or 0), race.duration or 60)
+			else string.format("win up to $%s", HUD.Commas((race.reward + race.buyIn) * mult))
+		HUD.SetPrompt(string.format("[E] %s  -  buy-in $%s  -  %s", race.name, HUD.Commas(race.buyIn), what))
+		return
+	end
+	HUD.SetPrompt(nil)
+end
+
+---------------------------------------------------------------------------
+-- Local checkpoint beacon
+---------------------------------------------------------------------------
+local beacon = Instance.new("Part")
+beacon.Name = "CheckpointBeacon"
+beacon.Anchored = true
+beacon.CanCollide = false
+beacon.CanQuery = false
+beacon.CanTouch = false
+beacon.Shape = Enum.PartType.Cylinder
+beacon.Size = Vector3.new(300, 10, 10)
+beacon.Material = Enum.Material.Neon
+beacon.Color = Color3.fromRGB(255, 230, 40)
+beacon.Transparency = 0.45
+local ring = Instance.new("Part")
+ring.Name = "CheckpointRing"
+ring.Anchored = true
+ring.CanCollide = false
+ring.CanQuery = false
+ring.CanTouch = false
+ring.Shape = Enum.PartType.Cylinder
+ring.Size = Vector3.new(0.4, 76, 76)
+ring.Material = Enum.Material.Neon
+ring.Color = Color3.fromRGB(255, 230, 40)
+ring.Transparency = 0.6
+
+local function updateBeacon()
+	local nextCp = player:GetAttribute("RaceNext")
+	local racing = player:GetAttribute("RaceActive") == true and player:GetAttribute("RaceKind") ~= "drift"
+	if racing and typeof(nextCp) == "Vector3" and nextCp.Magnitude > 0 then
+		beacon.CFrame = CFrame.new(nextCp + Vector3.new(0, 150, 0)) * CFrame.Angles(0, 0, math.rad(90))
+		ring.CFrame = CFrame.new(nextCp + Vector3.new(0, 0.3, 0)) * CFrame.Angles(0, 0, math.rad(90))
+		beacon.Parent = workspace.CurrentCamera
+		ring.Parent = workspace.CurrentCamera
+	else
+		beacon.Parent = nil
+		ring.Parent = nil
+	end
+end
+
+---------------------------------------------------------------------------
+-- Police siren lights (animated locally)
+---------------------------------------------------------------------------
+local sirenClock = 0
+local function updateSirens(dt: number)
+	sirenClock += dt
+	local phase = math.floor(sirenClock * 6) % 2 == 0
+	local police = workspace:FindFirstChild("Police")
+	if not police then
+		return
+	end
+	for _, m in police:GetDescendants() do
+		if m:IsA("Model") and m:GetAttribute("Police") then
+			local on = m:GetAttribute("Siren") == true
+			for _, name in { "SirenRed", "SirenBlue" } do
+				local part = m:FindFirstChild(name) :: BasePart?
+				if part then
+					local lit = on and ((name == "SirenRed") == phase)
+					part.Transparency = if lit then 0 else 0.6
+					local light = part:FindFirstChildOfClass("PointLight")
+					if light then
+						light.Enabled = lit
+					end
+				end
+			end
+		end
+	end
+end
+
+---------------------------------------------------------------------------
+-- Main loop
+---------------------------------------------------------------------------
+local promptTimer = 0
+local sirenTimer = 0
+RunService.RenderStepped:Connect(function(dt)
+	local car = Drive.Car
+	HUD.Update(dt, Drive.Speed, Drive.Nitro, Drive.NitroCapacity, Drive.NitroOn, car)
+	promptTimer += dt
+	if promptTimer > 0.2 then
+		promptTimer = 0
+		local pos = car and car.PrimaryPart and car.PrimaryPart.Position
+		updatePrompt(pos)
+		if Garage.Open and not player:GetAttribute("AtSafehouse") then
+			Garage.Toggle(false)
+		end
+	end
+	sirenTimer += dt
+	if sirenTimer > 1 / 12 then
+		updateSirens(sirenTimer)
+		sirenTimer = 0
+	end
+	updateBeacon()
+end)
+
+print("[" .. Config.GameName .. "] client ready")
+]]></ProtectedString></Properties></Item></Item></Item></Item></roblox>
