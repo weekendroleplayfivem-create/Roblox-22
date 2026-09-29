@@ -6,6 +6,7 @@ local Lighting = game:GetService("Lighting")
 local RunService = game:GetService("RunService")
 
 local Drive = require(script.Parent.DriveController)
+local Signals = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Signals"))
 
 local CarVisuals = {}
 
@@ -141,7 +142,42 @@ local function eachCar(folder: Instance?, fn: (Model) -> ())
 	end
 end
 
+-- Traffic lights: every client animates the lamps from the shared server clock.
+local lampState: { [BasePart]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+local signalTimer = 0
+local function updateSignals(dt: number)
+	signalTimer += dt
+	if signalTimer < 0.2 then
+		return
+	end
+	signalTimer = 0
+	local map = workspace:FindFirstChild("Map")
+	local folder = map and map:FindFirstChild("Signals")
+	if not folder then
+		return
+	end
+	local now = Signals.Now()
+	local xState = Signals.State("x", now)
+	local zState = Signals.State("z", now)
+	for _, lamp in folder:GetChildren() do
+		if not lamp:IsA("BasePart") then
+			continue
+		end
+		local axis = lamp:GetAttribute("Axis")
+		local on = lamp:GetAttribute("Light") == (if axis == "x" then xState else zState)
+		if lampState[lamp] ~= on then
+			lampState[lamp] = on
+			local color = lamp:GetAttribute("On")
+			if typeof(color) == "Color3" then
+				lamp.Color = if on then color else color:Lerp(Color3.new(0, 0, 0), 0.75)
+			end
+			lamp.Material = if on then Enum.Material.Neon else Enum.Material.SmoothPlastic
+		end
+	end
+end
+
 RunService.RenderStepped:Connect(function(dt)
+	updateSignals(dt)
 	local time = Lighting.ClockTime
 	local night = time >= 17.8 or time < 7
 	local camPos = workspace.CurrentCamera.CFrame.Position

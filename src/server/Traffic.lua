@@ -11,6 +11,7 @@ local CarPhysics = require(Shared:WaitForChild("CarPhysics"))
 local AIDriver = require(script.Parent.AIDriver)
 local CarBuilder = require(script.Parent.CarBuilder)
 local Session = require(script.Parent.Session)
+local Signals = require(Shared:WaitForChild("Signals"))
 
 local Traffic = {}
 
@@ -116,7 +117,25 @@ local function think(ai: AIDriver.AI, dt: number)
 		end
 	end
 	ai.state.speedMult = mult
-	if d.blocked then
+
+	-- stop at red lights (and at yellow when there's room to stop) before the stop line
+	local redLight = false
+	local toI, toJ = d.to[1], d.to[2]
+	if toI > 0 and toI < Grid.Size and toJ > 0 and toJ < Grid.Size then
+		local toGo = d.segLen - t
+		local speed = math.max(ai.state.speed, 0)
+		local stopAt = 41
+		local brakeDist = speed * speed / 140 + 2
+		if toGo > 27 and toGo - stopAt < brakeDist then
+			local axis = if math.abs(d.dir.X) > 0.5 then "x" else "z"
+			local light = Signals.State(axis, Signals.Now())
+			redLight = light == "red" or (light == "yellow" and toGo - stopAt > 6)
+		end
+	end
+
+	if redLight then
+		ai.input.throttle = if ai.state.speed > 1 then -0.9 else 0
+	elseif d.blocked then
 		ai.input.throttle = if ai.state.speed > 4 then -0.6 else 0
 	else
 		ai.input.throttle = 1

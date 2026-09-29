@@ -28,6 +28,25 @@ in code, so you don't need any models, meshes or assets.
 5. **Climb the Blacklist.** Earn total bounty and race wins, then challenge Blacklist rivals #5 → #1
    from the garage. Beat one and you win their car's **pink slip**.
 
+### Realistic city update
+- **Real architecture** (every building is made of parts, no meshes):
+  - **Glass skyscrapers:** setbacks, curtain-wall mullions and floor bands, a marble lobby with an
+    entrance canopy, and roof machinery. They also get antennas with red aircraft beacons or
+    helipads.
+  - **Office blocks:** ribbon windows, rooftop AC units and billboards.
+  - **Brick apartment buildings:** punched windows, stone cornices, fire escapes and rooftop water
+    tanks, with shops on the ground floor.
+  - **Low-rise shops:** storefront glass, fabric awnings and lit shop signs (PHARMACY, PIZZA,
+    BANK...).
+  - Parking lots.
+- **Windows light up at night**, but not all of them, in slightly different warm tones.
+- **Streets:** paved sidewalks with curbs, trees with grates, hydrants, bins and bus stops.
+- **Intersections:** zebra crosswalks, stop lines and **working traffic lights**. The lights are
+  synced on every client, and **traffic stops at red lights**. Cops and racers run them.
+- **Natural lighting:** a deep blue night lit by warm street lamps, soft sunrise, neutral daylight
+  and golden hour, instead of the purple neon look.
+- Realistic asphalt colour and concrete jersey barriers at the edge of the city.
+
 ### New in this version
 - **Title screen** with a camera flight over the city, plus a "How to play" screen.
 - **City traffic:** civilian cars stay in the right lane, turn at intersections and brake for
@@ -112,10 +131,12 @@ python3 tools/build.py
 src/shared/   (ReplicatedStorage.Shared)
   Config.lua        all tuning: cars, upgrades, heat levels, races, Blacklist, world features
   Grid.lua          road-grid helpers
+  Signals.lua       traffic light timing (shared clock)
   CarPhysics.lua    arcade driving model, shared by the player car (client) and the AI (server)
 src/server/   (ServerScriptService.Server)
   Main.server.lua   bootstrap, remotes, lighting, day/night, garage shop, safehouse/drift/speed cams
-  MapBuilder.lua    procedural city
+  MapBuilder.lua    procedural city layout (roads, blocks, special areas)
+  Architecture.lua  realistic buildings, sidewalks, street furniture, crosswalks, traffic lights
   CarBuilder.lua    builds detailed cars out of parts (player, police, rivals)
   DayNight.lua      day/night lighting, sky, clouds, street lamps
   Vehicles.lua      spawning / resetting player cars

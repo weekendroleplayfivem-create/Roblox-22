@@ -7,6 +7,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
 local Grid = require(Shared:WaitForChild("Grid"))
+local Architecture = require(script.Parent.Architecture)
 
 local MapBuilder = {}
 
@@ -26,6 +27,7 @@ export type MapInfo = {
 	buildings: Folder,
 	nightLights: { Light },
 	nightNeon: { BasePart },
+	nightToggles: { Architecture.Toggle },
 }
 
 local rng = Random.new(22)
@@ -65,23 +67,6 @@ local function billboard(parent: BasePart, text: string, color: Color3, height: 
 	bb.Parent = parent
 end
 
-local BUILDING_COLORS = {
-	Color3.fromRGB(35, 38, 50),
-	Color3.fromRGB(50, 45, 60),
-	Color3.fromRGB(28, 40, 48),
-	Color3.fromRGB(60, 55, 52),
-	Color3.fromRGB(40, 40, 42),
-	Color3.fromRGB(72, 62, 80),
-}
-local NEON_COLORS = {
-	Color3.fromRGB(255, 40, 160),
-	Color3.fromRGB(0, 240, 255),
-	Color3.fromRGB(255, 190, 30),
-	Color3.fromRGB(150, 60, 255),
-	Color3.fromRGB(60, 255, 120),
-}
-local SIGN_TEXTS = { "WANTED", "UNBOUND", "NEON BAY", "NITRO", "24/7", "MOTEL", "GARAGE", "HOTEL", "CLUB", "RAMEN" }
-
 -- Painted road markings: double yellow centre line and white edge lines.
 local function markings(mid: Vector3, alongX: boolean, segLen: number, folder: Folder)
 	local function line(offset: number, width: number, color: Color3)
@@ -107,11 +92,12 @@ end
 
 local function buildRoads(folder: Folder)
 	local N = Grid.Size
-	local asphalt = Color3.fromRGB(34, 34, 37)
+	local asphalt = Color3.fromRGB(58, 58, 61)
 	local segLen = Grid.Cell - ROAD
 	for i = 0, N do
 		for j = 0, N do
 			local c = Grid.Intersection(i, j)
+			Architecture.Intersection(c, ROAD, i > 0 and i < N and j > 0 and j < N)
 			anchored({
 				Name = "Intersection",
 				Size = Vector3.new(ROAD, 1, ROAD),
@@ -190,92 +176,23 @@ local function streetLight(pos: Vector3, toRoad: Vector3, props: Folder)
 	table.insert(nightNeon, lamp)
 end
 
-local function building(center: Vector3, footprint: Vector3, height: number, buildings: Folder, props: Folder)
-	local color = BUILDING_COLORS[rng:NextInteger(1, #BUILDING_COLORS)]
-	local neon = NEON_COLORS[rng:NextInteger(1, #NEON_COLORS)]
-	local b = anchored({
-		Name = "Building",
-		Size = Vector3.new(footprint.X, height, footprint.Z),
-		CFrame = CFrame.new(center.X, SURFACE + height / 2, center.Z),
-		Color = color,
-		Material = if rng:NextNumber() < 0.5 then Enum.Material.Concrete else Enum.Material.Glass,
-		Reflectance = 0.05,
-	}, buildings)
-	-- neon roof trim
-	anchored({
-		Name = "Trim",
-		Size = Vector3.new(footprint.X + 1, 1.2, footprint.Z + 1),
-		CFrame = CFrame.new(center.X, SURFACE + height + 0.6, center.Z),
-		Color = neon,
-		Material = Enum.Material.Neon,
-		CanCollide = false,
-	}, props)
-	-- window bands
-	local bands = math.floor(height / 24)
-	for k = 1, bands do
-		if rng:NextNumber() < 0.55 then
-			local win = anchored({
-				Name = "Windows",
-				Size = Vector3.new(footprint.X + 0.4, 2, footprint.Z + 0.4),
-				CFrame = CFrame.new(center.X, SURFACE + k * 24 - 6, center.Z),
-				Color = if rng:NextNumber() < 0.7 then Color3.fromRGB(255, 230, 170) else neon,
-				Material = Enum.Material.Neon,
-				Transparency = 0.25,
-				CanCollide = false,
-				CanQuery = false,
-			}, props)
-			table.insert(nightNeon, win)
-		end
-	end
-	-- occasional rooftop sign
-	if height > 90 and rng:NextNumber() < 0.35 then
-		local sign = anchored({
-			Name = "Sign",
-			Size = Vector3.new(footprint.X * 0.8, 14, 1),
-			CFrame = CFrame.new(center.X, SURFACE + height + 9, center.Z),
-			Color = Color3.fromRGB(10, 10, 14),
-			CanCollide = false,
-		}, props)
-		for _, face in { Enum.NormalId.Front, Enum.NormalId.Back } do
-			local gui = Instance.new("SurfaceGui")
-			gui.Face = face
-			gui.LightInfluence = 0
-			gui.Brightness = 3
-			local t = Instance.new("TextLabel")
-			t.BackgroundTransparency = 1
-			t.Size = UDim2.fromScale(1, 1)
-			t.Text = SIGN_TEXTS[rng:NextInteger(1, #SIGN_TEXTS)]
-			t.TextScaled = true
-			t.Font = Enum.Font.GothamBlack
-			t.TextColor3 = neon
-			t.Parent = gui
-			gui.Parent = sign
-		end
-	end
-	return b
-end
-
-local function cityBlock(bx: number, bz: number, buildings: Folder, props: Folder, ground: Folder)
+local function cityBlock(bx: number, bz: number, ground: Folder, props: Folder)
 	local c = Grid.BlockCenter(bx, bz)
 	anchored({
-		Name = "Sidewalk",
+		Name = "Block",
 		Size = Vector3.new(BLOCK, 1, BLOCK),
 		CFrame = CFrame.new(c.X, SURFACE - 0.5, c.Z),
-		Color = Color3.fromRGB(95, 95, 100),
+		Color = Color3.fromRGB(118, 116, 112),
 		Material = Enum.Material.Concrete,
 	}, ground)
-	-- distance from centre makes downtown taller
-	local d = (Vector3.new(c.X, 0, c.Z)).Magnitude / Grid.Half
+	-- buildings get taller towards downtown
+	local downtown = 1 - math.clamp(Vector3.new(c.X, 0, c.Z).Magnitude / Grid.Half, 0, 1)
 	for _, ox in { -1, 1 } do
 		for _, oz in { -1, 1 } do
-			if rng:NextNumber() < 0.9 then
-				local fx = rng:NextNumber(70, 98)
-				local fz = rng:NextNumber(70, 98)
-				local h = rng:NextNumber(35, 80) + (1 - math.clamp(d, 0, 1)) * rng:NextNumber(40, 170)
-				building(c + Vector3.new(ox * 57, 0, oz * 57), Vector3.new(fx, 0, fz), h, buildings, props)
-			end
+			Architecture.Lot(c + Vector3.new(ox * 57, 0, oz * 57), { Vector3.new(ox, 0, 0), Vector3.new(0, 0, oz) }, downtown)
 		end
 	end
+	Architecture.Sidewalks(c, BLOCK, rng:NextNumber() < 0.3)
 	local edge = BLOCK / 2 - 3
 	streetLight(c + Vector3.new(0, 0, -edge), -Vector3.zAxis, props)
 	streetLight(c + Vector3.new(0, 0, edge), Vector3.zAxis, props)
@@ -297,8 +214,8 @@ local function safehouse(bx: number, bz: number, buildings: Folder, props: Folde
 		Name = "Garage",
 		Size = Vector3.new(180, 40, 60),
 		CFrame = CFrame.new(c.X, SURFACE + 20, c.Z + 85),
-		Color = Color3.fromRGB(25, 25, 30),
-		Material = Enum.Material.Concrete,
+		Color = Color3.fromRGB(96, 58, 46),
+		Material = Enum.Material.Brick,
 	}, buildings)
 	local sign = anchored({
 		Name = "GarageSign",
@@ -551,6 +468,10 @@ function MapBuilder.Build(): MapInfo
 	local props = Instance.new("Folder")
 	props.Name = "Props"
 	props.Parent = map
+	local signalsFolder = Instance.new("Folder")
+	signalsFolder.Name = "Signals"
+	signalsFolder.Parent = map
+	Architecture.Init(buildings, props, signalsFolder, SURFACE)
 	local breakersFolder = Instance.new("Folder")
 	breakersFolder.Name = "PursuitBreakers"
 	breakersFolder.Parent = map
@@ -574,11 +495,11 @@ function MapBuilder.Build(): MapInfo
 		}, buildings)
 		local alongZ = info[2].Z > info[2].X
 		anchored({
-			Name = "BarrierGlow",
-			Size = if alongZ then Vector3.new(2, 1.5, info[2].Z) else Vector3.new(info[2].X, 1.5, 2),
-			CFrame = CFrame.new(info[1] + Vector3.new(0, SURFACE + 0.75, 0)),
-			Color = Color3.fromRGB(255, 40, 160),
-			Material = Enum.Material.Neon,
+			Name = "JerseyBarrier",
+			Size = if alongZ then Vector3.new(2.4, 3, info[2].Z) else Vector3.new(info[2].X, 3, 2.4),
+			CFrame = CFrame.new(info[1] + Vector3.new(0, SURFACE + 1.5, 0)),
+			Color = Color3.fromRGB(175, 172, 165),
+			Material = Enum.Material.Concrete,
 		}, props)
 	end
 
@@ -593,6 +514,7 @@ function MapBuilder.Build(): MapInfo
 		buildings = buildings,
 		nightLights = nightLights,
 		nightNeon = nightNeon,
+		nightToggles = Architecture.Toggles(),
 	}
 
 	local function isSpecial(bx: number, bz: number): string?
@@ -617,13 +539,16 @@ function MapBuilder.Build(): MapInfo
 			local kind = isSpecial(bx, bz)
 			if kind == "safehouse" then
 				info.safehouse, info.safehouseSpawns = safehouse(bx, bz, buildings, props, ground)
+				Architecture.Sidewalks(Grid.BlockCenter(bx, bz), BLOCK, false)
 			elseif kind == "park" then
 				park(bx, bz, props, ground)
+				Architecture.Sidewalks(Grid.BlockCenter(bx, bz), BLOCK, true)
 			elseif kind == "hide" then
 				hidingSpot(bx, bz, buildings, props, ground)
+				Architecture.Sidewalks(Grid.BlockCenter(bx, bz), BLOCK, false)
 				table.insert(info.hidingZones, { center = Grid.BlockCenter(bx, bz), size = Vector3.new(BLOCK - 30, 40, BLOCK - 30) })
 			else
-				cityBlock(bx, bz, buildings, props, ground)
+				cityBlock(bx, bz, ground, props)
 			end
 		end
 	end

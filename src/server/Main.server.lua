@@ -64,7 +64,7 @@ spawnLocation.Duration = 0
 spawnLocation.Parent = workspace
 
 -- Realistic day / night lighting (sky, clouds, colour grading, street lamps)
-DayNight.Init(mapInfo.nightLights, mapInfo.nightNeon)
+DayNight.Init(mapInfo.nightLights, mapInfo.nightNeon, mapInfo.nightToggles)
 
 -- day / night cycle
 task.spawn(function()
