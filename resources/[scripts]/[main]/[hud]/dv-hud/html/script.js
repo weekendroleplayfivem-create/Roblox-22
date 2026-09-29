@@ -153,25 +153,9 @@ function buildCompass() {
     strip.innerHTML = html;
 }
 
-function buildSpeedoTicks() {
-    const g = $('#speedo-ticks');
-    let html = '';
-    const count = 24;
-    for (let i = 0; i <= count; i++) {
-        const angle = (135 + (270 * i) / count) * (Math.PI / 180);
-        const major = i % 4 === 0;
-        const r1 = major ? 76 : 79;
-        const r2 = 82;
-        const x1 = 100 + r1 * Math.cos(angle), y1 = 100 + r1 * Math.sin(angle);
-        const x2 = 100 + r2 * Math.cos(angle), y2 = 100 + r2 * Math.sin(angle);
-        html += `<line class="${major ? 'major' : ''}" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"/>`;
-    }
-    g.innerHTML = html;
-}
-
-function prepareArcs() {
-    $$('.ring-fg, .speedo-fill, .rpm-fill').forEach((el) => el.setAttribute('pathLength', '100'));
-    $$('.ring-fg').forEach((el) => { el.style.strokeDashoffset = '0'; });
+const RPM_SEGMENTS = 22;
+function buildRpm() {
+    $('#rpm').innerHTML = '<i></i>'.repeat(RPM_SEGMENTS);
 }
 
 /* ------------------------------------------------------------
@@ -272,7 +256,7 @@ function setRing(key, value) {
     if (!available) return;
 
     const v = Math.max(0, Math.min(100, value));
-    ring.querySelector('.ring-fg').style.strokeDashoffset = String(100 - v);
+    ring.style.setProperty('--v', v / 100);
     ring.querySelector('.ring-val').textContent = Math.round(v);
     ring.classList.toggle('low', LOW[key](v) && !state.status.dead);
     ring.classList.toggle('dead', !!state.status.dead);
@@ -288,7 +272,7 @@ function renderStatus() {
     const mode = s.voiceMode || 2;
     voice.classList.toggle('talking', !!s.talking || !!s.radio);
     voice.classList.toggle('radio', !!s.radio);
-    voice.querySelector('.ring-fg').style.strokeDashoffset = String(100 - (mode / 3) * 100);
+    voice.style.setProperty('--v', mode / 3);
     voice.querySelectorAll('.voice-bars i').forEach((bar, i) => bar.classList.toggle('on', i < mode));
 }
 
@@ -307,14 +291,16 @@ function renderVehicle() {
 
     const mph = unit() === 'mph';
     const speed = Math.round((v.speed || 0) * (mph ? 0.621371 : 1));
-    const max = v.type === 'air' ? (mph ? 400 : 600) : (mph ? 200 : 320);
-    $('#speed').textContent = speed;
-    $('#speed-arc').style.strokeDashoffset = String(100 - Math.min(speed / max, 1) * 100);
+    // 087 -> voorloopnullen gedimd
+    const digits = String(Math.min(speed, 999));
+    $('#speed').innerHTML = '<i>0</i>'.repeat(3 - digits.length) + digits;
 
-    const rpm = v.rpm || 0;
-    const rpmArc = $('#rpm-arc');
-    rpmArc.style.strokeDashoffset = String(100 - Math.min(rpm, 1) * 100);
-    rpmArc.classList.toggle('redline', rpm >= 0.9);
+    const rpm = Math.min(v.rpm || 0, 1);
+    const lit = Math.round(rpm * RPM_SEGMENTS);
+    $$('#rpm i').forEach((seg, i) => {
+        seg.classList.toggle('on', i < lit);
+        seg.classList.toggle('red', i >= RPM_SEGMENTS * 0.8);
+    });
 
     const gear = $('#gear');
     gear.textContent = v.gear ?? 'N';
@@ -363,7 +349,8 @@ function renderHeading(h) {
     strip.style.transform = `translateX(${165 - (h + 180) * 3}px)`;
 
     const dirs = ['N', 'NO', 'O', 'ZO', 'Z', 'ZW', 'W', 'NW'];
-    $('#heading').textContent = `${h}° ${dirs[Math.round(h / 45) % 8]}`;
+    $('#dir').textContent = dirs[Math.round(h / 45) % 8];
+    $('#heading').textContent = `${h}°`;
 }
 
 function setMoney(key, value) {
@@ -446,6 +433,7 @@ const handlers = {
         }
         if ('visible' in d) {
             $('#status').classList.toggle('above-map', !!d.visible);
+            $('#location').classList.toggle('beside-map', !!d.visible);
             const fake = $('.minimap-fake');
             if (fake) fake.style.opacity = d.visible ? 1 : 0;
         }
@@ -468,8 +456,7 @@ window.addEventListener('message', (e) => {
    ------------------------------------------------------------ */
 
 buildCompass();
-buildSpeedoTicks();
-prepareArcs();
+buildRpm();
 buildSettings();
 applySettings();
 renderHeading(0);
