@@ -446,94 +446,63 @@ svg { display: block; }
 .job { font: 600 13px/1 var(--font); }
 
 /* ------------------------------------------------------------
-   Voertuig: ronde meter (midden onder)
+   Voertuig: rechthoekige meter (linksonder, naast de minimap)
    ------------------------------------------------------------ */
 .vehicle {
     position: fixed;
-    left: 50%;
-    bottom: 18px;
-    transform: translateX(-50%) scale(var(--scale));
-    transform-origin: center bottom;
-    transition: opacity .35s var(--ease), transform .35s var(--ease);
+    left: calc(var(--mm-right) + 14px);
+    bottom: calc(100vh - var(--mm-bottom));
+    transform: scale(var(--scale));
+    transform-origin: left bottom;
+    transition: opacity .35s var(--ease), transform .35s var(--ease), left .45s var(--ease);
 }
 .vehicle.away {
     opacity: 0;
-    transform: translateX(-50%) scale(var(--scale)) translateY(40px);
+    transform: scale(var(--scale)) translateY(30px);
     pointer-events: none;
 }
+/* straatnaam schuift boven de meter als je in een voertuig zit */
+body.in-vehicle .location.beside-map { bottom: calc(100vh - var(--mm-bottom) + 112px); }
 
-.dial {
-    position: relative;
-    width: 240px;
-    height: 240px;
+.speedo {
+    width: 300px;
+    padding: 10px 12px 12px;
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(20, 22, 30, .86), rgba(10, 11, 16, .9));
+    box-shadow: var(--shadow), inset 0 0 0 1px var(--stroke);
+    border-left: 3px solid var(--accent);
 }
-.dial-svg {
-    position: absolute;
-    inset: 0;
-    width: 240px;
-    height: 240px;
-    filter: drop-shadow(0 8px 22px rgba(0, 0, 0, .5));
+.rpm {
+    display: flex;
+    gap: 2px;
+    height: 7px;
 }
-.dial-face {
-    fill: rgba(10, 11, 16, .78);
-    stroke: rgba(255, 255, 255, .08);
-    stroke-width: 1.5;
+.rpm i {
+    flex: 1;
+    border-radius: 1px;
+    background: rgba(255, 255, 255, .08);
+    transform: skewX(-18deg);
+    transition: background .08s;
 }
-.speed-track, .speed-fill, .rpm-track, .rpm-fill, .rpm-red { fill: none; }
-.speed-track { stroke: rgba(255, 255, 255, .08); stroke-width: 7; stroke-linecap: round; }
-.speed-fill {
-    stroke: var(--accent);
-    stroke-width: 7;
-    stroke-linecap: round;
-    stroke-dasharray: 100 100;
-    stroke-dashoffset: 100;
-    filter: drop-shadow(0 0 5px var(--accent-soft));
-    transition: stroke-dashoffset .12s linear;
-}
-.rpm-track { stroke: rgba(255, 255, 255, .06); stroke-width: 3; }
-.rpm-red {
-    stroke: rgba(255, 77, 77, .45);
-    stroke-width: 3;
-    stroke-dasharray: 15 100;
-    stroke-dashoffset: -85;
-}
-.rpm-fill {
-    stroke: rgba(255, 255, 255, .85);
-    stroke-width: 3;
-    stroke-dasharray: 100 100;
-    stroke-dashoffset: 100;
-    transition: stroke-dashoffset .1s linear, stroke .2s;
-}
-.rpm-fill.redline { stroke: var(--danger); filter: drop-shadow(0 0 4px var(--danger)); }
-#dial-ticks line { stroke: rgba(255, 255, 255, .25); stroke-width: 1.2; }
-#dial-ticks line.major { stroke: rgba(255, 255, 255, .7); stroke-width: 2; }
-#dial-labels text {
-    fill: rgba(255, 255, 255, .55);
-    font: 700 10px var(--font-num);
-    text-anchor: middle;
-}
+.rpm i.red { background: rgba(255, 77, 77, .18); }
+.rpm i.on { background: var(--accent); box-shadow: 0 0 5px var(--accent-soft); }
+.rpm i.red.on { background: var(--danger); box-shadow: 0 0 5px rgba(255, 77, 77, .6); }
 
-.dial-center {
-    position: absolute;
-    left: 0; right: 0;
-    top: 74px;
+.speedo-body {
+    display: flex;
+    align-items: stretch;
+    gap: 12px;
+    margin-top: 8px;
+}
+.speed-block {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    justify-content: center;
+    padding-right: 12px;
+    border-right: 1px solid var(--stroke);
 }
-.gear {
-    min-width: 26px;
-    padding: 2px 6px;
-    border-radius: 6px;
-    background: rgba(255, 255, 255, .06);
-    box-shadow: inset 0 0 0 1px var(--accent-soft);
-    font: 700 15px/1.1 var(--font-num);
-    text-align: center;
-    color: var(--accent);
-}
-.gear.reverse { color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger); }
 .speed {
-    font: 700 44px/0.9 var(--font-num);
+    font: 700 50px/0.85 var(--font-num);
     font-variant-numeric: tabular-nums;
     letter-spacing: 1px;
     text-shadow: 0 2px 12px rgba(0, 0, 0, .6);
@@ -542,26 +511,44 @@ svg { display: block; }
 .speed-sub {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 6px;
-    margin-top: 4px;
+    margin-top: 5px;
 }
 .unit {
     font: 700 10px/1 var(--font-num);
     letter-spacing: 2px;
     color: var(--text-dim);
 }
+.gear {
+    min-width: 24px;
+    padding: 2px 6px;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, .06);
+    box-shadow: inset 0 0 0 1px var(--accent-soft);
+    font: 700 14px/1.1 var(--font-num);
+    text-align: center;
+    color: var(--accent);
+}
+.gear.reverse { color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger); }
 .altitude {
     display: none;
-    margin-top: 3px;
+    margin-top: 4px;
     font: 600 11px/1 var(--font-num);
     color: var(--text-dim);
 }
 .vehicle.air .altitude { display: block; }
 
-/* icoontjes op de plaat van de meter */
-.veh-icons { display: flex; gap: 4px; margin-top: 9px; }
+.speedo-side {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 6px;
+}
+.veh-icons { display: flex; gap: 4px; }
 .vicon {
-    width: 24px;
+    width: 26px;
     height: 24px;
     border-radius: 6px;
     display: grid;
@@ -589,26 +576,15 @@ svg { display: block; }
 .vicon.warn.show svg { stroke: #0b0d12; }
 .vehicle.no-belt #ic-belt { display: none; }
 
-/* brandstof + motor in de opening onderaan */
-.dial-bottom {
-    position: absolute;
-    left: 50%;
-    bottom: 12px;
-    width: 116px;
-    transform: translateX(-50%);
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
 .veh-bar {
     display: grid;
-    grid-template-columns: 12px 1fr 28px;
+    grid-template-columns: 13px 1fr 30px;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
 }
 .veh-bar svg {
-    width: 12px;
-    height: 12px;
+    width: 13px;
+    height: 13px;
     fill: none;
     stroke: var(--text-dim);
     stroke-width: 2;
@@ -616,12 +592,12 @@ svg { display: block; }
     stroke-linejoin: round;
 }
 .veh-bar b {
-    font: 700 11px/1 var(--font-num);
+    font: 700 12px/1 var(--font-num);
     text-align: right;
     font-variant-numeric: tabular-nums;
 }
 .bar {
-    height: 4px;
+    height: 5px;
     border-radius: 2px;
     background: var(--track);
     overflow: hidden;
