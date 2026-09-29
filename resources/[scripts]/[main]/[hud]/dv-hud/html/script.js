@@ -153,9 +153,39 @@ function buildCompass() {
     strip.innerHTML = html;
 }
 
-const RPM_SEGMENTS = 22;
-function buildRpm() {
-    $('#rpm').innerHTML = '<i></i>'.repeat(RPM_SEGMENTS);
+function prepareArcs() {
+    $$('.speed-fill, .rpm-fill, .rpm-red').forEach((el) => el.setAttribute('pathLength', '100'));
+}
+
+// Streepjes + getallen op de ronde meter (opnieuw bij andere eenheid/voertuigtype)
+let dialKey = '';
+function dialMax() {
+    const mph = unit() === 'mph';
+    if (state.vehicle.type === 'air') return mph ? 400 : 600;
+    return mph ? 200 : 320;
+}
+function buildDial() {
+    const max = dialMax();
+    const key = `${max}`;
+    if (key === dialKey) return;
+    dialKey = key;
+
+    const steps = 8;
+    let ticks = '';
+    let labels = '';
+    for (let i = 0; i <= steps * 4; i++) {
+        const a = (135 + (270 * i) / (steps * 4)) * (Math.PI / 180);
+        const major = i % 4 === 0;
+        const r1 = major ? 91 : 94;
+        const r2 = 97;
+        ticks += `<line class="${major ? 'major' : ''}" x1="${(120 + r1 * Math.cos(a)).toFixed(1)}" y1="${(120 + r1 * Math.sin(a)).toFixed(1)}" x2="${(120 + r2 * Math.cos(a)).toFixed(1)}" y2="${(120 + r2 * Math.sin(a)).toFixed(1)}"/>`;
+        if (major) {
+            const r = 71;
+            labels += `<text x="${(120 + r * Math.cos(a)).toFixed(1)}" y="${(120 + r * Math.sin(a) + 4).toFixed(1)}">${Math.round((max * i) / (steps * 4))}</text>`;
+        }
+    }
+    $('#dial-ticks').innerHTML = ticks;
+    $('#dial-labels').innerHTML = labels;
 }
 
 /* ------------------------------------------------------------
@@ -291,16 +321,16 @@ function renderVehicle() {
 
     const mph = unit() === 'mph';
     const speed = Math.round((v.speed || 0) * (mph ? 0.621371 : 1));
+    buildDial();
     // 087 -> voorloopnullen gedimd
     const digits = String(Math.min(speed, 999));
     $('#speed').innerHTML = '<i>0</i>'.repeat(3 - digits.length) + digits;
+    $('#speed-arc').style.strokeDashoffset = String(100 - Math.min(speed / dialMax(), 1) * 100);
 
     const rpm = Math.min(v.rpm || 0, 1);
-    const lit = Math.round(rpm * RPM_SEGMENTS);
-    $$('#rpm i').forEach((seg, i) => {
-        seg.classList.toggle('on', i < lit);
-        seg.classList.toggle('red', i >= RPM_SEGMENTS * 0.8);
-    });
+    const rpmArc = $('#rpm-arc');
+    rpmArc.style.strokeDashoffset = String(100 - rpm * 100);
+    rpmArc.classList.toggle('redline', rpm >= 0.85);
 
     const gear = $('#gear');
     gear.textContent = v.gear ?? 'N';
@@ -456,7 +486,8 @@ window.addEventListener('message', (e) => {
    ------------------------------------------------------------ */
 
 buildCompass();
-buildRpm();
+prepareArcs();
+buildDial();
 buildSettings();
 applySettings();
 renderHeading(0);

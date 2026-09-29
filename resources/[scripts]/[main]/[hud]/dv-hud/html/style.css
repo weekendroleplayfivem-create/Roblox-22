@@ -446,121 +446,182 @@ svg { display: block; }
 .job { font: 600 13px/1 var(--font); }
 
 /* ------------------------------------------------------------
-   Voertuig (rechtsonder)
+   Voertuig: ronde meter (midden onder)
    ------------------------------------------------------------ */
 .vehicle {
     position: fixed;
-    right: 26px;
-    bottom: 26px;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 6px;
-    transform: scale(var(--scale)) translateY(0);
-    transform-origin: right bottom;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%) scale(var(--scale));
+    transform-origin: center bottom;
     transition: opacity .35s var(--ease), transform .35s var(--ease);
 }
 .vehicle.away {
     opacity: 0;
-    transform: scale(var(--scale)) translateY(30px);
+    transform: translateX(-50%) scale(var(--scale)) translateY(40px);
     pointer-events: none;
 }
 
-.speedo {
-    width: 230px;
-    padding: 12px 14px 12px;
-    border-radius: 14px;
-    background: linear-gradient(180deg, rgba(20, 22, 30, .85), rgba(10, 11, 16, .88));
-    box-shadow: var(--shadow), inset 0 0 0 1px var(--stroke);
-    border-top: 2px solid var(--accent);
+.dial {
+    position: relative;
+    width: 240px;
+    height: 240px;
 }
-.rpm {
-    display: flex;
-    gap: 2px;
-    height: 8px;
-    align-items: flex-end;
+.dial-svg {
+    position: absolute;
+    inset: 0;
+    width: 240px;
+    height: 240px;
+    filter: drop-shadow(0 8px 22px rgba(0, 0, 0, .5));
 }
-.rpm i {
-    flex: 1;
-    height: 100%;
-    border-radius: 1px;
-    background: rgba(255, 255, 255, .08);
-    transform: skewX(-18deg);
-    transition: background .08s;
+.dial-face {
+    fill: rgba(10, 11, 16, .78);
+    stroke: rgba(255, 255, 255, .08);
+    stroke-width: 1.5;
 }
-.rpm i.on { background: var(--accent); box-shadow: 0 0 5px var(--accent-soft); }
-.rpm i.red.on { background: var(--danger); box-shadow: 0 0 5px rgba(255, 77, 77, .6); }
+.speed-track, .speed-fill, .rpm-track, .rpm-fill, .rpm-red { fill: none; }
+.speed-track { stroke: rgba(255, 255, 255, .08); stroke-width: 7; stroke-linecap: round; }
+.speed-fill {
+    stroke: var(--accent);
+    stroke-width: 7;
+    stroke-linecap: round;
+    stroke-dasharray: 100 100;
+    stroke-dashoffset: 100;
+    filter: drop-shadow(0 0 5px var(--accent-soft));
+    transition: stroke-dashoffset .12s linear;
+}
+.rpm-track { stroke: rgba(255, 255, 255, .06); stroke-width: 3; }
+.rpm-red {
+    stroke: rgba(255, 77, 77, .45);
+    stroke-width: 3;
+    stroke-dasharray: 15 100;
+    stroke-dashoffset: -85;
+}
+.rpm-fill {
+    stroke: rgba(255, 255, 255, .85);
+    stroke-width: 3;
+    stroke-dasharray: 100 100;
+    stroke-dashoffset: 100;
+    transition: stroke-dashoffset .1s linear, stroke .2s;
+}
+.rpm-fill.redline { stroke: var(--danger); filter: drop-shadow(0 0 4px var(--danger)); }
+#dial-ticks line { stroke: rgba(255, 255, 255, .25); stroke-width: 1.2; }
+#dial-ticks line.major { stroke: rgba(255, 255, 255, .7); stroke-width: 2; }
+#dial-labels text {
+    fill: rgba(255, 255, 255, .55);
+    font: 700 10px var(--font-num);
+    text-anchor: middle;
+}
 
-.speed-row {
+.dial-center {
+    position: absolute;
+    left: 0; right: 0;
+    top: 74px;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: space-between;
-    margin: 6px 0 8px;
 }
+.gear {
+    min-width: 26px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, .06);
+    box-shadow: inset 0 0 0 1px var(--accent-soft);
+    font: 700 15px/1.1 var(--font-num);
+    text-align: center;
+    color: var(--accent);
+}
+.gear.reverse { color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger); }
 .speed {
-    font: 700 60px/0.9 var(--font-num);
+    font: 700 44px/0.9 var(--font-num);
     font-variant-numeric: tabular-nums;
     letter-spacing: 1px;
     text-shadow: 0 2px 12px rgba(0, 0, 0, .6);
 }
 .speed i { font-style: normal; color: rgba(255, 255, 255, .14); }
-.speed-side {
+.speed-sub {
     display: flex;
-    flex-direction: column;
     align-items: center;
     gap: 6px;
+    margin-top: 4px;
 }
-.gear {
-    width: 38px;
-    height: 34px;
-    border-radius: 8px;
+.unit {
+    font: 700 10px/1 var(--font-num);
+    letter-spacing: 2px;
+    color: var(--text-dim);
+}
+.altitude {
+    display: none;
+    margin-top: 3px;
+    font: 600 11px/1 var(--font-num);
+    color: var(--text-dim);
+}
+.vehicle.air .altitude { display: block; }
+
+/* icoontjes op de plaat van de meter */
+.veh-icons { display: flex; gap: 4px; margin-top: 9px; }
+.vicon {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
     display: grid;
     place-items: center;
     background: rgba(255, 255, 255, .06);
-    box-shadow: inset 0 0 0 1px var(--accent-soft);
-    font: 700 22px/1 var(--font-num);
-    color: var(--accent);
+    transition: background .25s, opacity .25s;
 }
-.gear.reverse { color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger); }
-.unit {
-    font: 700 10px/1 var(--font-num);
-    letter-spacing: 1.5px;
-    color: var(--text-dim);
-}
-
-.altitude {
-    display: none;
-    margin: -2px 0 8px;
-    font: 600 11px/1 var(--font-num);
-    letter-spacing: 1px;
-    color: var(--text-dim);
-}
-.altitude b { color: var(--text); margin-left: 4px; }
-.vehicle.air .altitude { display: block; }
-
-.veh-bars { display: flex; flex-direction: column; gap: 6px; }
-.veh-bar {
-    display: grid;
-    grid-template-columns: 15px 1fr 36px;
-    align-items: center;
-    gap: 8px;
-}
-.veh-bar svg {
-    width: 15px;
-    height: 15px;
+.vicon svg {
+    width: 14px;
+    height: 14px;
     fill: none;
     stroke: var(--text-dim);
-    stroke-width: 1.9;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: stroke .25s;
+}
+.vicon.on { background: var(--accent); }
+.vicon.on svg { stroke: #0b0d12; }
+.vicon.high { background: #4da3ff; }
+.vicon.alert { background: rgba(255, 77, 77, .9); animation: pulse 0.8s infinite; }
+.vicon.alert svg { stroke: #fff; }
+.vicon.warn { display: none; }
+.vicon.warn.show { display: grid; background: var(--warn); animation: pulse 1s infinite; }
+.vicon.warn.show svg { stroke: #0b0d12; }
+.vehicle.no-belt #ic-belt { display: none; }
+
+/* brandstof + motor in de opening onderaan */
+.dial-bottom {
+    position: absolute;
+    left: 50%;
+    bottom: 12px;
+    width: 116px;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.veh-bar {
+    display: grid;
+    grid-template-columns: 12px 1fr 28px;
+    align-items: center;
+    gap: 5px;
+}
+.veh-bar svg {
+    width: 12px;
+    height: 12px;
+    fill: none;
+    stroke: var(--text-dim);
+    stroke-width: 2;
     stroke-linecap: round;
     stroke-linejoin: round;
 }
 .veh-bar b {
-    font: 700 13px/1 var(--font-num);
+    font: 700 11px/1 var(--font-num);
     text-align: right;
     font-variant-numeric: tabular-nums;
 }
 .bar {
-    height: 6px;
+    height: 4px;
     border-radius: 2px;
     background: var(--track);
     overflow: hidden;
@@ -575,37 +636,6 @@ svg { display: block; }
 #engine-fill { background: #d9dde6; }
 .veh-bar.low .bar-fill { background: var(--danger); }
 .veh-bar.low svg { stroke: var(--danger); animation: pulse 1s infinite; }
-
-.veh-icons { display: flex; gap: 5px; }
-.vicon {
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
-    display: grid;
-    place-items: center;
-    background: rgba(10, 11, 16, .8);
-    box-shadow: var(--shadow), inset 0 0 0 1px var(--stroke);
-    transition: background .25s, box-shadow .25s, opacity .25s;
-}
-.vicon svg {
-    width: 17px;
-    height: 17px;
-    fill: none;
-    stroke: var(--text-dim);
-    stroke-width: 1.9;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    transition: stroke .25s;
-}
-.vicon.on { background: var(--accent); }
-.vicon.on svg { stroke: #0b0d12; }
-.vicon.high { background: #4da3ff; }
-.vicon.alert { background: rgba(255, 77, 77, .9); animation: pulse 0.8s infinite; }
-.vicon.alert svg { stroke: #fff; }
-.vicon.warn { display: none; }
-.vicon.warn.show { display: grid; background: var(--warn); animation: pulse 1s infinite; }
-.vicon.warn.show svg { stroke: #0b0d12; }
-.vehicle.no-belt #ic-belt { display: none; }
 
 /* ------------------------------------------------------------
    Instellingen
