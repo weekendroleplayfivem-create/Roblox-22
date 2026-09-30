@@ -19,6 +19,7 @@ local Traffic = require(script.Parent.Traffic)
 local Showroom = require(script.Parent.Showroom)
 local Weapons = require(script.Parent.Weapons)
 local Races = require(script.Parent.Races)
+local Leaderboard = require(script.Parent.Leaderboard)
 
 ---------------------------------------------------------------------------
 -- Remotes
@@ -57,6 +58,7 @@ Vehicles.SetSpawns(mapInfo.safehouseSpawns)
 Police.Init(mapInfo)
 Traffic.Init()
 Showroom.Build(workspace:WaitForChild("Map"))
+Leaderboard.Init(mapInfo.safehouse, workspace:WaitForChild("Map"))
 Police.SetBustedCallback(function(s)
 	Races.Cancel(s)
 end)
@@ -169,6 +171,9 @@ Players.PlayerRemoving:Connect(function(player)
 		end
 		Session.Remove(player)
 	end
+	pcall(function()
+		Leaderboard.Submit(player)
+	end)
 	PlayerData.Release(player)
 end)
 

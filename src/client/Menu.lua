@@ -25,6 +25,8 @@ local FullMap = require(script.Parent.FullMap)
 local HUD = require(script.Parent.HUD)
 local Input = require(script.Parent.Input)
 local Scale = require(script.Parent.Scale)
+local Theme = require(script.Parent.Theme)
+local LeaderboardUI = require(script.Parent.LeaderboardUI)
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -48,7 +50,7 @@ local function new(className: string, props: { [string]: any }, parent: Instance
 end
 
 local function text(parent: Instance, props: { [string]: any }): TextLabel
-	local base = { BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextColor3 = Color3.new(1, 1, 1), TextScaled = true, TextXAlignment = Enum.TextXAlignment.Left }
+	local base: { [string]: any } = { BackgroundTransparency = 1, FontFace = Theme.Fonts.Body, TextColor3 = Color3.new(1, 1, 1), TextScaled = true, TextXAlignment = Enum.TextXAlignment.Left }
 	for k, v in props do
 		base[k] = v
 	end
@@ -71,19 +73,29 @@ local barBottom = new("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDi
 local fade = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 50 }, gui)
 
 -- left column: logo + buttons
-local left = new("Frame", { Position = UDim2.new(0, 60, 0, 90), Size = UDim2.new(0, 460, 1, -160), BackgroundTransparency = 1 }, gui)
+local left = new("Frame", { Position = UDim2.new(0, 60, 0, 70), Size = UDim2.new(0, 460, 1, -120), BackgroundTransparency = 1 }, gui)
 local logo = new("Frame", { Size = UDim2.new(1, 0, 0, 170), BackgroundTransparency = 1 }, left)
-text(logo, { Size = UDim2.new(1, 0, 0, 92), Text = "WANTED", Font = Enum.Font.GothamBlack, TextColor3 = RED, TextStrokeTransparency = 0, TextStrokeColor3 = Color3.fromRGB(40, 0, 10) })
-text(logo, { Position = UDim2.fromOffset(4, 86), Size = UDim2.new(1, 0, 0, 50), Text = "U N B O U N D", Font = Enum.Font.GothamBlack, TextColor3 = CYAN, TextStrokeTransparency = 0 })
-local tagline = text(logo, { Position = UDim2.fromOffset(4, 142), Size = UDim2.new(1, 0, 0, 22), Text = "Race.  Raise your heat.  Escape the cops.  Climb the Blacklist.", Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(220, 220, 230) })
+local wantedText = text(logo, { Size = UDim2.new(1, 0, 0, 92), Text = "WANTED", FontFace = Theme.Fonts.Display, TextColor3 = Color3.new(1, 1, 1) })
+new("UIGradient", { Color = ColorSequence.new(Color3.fromRGB(255, 70, 70), Color3.fromRGB(255, 150, 40)), Rotation = 0 }, wantedText)
+new("UIStroke", { Color = Color3.fromRGB(40, 0, 10), Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual }, wantedText)
+local unboundText = text(logo, { Position = UDim2.fromOffset(4, 88), Size = UDim2.new(1, 0, 0, 46), Text = "U N B O U N D", FontFace = Theme.Fonts.Heading, TextColor3 = Color3.new(1, 1, 1) })
+local logoShine = new("UIGradient", { Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, CYAN),
+	ColorSequenceKeypoint.new(0.45, CYAN),
+	ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
+	ColorSequenceKeypoint.new(0.55, PINK),
+	ColorSequenceKeypoint.new(1, PINK),
+}), Offset = Vector2.new(-1, 0) }, unboundText)
+local tagline = text(logo, { Position = UDim2.fromOffset(4, 142), Size = UDim2.new(1, 0, 0, 22), Text = "Race.  Raise your heat.  Escape the cops.  Climb the Blacklist.", FontFace = Theme.Fonts.Light, TextColor3 = Color3.fromRGB(220, 220, 230) })
 
-local list = new("Frame", { Position = UDim2.fromOffset(0, 200), Size = UDim2.new(1, 0, 1, -200), BackgroundTransparency = 1 }, left)
-new("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+local list = new("Frame", { Position = UDim2.fromOffset(0, 182), Size = UDim2.new(1, 0, 1, -182), BackgroundTransparency = 1 }, left)
+new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, list)
 
-type Button = { frame: TextButton, setLabel: (string) -> () }
+type Button = { frame: TextButton, setLabel: (string) -> (), slide: UIPadding }
+local buttons: { Button } = {}
 local function menuButton(label: string, order: number, onClick: () -> ()): Button
 	local b = new("TextButton", {
-		Size = UDim2.new(0, 360, 0, 54),
+		Size = UDim2.new(0, 360, 0, 44),
 		BackgroundColor3 = Color3.fromRGB(12, 12, 20),
 		BackgroundTransparency = 0.25,
 		AutoButtonColor = false,
@@ -91,21 +103,23 @@ local function menuButton(label: string, order: number, onClick: () -> ()): Butt
 		LayoutOrder = order,
 	}, list)
 	new("UICorner", { CornerRadius = UDim.new(0, 6) }, b)
+	new("UIGradient", { Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(150, 150, 170)), Rotation = 90 }, b)
+	local slide = new("UIPadding", {}, b)
 	local accent = new("Frame", { Size = UDim2.new(0, 5, 1, 0), BackgroundColor3 = PINK, BorderSizePixel = 0 }, b)
 	local fill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = PINK, BackgroundTransparency = 0.15, BorderSizePixel = 0 }, b)
 	new("UICorner", { CornerRadius = UDim.new(0, 6) }, fill)
-	local t = text(b, { Position = UDim2.fromOffset(24, 10), Size = UDim2.new(1, -40, 1, -20), Text = label, Font = Enum.Font.GothamBlack, ZIndex = 2 })
-	local arrowLbl = text(b, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 14), Size = UDim2.fromOffset(24, 26), Text = "›", TextXAlignment = Enum.TextXAlignment.Right, TextTransparency = 1, ZIndex = 2 })
+	local t = text(b, { Position = UDim2.fromOffset(24, 11), Size = UDim2.new(1, -40, 1, -22), Text = label, FontFace = Theme.Fonts.Heading, ZIndex = 2 })
+	local arrowLbl = text(b, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 9), Size = UDim2.fromOffset(24, 26), Text = "›", TextXAlignment = Enum.TextXAlignment.Right, TextTransparency = 1, ZIndex = 2 })
 	local quick = TweenInfo.new(0.16, Enum.EasingStyle.Quad)
 	b.MouseEnter:Connect(function()
 		Sounds.Tick(1.4, 0.25)
 		TweenService:Create(fill, quick, { Size = UDim2.new(1, 0, 1, 0) }):Play()
-		TweenService:Create(t, quick, { Position = UDim2.fromOffset(34, 10) }):Play()
+		TweenService:Create(t, quick, { Position = UDim2.fromOffset(34, 11) }):Play()
 		TweenService:Create(arrowLbl, quick, { TextTransparency = 0 }):Play()
 	end)
 	b.MouseLeave:Connect(function()
 		TweenService:Create(fill, quick, { Size = UDim2.new(0, 0, 1, 0) }):Play()
-		TweenService:Create(t, quick, { Position = UDim2.fromOffset(24, 10) }):Play()
+		TweenService:Create(t, quick, { Position = UDim2.fromOffset(24, 11) }):Play()
 		TweenService:Create(arrowLbl, quick, { TextTransparency = 1 }):Play()
 	end)
 	b.Activated:Connect(function()
@@ -113,12 +127,16 @@ local function menuButton(label: string, order: number, onClick: () -> ()): Butt
 		onClick()
 	end)
 	local _ = accent
-	return {
+	local made: Button
+	made = {
 		frame = b,
 		setLabel = function(s: string)
 			t.Text = s
 		end,
+		slide = slide,
 	}
+	table.insert(buttons, made)
+	return made
 end
 
 Scale.Attach(left)
@@ -131,8 +149,7 @@ local card = new("Frame", {
 	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
 	BackgroundTransparency = 0.2,
 }, gui)
-new("UICorner", { CornerRadius = UDim.new(0, 12) }, card)
-new("UIStroke", { Color = CYAN, Thickness = 2, Transparency = 0.4 }, card)
+Theme.Panel(card, CYAN, 16)
 Scale.Attach(card)
 local avatar = new("ImageLabel", { Position = UDim2.fromOffset(16, 16), Size = UDim2.fromOffset(72, 72), BackgroundColor3 = Color3.fromRGB(30, 30, 40) }, card)
 new("UICorner", { CornerRadius = UDim.new(1, 0) }, avatar)
@@ -144,7 +161,7 @@ task.spawn(function()
 		avatar.Image = img
 	end
 end)
-text(card, { Position = UDim2.fromOffset(100, 22), Size = UDim2.new(1, -116, 0, 28), Text = player.DisplayName, Font = Enum.Font.GothamBlack })
+text(card, { Position = UDim2.fromOffset(100, 22), Size = UDim2.new(1, -116, 0, 28), Text = player.DisplayName, FontFace = Theme.Fonts.Heading })
 local rankLabel = text(card, { Position = UDim2.fromOffset(100, 54), Size = UDim2.new(1, -116, 0, 20), Text = "", TextColor3 = RED })
 local statRows: { TextLabel } = {}
 for k = 1, 6 do
@@ -206,10 +223,9 @@ local panel = new("Frame", {
 	BackgroundTransparency = 0.1,
 	Visible = false,
 }, gui)
-new("UICorner", { CornerRadius = UDim.new(0, 12) }, panel)
-new("UIStroke", { Color = PINK, Thickness = 2 }, panel)
+Theme.Panel(panel, PINK, 16)
 Scale.Attach(panel)
-local panelTitle = text(panel, { Position = UDim2.fromOffset(20, 14), Size = UDim2.new(1, -40, 0, 32), Text = "", Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
+local panelTitle = text(panel, { Position = UDim2.fromOffset(20, 14), Size = UDim2.new(1, -40, 0, 32), Text = "", FontFace = Theme.Fonts.Display, TextColor3 = CYAN })
 local panelBody = new("Frame", { Position = UDim2.fromOffset(20, 60), Size = UDim2.new(1, -40, 1, -80), BackgroundTransparency = 1 }, panel)
 
 local function clearPanel()
@@ -438,15 +454,33 @@ local tipIndex = 1
 
 -- buttons
 local playButton: Button
+local menuToken = 0
+local LEFT_HOME = left.Position
+local CARD_HOME = card.Position
 local function closeMenu()
 	if Menu.Mode == "closed" then
 		return
 	end
+	local wasTitle = Menu.Mode == "title"
 	Menu.Mode = "closed"
 	Drive.MenuOpen = false
 	Input.ClearSelection()
-	TweenService:Create(fade, TweenInfo.new(0.25), { BackgroundTransparency = 0 }):Play()
+	Theme.Blur("menu", false)
+	menuToken += 1
+	local token = menuToken
+	-- slide everything off screen; from the title screen also dip to black
+	local out = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	TweenService:Create(left, out, { Position = LEFT_HOME - UDim2.fromOffset(560, 0) }):Play()
+	TweenService:Create(card, out, { Position = CARD_HOME + UDim2.fromOffset(460, 0) }):Play()
+	TweenService:Create(panel, out, { Position = CARD_HOME + UDim2.fromOffset(640, 0) }):Play()
+	TweenService:Create(shade, out, { BackgroundTransparency = 1 }):Play()
+	if wasTitle then
+		TweenService:Create(fade, TweenInfo.new(0.25), { BackgroundTransparency = 0 }):Play()
+	end
 	task.delay(0.28, function()
+		if menuToken ~= token then
+			return
+		end
 		gui.Enabled = false
 		fade.BackgroundTransparency = 1
 	end)
@@ -454,7 +488,25 @@ end
 
 local function openMenu(mode: string)
 	Menu.Mode = mode
+	menuToken += 1
 	gui.Enabled = true
+	Theme.Blur("menu", mode == "pause")
+	-- animate in: columns slide from the sides, buttons cascade, shade fades up
+	left.Position = LEFT_HOME - UDim2.fromOffset(560, 0)
+	card.Position = CARD_HOME + UDim2.fromOffset(460, 0)
+	panel.Position = CARD_HOME
+	local back = TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	TweenService:Create(left, back, { Position = LEFT_HOME }):Play()
+	TweenService:Create(card, TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out, 0, false, 0.08), { Position = CARD_HOME }):Play()
+	for k, btn in buttons do
+		btn.slide.PaddingLeft = UDim.new(0, -120)
+		btn.frame.BackgroundTransparency = 1
+		local info = TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out, 0, false, 0.1 + k * 0.045)
+		TweenService:Create(btn.slide, info, { PaddingLeft = UDim.new(0, 0) }):Play()
+		TweenService:Create(btn.frame, info, { BackgroundTransparency = 0.25 }):Play()
+	end
+	logoShine.Offset = Vector2.new(-1, 0)
+	TweenService:Create(logoShine, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.Out, 0, false, 0.3), { Offset = Vector2.new(1, 0) }):Play()
 	panel.Visible = false
 	card.Visible = true
 	activePanel = ""
@@ -463,7 +515,8 @@ local function openMenu(mode: string)
 	barTop.Visible = mode == "title"
 	barBottom.Visible = true
 	tagline.Visible = mode == "title"
-	shade.BackgroundTransparency = if mode == "title" then 0.2 else 0.05
+	shade.BackgroundTransparency = 1
+	TweenService:Create(shade, TweenInfo.new(0.35), { BackgroundTransparency = if mode == "title" then 0.2 else 0.15 }):Play()
 	shotClock = 0
 	refreshCard()
 	Input.Select(playButton.frame)
@@ -484,16 +537,19 @@ end)
 menuButton("CITY MAP", 3, function()
 	FullMap.Toggle(true)
 end)
-menuButton("CODES", 4, function()
+menuButton("LEADERBOARD", 4, function()
+	LeaderboardUI.Toggle(true)
+end)
+menuButton("CODES", 5, function()
 	togglePanel("codes", showCodes)
 end)
-menuButton("SETTINGS", 5, function()
+menuButton("SETTINGS", 6, function()
 	togglePanel("settings", showSettings)
 end)
-menuButton("HOW TO PLAY", 6, function()
+menuButton("HOW TO PLAY", 7, function()
 	togglePanel("help", showHelp)
 end)
-menuButton("CREDITS", 7, function()
+menuButton("CREDITS", 8, function()
 	togglePanel("credits", showCredits)
 end)
 
@@ -509,31 +565,44 @@ ContextActionService:BindAction("WU_Pause", function(_, state)
 	return Enum.ContextActionResult.Sink
 end, false, Enum.KeyCode.P, Enum.KeyCode.DPadDown)
 
-local pauseButton = new("TextButton", {
-	AnchorPoint = Vector2.new(1, 0),
-	Position = UDim2.new(1, -16, 0, 60),
-	Size = UDim2.fromOffset(44, 44),
-	BackgroundColor3 = Color3.fromRGB(12, 12, 20),
-	BackgroundTransparency = 0.25,
-	Text = "☰",
-	TextScaled = true,
-	Font = Enum.Font.GothamBlack,
-	TextColor3 = Color3.new(1, 1, 1),
-}, HUD.Gui)
-new("UICorner", { CornerRadius = UDim.new(0, 10) }, pauseButton)
-local mapButton = new("TextButton", {
-	AnchorPoint = Vector2.new(1, 0),
-	Position = UDim2.new(1, -68, 0, 60),
-	Size = UDim2.fromOffset(60, 44),
-	BackgroundColor3 = Color3.fromRGB(12, 12, 20),
-	BackgroundTransparency = 0.25,
-	Text = "MAP",
-	TextScaled = true,
-	Font = Enum.Font.GothamBlack,
-	TextColor3 = Color3.new(1, 1, 1),
-}, HUD.Gui)
-new("UICorner", { CornerRadius = UDim.new(0, 10) }, mapButton)
-new("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10) }, mapButton)
+-- round glass buttons, top right of the HUD
+local function hudButton(icon: string, slot: number, accent: Color3): TextButton
+	local btn = new("TextButton", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -16 - (slot - 1) * 52, 0, 60),
+		Size = UDim2.fromOffset(44, 44),
+		BackgroundColor3 = Theme.Colors.Panel,
+		BackgroundTransparency = 0.15,
+		AutoButtonColor = false,
+		Text = icon,
+		TextScaled = true,
+		FontFace = Theme.Fonts.Heading,
+		TextColor3 = Color3.new(1, 1, 1),
+	}, HUD.Gui)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, btn)
+	local stroke = new("UIStroke", { Color = accent, Thickness = 1.5, Transparency = 0.4, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, btn)
+	new("UIPadding", { PaddingTop = UDim.new(0, 11), PaddingBottom = UDim.new(0, 11), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, btn)
+	local scale = new("UIScale", {}, btn)
+	btn.MouseEnter:Connect(function()
+		Theme.Tween(scale, 0.15, { Scale = 1.1 })
+		Theme.Tween(stroke, 0.15, { Transparency = 0 })
+	end)
+	btn.MouseLeave:Connect(function()
+		Theme.Tween(scale, 0.15, { Scale = 1 })
+		Theme.Tween(stroke, 0.15, { Transparency = 0.4 })
+	end)
+	btn.Activated:Connect(function()
+		scale.Scale = 0.85
+		Theme.Tween(scale, 0.3, { Scale = 1 }, Enum.EasingStyle.Back)
+	end)
+	return btn
+end
+local pauseButton = hudButton("☰", 1, PINK)
+local mapButton = hudButton("MAP", 2, CYAN)
+local boardButton = hudButton("🏆", 3, Theme.Colors.Gold)
+boardButton.Activated:Connect(function()
+	LeaderboardUI.Toggle()
+end)
 mapButton.Activated:Connect(function()
 	FullMap.Toggle()
 end)

@@ -12,6 +12,7 @@ local MapDraw = require(script.Parent.MapDraw)
 local Drive = require(script.Parent.DriveController)
 local Sounds = require(script.Parent.Sounds)
 local Scale = require(script.Parent.Scale)
+local Theme = require(script.Parent.Theme)
 
 local player = Players.LocalPlayer
 local FullMap = {}
@@ -28,22 +29,27 @@ local function new(className: string, props: { [string]: any }, parent: Instance
 	return inst
 end
 
-local gui = new("ScreenGui", { Name = "WantedUnboundMap", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 15, Enabled = false }, player:WaitForChild("PlayerGui"))
-new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.35, BorderSizePixel = 0 }, gui)
+local gui = new("ScreenGui", { Name = "WantedUnboundMap", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 25, Enabled = false }, player:WaitForChild("PlayerGui"))
+local backdrop = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(4, 4, 10), BackgroundTransparency = 0.35, BorderSizePixel = 0 }, gui)
 
 local PANEL = 640
+-- the CanvasGroup lets the whole map fade and pop in as one piece
+local holder: CanvasGroup = new("CanvasGroup", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(PANEL + 10, PANEL + 10),
+	BackgroundTransparency = 1,
+}, gui)
+Scale.Attach(holder)
 local panel = new("Frame", {
 	AnchorPoint = Vector2.new(0.5, 0.5),
 	Position = UDim2.fromScale(0.5, 0.5),
 	Size = UDim2.fromOffset(PANEL, PANEL),
 	BackgroundColor3 = Color3.fromRGB(10, 10, 16),
 	ClipsDescendants = true,
-}, gui)
+}, holder)
 new("UICorner", { CornerRadius = UDim.new(0, 14) }, panel)
 new("UIStroke", { Color = Color3.fromRGB(255, 40, 160), Thickness = 3 }, panel)
-new("UIAspectRatioConstraint", { AspectRatio = 1 }, panel)
-new("UISizeConstraint", { MaxSize = Vector2.new(PANEL, PANEL) }, panel)
-Scale.Attach(panel)
 
 local canvas: Frame = new("Frame", { Name = "Canvas", BackgroundTransparency = 1 }, panel)
 local total = MapDraw.WorldSize + MapDraw.Margin * 2
@@ -55,7 +61,7 @@ new("TextLabel", {
 	BackgroundTransparency = 1,
 	Text = "NEON BAY",
 	TextScaled = true,
-	Font = Enum.Font.GothamBlack,
+	FontFace = Theme.Fonts.Display,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	TextColor3 = Color3.fromRGB(0, 240, 255),
 	TextStrokeTransparency = 0.3,
@@ -90,8 +96,11 @@ local copDots: { Frame } = {}
 
 function FullMap.Toggle(open: boolean?)
 	local want = if open == nil then not FullMap.Open else open
+	if want == FullMap.Open then
+		return
+	end
 	FullMap.Open = want
-	gui.Enabled = want
+	Theme.Popup(gui, backdrop, holder, want)
 	Sounds.Tick(if want then 1.1 else 0.9, 0.4)
 end
 

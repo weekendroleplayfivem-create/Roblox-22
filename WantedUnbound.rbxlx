@@ -1,4 +1,4 @@
-<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4"><Item class="Workspace" referent="RBX00000000000000000000000000000028"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">true</bool><int name="StreamingTargetRadius">900</int><int name="StreamingMinRadius">280</int><token name="StreamOutBehavior">2</token></Properties></Item><Item class="Lighting" referent="RBX00000000000000000000000000000029"><Properties><string name="Name">Lighting</string><token name="Technology">3</token></Properties></Item><Item class="ReplicatedStorage" referent="RBX0000000000000000000000000000002A"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">Shared</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">CarPhysics</string><ProtectedString name="Source"><![CDATA[--!strict
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4"><Item class="Workspace" referent="RBX0000000000000000000000000000002B"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">true</bool><int name="StreamingTargetRadius">900</int><int name="StreamingMinRadius">280</int><token name="StreamOutBehavior">2</token></Properties></Item><Item class="Lighting" referent="RBX0000000000000000000000000000002C"><Properties><string name="Name">Lighting</string><token name="Technology">3</token></Properties></Item><Item class="ReplicatedStorage" referent="RBX0000000000000000000000000000002D"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">Shared</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">CarPhysics</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Arcade driving model shared by the player's car (simulated on the client that owns it)
 -- and AI cars (police and rivals, simulated on the server).
 --
@@ -1451,7 +1451,7 @@ function Signals.Now(): number
 end
 
 return Signals
-]]></ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX0000000000000000000000000000002B"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000014"><Properties><string name="Name">Server</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000006"><Properties><string name="Name">AIDriver</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX0000000000000000000000000000002E"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000015"><Properties><string name="Name">Server</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000006"><Properties><string name="Name">AIDriver</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Server-side driver for AI cars (police and race rivals). Each AI has a `think` callback
 -- that picks a goal; AIDriver handles road-grid navigation, steering, unsticking and
 -- runs the shared arcade physics.
@@ -2213,12 +2213,13 @@ local function stopSign(corner: Vector3, facing: Vector3)
 	local pos = Vector3.new(corner.X, SURFACE, corner.Z)
 	deco({ Name = "SignPost", Size = Vector3.new(0.3, 8, 0.3), CFrame = CFrame.new(pos + Vector3.new(0, 4, 0)), Color = rgb(150, 150, 155), Material = Enum.Material.Metal })
 	local cf = CFrame.lookAt(pos + Vector3.new(0, 8.5, 0), pos + Vector3.new(0, 8.5, 0) + facing)
-	-- two overlapping squares make an octagon
-	local a = deco({ Name = "StopSign", Size = Vector3.new(2.6, 2.6, 0.1), CFrame = cf, Color = rgb(190, 20, 25) })
-	deco({ Name = "StopSign", Size = Vector3.new(2.6, 2.6, 0.1), CFrame = cf * CFrame.Angles(0, 0, math.rad(45)), Color = rgb(190, 20, 25) })
+	-- four w x w*tan(22.5deg) strips rotated in 45 degree steps form an exact octagon
+	local w = 2.8
+	for k = 0, 3 do
+		deco({ Name = "StopSign", Size = Vector3.new(w, w * 0.4142, 0.1), CFrame = cf * CFrame.Angles(0, 0, math.rad(45 * k)), Color = rgb(190, 20, 25), Material = Enum.Material.SmoothPlastic })
+	end
 	local label = deco({ Name = "StopText", Size = Vector3.new(2.2, 0.9, 0.02), CFrame = cf * CFrame.new(0, 0, -0.07), Color = rgb(190, 20, 25), Transparency = 1 })
 	surfaceText(label, "STOP", rgb(255, 255, 255), false)
-	local _ = a
 end
 
 -- mode: "signals" (city: crosswalks + traffic lights), "stop" (stop signs) or "plain"
@@ -3323,7 +3324,340 @@ function DayNight.Init(nightLights: { Light }, nightNeon: { BasePart }, toggles:
 end
 
 return DayNight
-]]></ProtectedString></Properties></Item><Item class="Script" referent="RBX0000000000000000000000000000000A"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000A"><Properties><string name="Name">Leaderboard</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Leaderboards: an all-time Most Wanted board (OrderedDataStores for total bounty and REP) plus a
+-- live board for everyone on this server. Both are published as JSON StringValues in
+-- ReplicatedStorage for the client UI, and the all-time board is shown on a big screen at the safehouse.
+
+local DataStoreService = game:GetService("DataStoreService")
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local PlayerData = require(script.Parent.PlayerData)
+local Session = require(script.Parent.Session)
+
+local Leaderboard = {}
+
+export type Entry = { name: string, value: number, id: number }
+
+local TOP = 10
+local STAT_KEYS = { "bounty", "rep" }
+
+local stores: { [string]: OrderedDataStore } = {}
+do
+	local ok, err = pcall(function()
+		stores.bounty = DataStoreService:GetOrderedDataStore("WantedUnbound_Bounty_v1")
+		stores.rep = DataStoreService:GetOrderedDataStore("WantedUnbound_Rep_v1")
+	end)
+	if not ok then
+		warn("[Leaderboard] OrderedDataStore unavailable, all-time board shows this server only:", err)
+	end
+end
+
+local allTimeValue = Instance.new("StringValue")
+allTimeValue.Name = "LeaderboardAllTime"
+allTimeValue.Value = "{}"
+allTimeValue.Parent = ReplicatedStorage
+
+local serverValue = Instance.new("StringValue")
+serverValue.Name = "LeaderboardServer"
+serverValue.Value = "[]"
+serverValue.Parent = ReplicatedStorage
+
+local nameCache: { [number]: string } = {}
+local lastSubmitted: { [number]: { [string]: number } } = {}
+local boardLists: { [string]: Frame } = {}
+
+local function nameFor(userId: number): string
+	local cached = nameCache[userId]
+	if cached then
+		return cached
+	end
+	local online = Players:GetPlayerByUserId(userId)
+	if online then
+		nameCache[userId] = online.DisplayName
+		return online.DisplayName
+	end
+	local ok, result = pcall(function()
+		return Players:GetNameFromUserIdAsync(userId)
+	end)
+	local name = if ok and type(result) == "string" then result else ("Racer " .. userId)
+	nameCache[userId] = name
+	return name
+end
+
+local function statsOf(profile: PlayerData.Profile): { [string]: number }
+	return { bounty = math.floor(profile.totalBounty), rep = math.floor(profile.rep) }
+end
+
+-- Writes a player's scores to the ordered stores (yields; call from a spawned thread).
+function Leaderboard.Submit(player: Player)
+	local profile = PlayerData.Get(player)
+	if not profile or player.UserId <= 0 then
+		return
+	end
+	local stats = statsOf(profile)
+	local prev = lastSubmitted[player.UserId] or {}
+	for _, key in STAT_KEYS do
+		local store = stores[key]
+		if store and stats[key] > 0 and stats[key] ~= prev[key] then
+			local ok, err = pcall(function()
+				store:SetAsync(tostring(player.UserId), stats[key])
+			end)
+			if ok then
+				prev[key] = stats[key]
+			else
+				warn("[Leaderboard] submit failed:", err)
+			end
+		end
+	end
+	lastSubmitted[player.UserId] = prev
+end
+
+local function fetchTop(key: string): { Entry }?
+	local store = stores[key]
+	if not store then
+		return nil
+	end
+	local ok, pages = pcall(function()
+		return store:GetSortedAsync(false, TOP)
+	end)
+	if not ok then
+		warn("[Leaderboard] fetch failed:", pages)
+		return nil
+	end
+	local list: { Entry } = {}
+	for _, item in (pages :: DataStorePages):GetCurrentPage() do
+		local id = tonumber(item.key) or 0
+		table.insert(list, { name = nameFor(id), value = item.value, id = id })
+	end
+	return list
+end
+
+-- Fallback when DataStores are off (Studio without API access): rank the players on this server.
+local function localTop(key: string): { Entry }
+	local list: { Entry } = {}
+	for player, profile in PlayerData.All() do
+		table.insert(list, { name = player.DisplayName, value = statsOf(profile)[key], id = player.UserId })
+	end
+	table.sort(list, function(a, b)
+		return a.value > b.value
+	end)
+	while #list > TOP do
+		table.remove(list)
+	end
+	return list
+end
+
+local function commas(n: number): string
+	local s = tostring(math.floor(n))
+	local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+	return (out:gsub("^,", ""))
+end
+
+local function drawBoard(data: { [string]: { Entry } })
+	for key, list in boardLists do
+		for _, child in list:GetChildren() do
+			if child:IsA("Frame") then
+				child:Destroy()
+			end
+		end
+		local entries: { Entry } = data[key] or {}
+		for rank, e in entries do
+			local row = Instance.new("Frame")
+			row.Name = "Row"
+			row.LayoutOrder = rank
+			row.Size = UDim2.new(1, 0, 1 / TOP, -6)
+			row.BackgroundColor3 = if rank == 1 then Color3.fromRGB(80, 60, 10) else Color3.fromRGB(20, 22, 36)
+			row.BackgroundTransparency = 0.2
+			row.BorderSizePixel = 0
+			local corner = Instance.new("UICorner")
+			corner.CornerRadius = UDim.new(0, 10)
+			corner.Parent = row
+			local rankColor = if rank == 1
+				then Color3.fromRGB(255, 205, 60)
+				elseif rank == 2 then Color3.fromRGB(210, 215, 230)
+				elseif rank == 3 then Color3.fromRGB(215, 140, 80)
+				else Color3.fromRGB(150, 156, 180)
+			local function text(t: string, x: number, w: number, color: Color3, align: Enum.TextXAlignment)
+				local l = Instance.new("TextLabel")
+				l.BackgroundTransparency = 1
+				l.Position = UDim2.fromScale(x, 0.12)
+				l.Size = UDim2.fromScale(w, 0.76)
+				l.Text = t
+				l.TextScaled = true
+				l.TextColor3 = color
+				l.TextXAlignment = align
+				l.FontFace = Font.new("rbxasset://fonts/families/Michroma.json")
+				l.Parent = row
+			end
+			text("#" .. rank, 0.02, 0.12, rankColor, Enum.TextXAlignment.Left)
+			text(string.upper(e.name), 0.15, 0.5, Color3.new(1, 1, 1), Enum.TextXAlignment.Left)
+			text((if key == "bounty" then "$" else "") .. commas(e.value), 0.62, 0.35, rankColor, Enum.TextXAlignment.Right)
+			row.Parent = list
+		end
+	end
+end
+
+-- Big two-column screen next to the safehouse garage.
+local function buildScreen(safehouse: Vector3, parent: Instance)
+	local pos = safehouse + Vector3.new(-96, 0, 30)
+	local look = safehouse + Vector3.new(0, 0, -10)
+	local base = CFrame.lookAt(pos, Vector3.new(look.X, pos.Y, look.Z))
+	local model = Instance.new("Model")
+	model.Name = "LeaderboardScreen"
+	local function part(name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material): Part
+		local p = Instance.new("Part")
+		p.Name = name
+		p.Anchored = true
+		p.Size = size
+		p.CFrame = cf
+		p.Color = color
+		p.Material = material
+		p.CastShadow = name ~= "Screen"
+		p.Parent = model
+		return p
+	end
+	for _, x in { -18, 18 } do
+		part("Post", Vector3.new(1.6, 34, 1.6), base * CFrame.new(x, 17, 0.8), Color3.fromRGB(40, 42, 50), Enum.Material.Metal)
+	end
+	part("Frame", Vector3.new(46, 26, 1.2), base * CFrame.new(0, 24, 0.5), Color3.fromRGB(18, 18, 24), Enum.Material.Metal)
+	part("Trim", Vector3.new(46.4, 0.5, 1.4), base * CFrame.new(0, 37.2, 0.5), Color3.fromRGB(255, 45, 150), Enum.Material.Neon)
+	local screen = part("Screen", Vector3.new(44, 24, 0.2), base * CFrame.new(0, 24, -0.2), Color3.fromRGB(6, 8, 14), Enum.Material.SmoothPlastic)
+	screen.CanCollide = false
+
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = Enum.NormalId.Front
+	gui.LightInfluence = 0
+	gui.Brightness = 2.5
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
+	gui.CanvasSize = Vector2.new(1100, 600)
+	gui.MaxDistance = 700
+	gui.Parent = screen
+	local title = Instance.new("TextLabel")
+	title.BackgroundTransparency = 1
+	title.Position = UDim2.fromOffset(0, 10)
+	title.Size = UDim2.new(1, 0, 0, 56)
+	title.Text = "MOST WANTED - ALL TIME"
+	title.TextScaled = true
+	title.TextColor3 = Color3.new(1, 1, 1)
+	title.FontFace = Font.new("rbxasset://fonts/families/Michroma.json")
+	title.Parent = gui
+	local grad = Instance.new("UIGradient")
+	grad.Color = ColorSequence.new(Color3.fromRGB(0, 225, 255), Color3.fromRGB(255, 45, 150))
+	grad.Parent = title
+	for idx, key in STAT_KEYS do
+		local col = Instance.new("Frame")
+		col.BackgroundTransparency = 1
+		col.Position = UDim2.fromOffset(20 + (idx - 1) * 540, 76)
+		col.Size = UDim2.fromOffset(520, 510)
+		col.Parent = gui
+		local head = Instance.new("TextLabel")
+		head.BackgroundTransparency = 1
+		head.Size = UDim2.new(1, 0, 0, 36)
+		head.Text = if key == "bounty" then "TOTAL BOUNTY" else "REP"
+		head.TextScaled = true
+		head.TextColor3 = if key == "bounty" then Color3.fromRGB(255, 60, 70) else Color3.fromRGB(0, 225, 255)
+		head.FontFace = Font.new("rbxasset://fonts/families/Montserrat.json", Enum.FontWeight.Heavy)
+		head.Parent = col
+		local list = Instance.new("Frame")
+		list.Name = "List"
+		list.BackgroundTransparency = 1
+		list.Position = UDim2.fromOffset(0, 44)
+		list.Size = UDim2.new(1, 0, 1, -44)
+		list.Parent = col
+		local layout = Instance.new("UIListLayout")
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Padding = UDim.new(0, 6)
+		layout.Parent = list
+		boardLists[key] = list
+	end
+	model.Parent = parent
+end
+
+local function refreshAllTime()
+	local data: { [string]: { Entry } } = {}
+	local global = true
+	for _, key in STAT_KEYS do
+		local list = fetchTop(key)
+		if list then
+			data[key] = list
+		else
+			global = false
+			data[key] = localTop(key)
+		end
+	end
+	allTimeValue.Value = HttpService:JSONEncode({ bounty = data.bounty, rep = data.rep, global = global, updated = os.time() })
+	drawBoard(data)
+end
+
+local function refreshServer()
+	local list = {}
+	for player, s in Session.All() do
+		local profile = s.profile
+		table.insert(list, {
+			name = player.DisplayName,
+			id = player.UserId,
+			bounty = math.floor(profile.totalBounty),
+			rep = math.floor(profile.rep),
+			level = (player:GetAttribute("RepLevel") :: number?) or 1,
+			races = profile.racesWon,
+			heat = s.heat,
+			cash = profile.cash,
+		})
+	end
+	serverValue.Value = HttpService:JSONEncode(list)
+end
+
+function Leaderboard.Init(safehouse: Vector3, parent: Instance)
+	local ok, err = pcall(function()
+		buildScreen(safehouse, parent)
+	end)
+	if not ok then
+		warn("[Leaderboard] screen build failed:", err)
+	end
+	Players.PlayerRemoving:Connect(function(player)
+		nameCache[player.UserId] = nil
+		lastSubmitted[player.UserId] = nil
+	end)
+	-- live server board: cheap, no DataStore calls
+	task.spawn(function()
+		while true do
+			local okServer, errServer = pcall(function()
+				refreshServer()
+			end)
+			if not okServer then
+				warn("[Leaderboard] server board error:", errServer)
+			end
+			task.wait(3)
+		end
+	end)
+	-- all-time board: submit everyone online, then read the top 10 (once a minute)
+	task.spawn(function()
+		task.wait(8)
+		while true do
+			for _, player in Players:GetPlayers() do
+				local okSubmit, errSubmit = pcall(function()
+					Leaderboard.Submit(player)
+				end)
+				if not okSubmit then
+					warn("[Leaderboard] submit error:", errSubmit)
+				end
+			end
+			local okRefresh, errRefresh = pcall(function()
+				refreshAllTime()
+			end)
+			if not okRefresh then
+				warn("[Leaderboard] refresh error:", errRefresh)
+			end
+			task.wait(60)
+		end
+	end)
+end
+
+return Leaderboard
+]]></ProtectedString></Properties></Item><Item class="Script" referent="RBX0000000000000000000000000000000B"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
 -- WANTED: UNBOUND - server entry point.
 
 local Lighting = game:GetService("Lighting")
@@ -3344,6 +3678,7 @@ local Traffic = require(script.Parent.Traffic)
 local Showroom = require(script.Parent.Showroom)
 local Weapons = require(script.Parent.Weapons)
 local Races = require(script.Parent.Races)
+local Leaderboard = require(script.Parent.Leaderboard)
 
 ---------------------------------------------------------------------------
 -- Remotes
@@ -3382,6 +3717,7 @@ Vehicles.SetSpawns(mapInfo.safehouseSpawns)
 Police.Init(mapInfo)
 Traffic.Init()
 Showroom.Build(workspace:WaitForChild("Map"))
+Leaderboard.Init(mapInfo.safehouse, workspace:WaitForChild("Map"))
 Police.SetBustedCallback(function(s)
 	Races.Cancel(s)
 end)
@@ -3494,6 +3830,9 @@ Players.PlayerRemoving:Connect(function(player)
 		end
 		Session.Remove(player)
 	end
+	pcall(function()
+		Leaderboard.Submit(player)
+	end)
 	PlayerData.Release(player)
 end)
 
@@ -4026,7 +4365,7 @@ worldTick = function(s: Session.Session, dt: number)
 end
 
 print("[" .. Config.GameName .. "] server ready")
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000B"><Properties><string name="Name">MapBuilder</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000C"><Properties><string name="Name">MapBuilder</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Procedurally builds the city of Neon Bay: road grid, skyscrapers, the safehouse,
 -- a park, covered hiding spots, pursuit breakers, speed cameras and ramps.
 
@@ -4930,7 +5269,7 @@ function MapBuilder.CollapseBreaker(b: Breaker, towards: Vector3)
 end
 
 return MapBuilder
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000C"><Properties><string name="Name">PlayerData</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000D"><Properties><string name="Name">PlayerData</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Saves and loads player progress with DataStoreService (falls back to memory in Studio
 -- when API access is disabled).
 
@@ -5101,7 +5440,7 @@ function PlayerData.Tune(profile: Profile, carId: string): Config.Tune
 end
 
 return PlayerData
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000D"><Properties><string name="Name">Police</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000E"><Properties><string name="Name">Police</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Most Wanted style police: patrols, heat levels, pursuits, evasion + cooldown,
 -- busts, roadblocks, a helicopter at heat 5, wrecking cops and pursuit breakers.
 
@@ -6036,7 +6375,7 @@ function Police.Cleanup(s: Session.Session)
 end
 
 return Police
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000E"><Properties><string name="Name">Races</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000F"><Properties><string name="Name">Races</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Street races (Unbound buy-in style) and Blacklist challenges (Most Wanted style).
 
 local Debris = game:GetService("Debris")
@@ -6622,7 +6961,7 @@ function Races.RivalDef(rival: Config.Rival): Config.RaceDef
 end
 
 return Races
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000F"><Properties><string name="Name">Session</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000010"><Properties><string name="Name">Session</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Runtime (non-saved) state for every player in the server, plus money helpers.
 
 local Lighting = game:GetService("Lighting")
@@ -6883,7 +7222,7 @@ function Session.CarPosition(s: Session): Vector3?
 end
 
 return Session
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000010"><Properties><string name="Name">Showroom</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000011"><Properties><string name="Name">Showroom</string><ProtectedString name="Source"><![CDATA[--!strict
 -- The garage interior you drive into from the safehouse: an enclosed workshop / showroom with a
 -- turntable, spotlights, tool chests, tyre racks and posters. It sits underground, below the
 -- city, so daylight never gets in.
@@ -7023,7 +7362,7 @@ function Showroom.Build(parent: Instance)
 end
 
 return Showroom
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000011"><Properties><string name="Name">Traffic</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000012"><Properties><string name="Name">Traffic</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Civilian traffic: cars that keep to the right-hand lane, turn at intersections and brake for
 -- whatever is in front of them. Players weave through them for near misses (Unbound).
 
@@ -7248,7 +7587,7 @@ function Traffic.Init()
 end
 
 return Traffic
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000012"><Properties><string name="Name">Vehicles</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000013"><Properties><string name="Name">Vehicles</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Spawns, refreshes and resets player cars.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -7480,7 +7819,7 @@ function Vehicles.Freeze(s: Session.Session, seconds: number)
 end
 
 return Vehicles
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000013"><Properties><string name="Name">Weapons</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000014"><Properties><string name="Name">Weapons</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Roof-mounted car weapons, bought at the Black Market. They only affect police and rival AI
 -- cars (never other players). Using them on cops starts a pursuit and raises your heat.
 
@@ -7731,7 +8070,7 @@ function Weapons.Fire(s: Session.Session): boolean
 end
 
 return Weapons
-]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX0000000000000000000000000000002C"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX00000000000000000000000000000027"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000026"><Properties><string name="Name">Client</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000015"><Properties><string name="Name">BlackMarket</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX0000000000000000000000000000002F"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX0000000000000000000000000000002A"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000029"><Properties><string name="Name">Client</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000016"><Properties><string name="Name">BlackMarket</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Black Market window (buy / mount roof weapons) and the fire button (F / gamepad RB / touch).
 
 local ContextActionService = game:GetService("ContextActionService")
@@ -7890,7 +8229,7 @@ ContextActionService:BindAction("WU_Fire", function(_: string, state: Enum.UserI
 end, false, Enum.KeyCode.F, Enum.KeyCode.ButtonR1)
 
 return BlackMarket
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000016"><Properties><string name="Name">CarVisuals</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000017"><Properties><string name="Name">CarVisuals</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Local visual effects for every car near the camera: spinning wheels, front wheels steering,
 -- headlights at night, and brake / reverse lights on your own car.
 
@@ -8150,7 +8489,7 @@ RunService.RenderStepped:Connect(function(dt)
 end)
 
 return CarVisuals
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000017"><Properties><string name="Name">Collectibles</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000018"><Properties><string name="Name">Collectibles</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Hides street art pieces this player already found (they stay visible for everyone else).
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -8230,7 +8569,7 @@ function Collectibles.Found(): number
 end
 
 return Collectibles
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000018"><Properties><string name="Name">DriveController</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000019"><Properties><string name="Name">DriveController</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Drives the local player's car: input, arcade physics (we own the car's physics),
 -- nitro, drift smoke and the chase camera.
 
@@ -8714,7 +9053,7 @@ RunService:BindToRenderStep("WU_ChaseCam", Enum.RenderPriority.Camera.Value + 1,
 end)
 
 return Drive
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000019"><Properties><string name="Name">Effects</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001A"><Properties><string name="Name">Effects</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Screen and audio effects: big animated banners, speed lines, nitro blur / colour grading,
 -- near-miss popups, crash flashes, checkpoint pings, engine + siren loops and a GPS arrow
 -- that points to your next checkpoint, the nearest hiding spot or the safehouse.
@@ -9043,7 +9382,7 @@ RunService.RenderStepped:Connect(function(dt: number)
 end)
 
 return Effects
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001A"><Properties><string name="Name">FullMap</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001B"><Properties><string name="Name">FullMap</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Full-screen city map (press M): districts, roads, races with names, hiding spots, the
 -- safehouse, police and your car.
 
@@ -9057,6 +9396,7 @@ local MapDraw = require(script.Parent.MapDraw)
 local Drive = require(script.Parent.DriveController)
 local Sounds = require(script.Parent.Sounds)
 local Scale = require(script.Parent.Scale)
+local Theme = require(script.Parent.Theme)
 
 local player = Players.LocalPlayer
 local FullMap = {}
@@ -9073,22 +9413,27 @@ local function new(className: string, props: { [string]: any }, parent: Instance
 	return inst
 end
 
-local gui = new("ScreenGui", { Name = "WantedUnboundMap", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 15, Enabled = false }, player:WaitForChild("PlayerGui"))
-new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.35, BorderSizePixel = 0 }, gui)
+local gui = new("ScreenGui", { Name = "WantedUnboundMap", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 25, Enabled = false }, player:WaitForChild("PlayerGui"))
+local backdrop = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(4, 4, 10), BackgroundTransparency = 0.35, BorderSizePixel = 0 }, gui)
 
 local PANEL = 640
+-- the CanvasGroup lets the whole map fade and pop in as one piece
+local holder: CanvasGroup = new("CanvasGroup", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(PANEL + 10, PANEL + 10),
+	BackgroundTransparency = 1,
+}, gui)
+Scale.Attach(holder)
 local panel = new("Frame", {
 	AnchorPoint = Vector2.new(0.5, 0.5),
 	Position = UDim2.fromScale(0.5, 0.5),
 	Size = UDim2.fromOffset(PANEL, PANEL),
 	BackgroundColor3 = Color3.fromRGB(10, 10, 16),
 	ClipsDescendants = true,
-}, gui)
+}, holder)
 new("UICorner", { CornerRadius = UDim.new(0, 14) }, panel)
 new("UIStroke", { Color = Color3.fromRGB(255, 40, 160), Thickness = 3 }, panel)
-new("UIAspectRatioConstraint", { AspectRatio = 1 }, panel)
-new("UISizeConstraint", { MaxSize = Vector2.new(PANEL, PANEL) }, panel)
-Scale.Attach(panel)
 
 local canvas: Frame = new("Frame", { Name = "Canvas", BackgroundTransparency = 1 }, panel)
 local total = MapDraw.WorldSize + MapDraw.Margin * 2
@@ -9100,7 +9445,7 @@ new("TextLabel", {
 	BackgroundTransparency = 1,
 	Text = "NEON BAY",
 	TextScaled = true,
-	Font = Enum.Font.GothamBlack,
+	FontFace = Theme.Fonts.Display,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	TextColor3 = Color3.fromRGB(0, 240, 255),
 	TextStrokeTransparency = 0.3,
@@ -9135,8 +9480,11 @@ local copDots: { Frame } = {}
 
 function FullMap.Toggle(open: boolean?)
 	local want = if open == nil then not FullMap.Open else open
+	if want == FullMap.Open then
+		return
+	end
 	FullMap.Open = want
-	gui.Enabled = want
+	Theme.Popup(gui, backdrop, holder, want)
 	Sounds.Tick(if want then 1.1 else 0.9, 0.4)
 end
 
@@ -9184,7 +9532,7 @@ end)
 
 local _ = Config
 return FullMap
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001B"><Properties><string name="Name">Garage</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001C"><Properties><string name="Name">Garage</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Safehouse garage: buy / select cars, Unbound-style tuning (performance parts, handling,
 -- visuals), driving effects and the Blacklist.
 
@@ -9740,9 +10088,15 @@ function Garage.Toggle(open: boolean?)
 end
 
 return Garage
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001C"><Properties><string name="Name">HUD</string><ProtectedString name="Source"><![CDATA[--!strict
--- Heads-up display: speedometer + nitro, heat stars and pursuit meters, cash, race panel,
--- drift combo, minimap, notifications and context prompts.
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001D"><Properties><string name="Name">HUD</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Heads-up display, racing-game style:
+--   top left     wallet card (cash, unbanked, bounty, REP, day/night)
+--   top centre   heat stars + pursuit / cooldown / bust meters
+--   bottom right analog speedometer with an LED tachometer ring, gear and nitrous
+--   bottom left  round radar
+--   right        race panel with live standings
+--   centre       countdown, drift combo and slide-in notifications
+--   bottom       context prompt with a key badge
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9754,54 +10108,18 @@ local MapDraw = require(script.Parent.MapDraw)
 local Settings = require(script.Parent.Settings)
 local Input = require(script.Parent.Input)
 local Scale = require(script.Parent.Scale)
+local Theme = require(script.Parent.Theme)
 
 local player = Players.LocalPlayer
-
 local HUD = {}
 
-local FONT = Enum.Font.GothamBlack
-local FONT2 = Enum.Font.GothamBold
-local PINK = Color3.fromRGB(255, 40, 160)
-local CYAN = Color3.fromRGB(0, 240, 255)
-local RED = Color3.fromRGB(255, 60, 60)
-local BLUE = Color3.fromRGB(70, 140, 255)
+local C = Theme.Colors
+local F = Theme.Fonts
+local new = Theme.new
+local label = Theme.Label
 
-local gui = Instance.new("ScreenGui")
-gui.Name = "WantedUnboundHUD"
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-gui.Parent = player:WaitForChild("PlayerGui")
+local gui = new("ScreenGui", { Name = "WantedUnboundHUD", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, player:WaitForChild("PlayerGui"))
 HUD.Gui = gui
-
-local function new(className: string, props: { [string]: any }, parent: Instance?): any
-	local inst = Instance.new(className)
-	for k, v in props do
-		(inst :: any)[k] = v
-	end
-	if parent then
-		inst.Parent = parent
-	end
-	return inst
-end
-
-local function label(props: { [string]: any }, parent: Instance): TextLabel
-	local base = {
-		BackgroundTransparency = 1,
-		Font = FONT,
-		TextColor3 = Color3.new(1, 1, 1),
-		TextScaled = true,
-		TextStrokeTransparency = 0.5,
-	}
-	for k, v in props do
-		base[k] = v
-	end
-	return new("TextLabel", base, parent)
-end
-
-local function corner(parent: Instance, r: number?)
-	new("UICorner", { CornerRadius = UDim.new(0, r or 8) }, parent)
-end
 
 local function commas(n: number): string
 	local s = tostring(math.floor(n))
@@ -9813,59 +10131,103 @@ local function commas(n: number): string
 end
 HUD.Commas = commas
 
----------------------------------------------------------------------------
--- Speedometer (bottom right)
----------------------------------------------------------------------------
-local speedo = new("Frame", {
-	AnchorPoint = Vector2.new(1, 1),
-	Position = UDim2.new(1, -20, 1, -20),
-	Size = UDim2.fromOffset(230, 120),
-	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
-	BackgroundTransparency = 0.35,
-}, gui)
-corner(speedo, 14)
-new("UIStroke", { Color = CYAN, Thickness = 2, Transparency = 0.3 }, speedo)
-local speedLabel = label({ Position = UDim2.fromOffset(10, 4), Size = UDim2.new(1, -80, 0, 70), Text = "0", TextXAlignment = Enum.TextXAlignment.Right }, speedo)
-local unitLabel = label({ Position = UDim2.new(1, -68, 0, 34), Size = UDim2.fromOffset(60, 30), Text = "MPH", TextColor3 = CYAN, Font = FONT2 }, speedo)
-local carNameLabel = label({ Position = UDim2.fromOffset(12, 74), Size = UDim2.new(1, -24, 0, 16), Text = "", Font = FONT2, TextColor3 = Color3.fromRGB(190, 190, 210), TextXAlignment = Enum.TextXAlignment.Left }, speedo)
--- tachometer + gear
-local gearLabel = label({ Position = UDim2.fromOffset(12, 10), Size = UDim2.fromOffset(44, 50), Text = "1", TextColor3 = Color3.fromRGB(255, 200, 60), TextXAlignment = Enum.TextXAlignment.Left }, speedo)
-local rpmBack = new("Frame", {
-	Position = UDim2.new(0, 0, 0, -16),
-	Size = UDim2.new(1, 0, 0, 10),
-	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
-	BackgroundTransparency = 0.35,
-}, speedo)
-corner(rpmBack, 5)
-local rpmFill = new("Frame", { Size = UDim2.fromScale(0.2, 1), BackgroundColor3 = Color3.fromRGB(80, 255, 140) }, rpmBack)
-corner(rpmFill, 5)
-new("UIGradient", {
-	Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 255, 140)),
-		ColorSequenceKeypoint.new(0.7, Color3.fromRGB(255, 220, 60)),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 50, 50)),
-	}),
-}, rpmFill)
-
-function HUD.SetEngine(gear: number, rpm: number, reversing: boolean)
-	gearLabel.Text = if reversing then "R" else tostring(gear)
-	rpmFill.Size = UDim2.fromScale(math.clamp(rpm, 0.02, 1), 1)
-	gearLabel.TextColor3 = if rpm > 0.9 then Color3.fromRGB(255, 60, 60) else Color3.fromRGB(255, 200, 60)
+local function num(name: string): number
+	local v = player:GetAttribute(name)
+	return if type(v) == "number" then v else 0
 end
 
-local nitroBack = new("Frame", {
-	Position = UDim2.fromOffset(12, 96),
-	Size = UDim2.new(1, -24, 0, 14),
-	BackgroundColor3 = Color3.fromRGB(40, 40, 55),
-}, speedo)
-corner(nitroBack, 7)
-local nitroFill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = CYAN }, nitroBack)
-corner(nitroFill, 7)
-local nitroText = label({ Size = UDim2.fromScale(1, 1), Text = "NITROUS", TextColor3 = Color3.new(1, 1, 1), Font = FONT2, TextStrokeTransparency = 0.2, ZIndex = 2 }, nitroBack)
+---------------------------------------------------------------------------
+-- Wallet card (top left, below the Roblox buttons)
+---------------------------------------------------------------------------
+local wallet = new("Frame", { Position = UDim2.fromOffset(16, 62), Size = UDim2.fromOffset(300, 150) }, gui)
+Theme.Panel(wallet, C.Gold)
+label({ Position = UDim2.fromOffset(16, 10), Size = UDim2.fromOffset(120, 14), Text = "CASH", FontFace = F.Heading, TextColor3 = C.Dim }, wallet)
+local cashLabel = label({ Position = UDim2.fromOffset(14, 24), Size = UDim2.new(1, -28, 0, 34), Text = "$0", FontFace = F.Display, TextColor3 = C.Green }, wallet)
+local unbankedChip = new("Frame", { Position = UDim2.fromOffset(14, 64), Size = UDim2.new(1, -28, 0, 24), BackgroundColor3 = Color3.fromRGB(60, 36, 12), BackgroundTransparency = 0.2 }, wallet)
+new("UICorner", { CornerRadius = UDim.new(0, 8) }, unbankedChip)
+local unbankedLabel = label({ Position = UDim2.fromOffset(10, 4), Size = UDim2.new(1, -90, 1, -8), Text = "UNBANKED $0", FontFace = F.Heading, TextColor3 = C.Orange }, unbankedChip)
+local riskTag = label({ AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -8, 0, 4), Size = UDim2.fromOffset(70, 16), Text = "AT RISK", FontFace = F.Heading, TextColor3 = C.Red, TextXAlignment = Enum.TextXAlignment.Right }, unbankedChip)
+local bountyLabel = label({ Position = UDim2.fromOffset(16, 94), Size = UDim2.new(1, -32, 0, 16), Text = "", FontFace = F.Body, TextColor3 = Color3.fromRGB(255, 140, 140) }, wallet)
+local repBadge = new("Frame", { Position = UDim2.fromOffset(14, 118), Size = UDim2.fromOffset(62, 22), BackgroundColor3 = C.Purple }, wallet)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, repBadge)
+local repLabel = label({ Size = UDim2.fromScale(1, 1), Text = "REP 1", FontFace = F.Heading, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = Color3.fromRGB(20, 12, 40) }, repBadge)
+new("UIPadding", { PaddingTop = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3) }, repBadge)
+local repFill = Theme.Bar(wallet, { Position = UDim2.fromOffset(84, 126), Size = UDim2.new(1, -196, 0, 7) }, C.Purple)
+local timeChip = new("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 118), Size = UDim2.fromOffset(96, 22), BackgroundColor3 = C.PanelLight }, wallet)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, timeChip)
+local timeLabel = label({ Size = UDim2.fromScale(1, 1), Text = "DAY", FontFace = F.Heading, TextXAlignment = Enum.TextXAlignment.Center }, timeChip)
+new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4) }, timeChip)
+
+---------------------------------------------------------------------------
+-- Heat (top centre)
+---------------------------------------------------------------------------
+local heatFrame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 10), Size = UDim2.fromOffset(360, 110), BackgroundTransparency = 1 }, gui)
+local starPill = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromScale(0.5, 0), Size = UDim2.fromOffset(250, 46) }, heatFrame)
+Theme.Panel(starPill, C.Red, 23)
+local stars: { TextLabel } = {}
+for k = 1, 5 do
+	stars[k] = label({
+		Position = UDim2.fromOffset(18 + (k - 1) * 44, 4),
+		Size = UDim2.fromOffset(40, 38),
+		Text = "★",
+		FontFace = F.Heading,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		TextColor3 = Color3.fromRGB(60, 62, 80),
+	}, starPill)
+end
+local statusLabel = label({ Position = UDim2.fromOffset(0, 52), Size = UDim2.new(1, 0, 0, 20), Text = "", FontFace = F.Heading, TextXAlignment = Enum.TextXAlignment.Center, TextStrokeTransparency = 0.5 }, heatFrame)
+local meterFill = Theme.Bar(heatFrame, { Position = UDim2.fromOffset(40, 78), Size = UDim2.new(1, -80, 0, 9), Visible = false }, C.Gold)
+local meterBack = meterFill.Parent :: Frame
+local bustFill = Theme.Bar(heatFrame, { Position = UDim2.fromOffset(40, 94), Size = UDim2.new(1, -80, 0, 7), Visible = false }, C.Red)
+local bustBack = bustFill.Parent :: Frame
+
+---------------------------------------------------------------------------
+-- Speedometer (bottom right): dial with an LED tachometer ring
+---------------------------------------------------------------------------
+local DIAL = 230
+local speedo = new("Frame", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -20, 1, -16), Size = UDim2.fromOffset(DIAL, DIAL + 50), BackgroundTransparency = 1 }, gui)
+local dial = new("Frame", { Size = UDim2.fromOffset(DIAL, DIAL), BackgroundTransparency = 0.12 }, speedo)
+Theme.Panel(dial, C.Cyan, DIAL)
+local TICKS = 32
+local ticks: { Frame } = {}
+local centre = DIAL / 2
+for k = 0, TICKS - 1 do
+	local frac = k / (TICKS - 1)
+	local angle = math.rad(135 + frac * 270)
+	local major = k % 4 == 0
+	local r = DIAL / 2 - (if major then 20 else 18)
+	local t = new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromOffset(centre + math.cos(angle) * r, centre + math.sin(angle) * r),
+		Size = UDim2.fromOffset(if major then 5 else 3, if major then 18 else 12),
+		Rotation = math.deg(angle) + 90,
+		BackgroundColor3 = Color3.fromRGB(55, 60, 86),
+		BorderSizePixel = 0,
+	}, dial)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, t)
+	ticks[k + 1] = t
+end
+local speedLabel = label({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.5, -6), Size = UDim2.fromOffset(150, 60), Text = "0", FontFace = F.Display, TextXAlignment = Enum.TextXAlignment.Center }, dial)
+local unitLabel = label({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0.5, 26), Size = UDim2.fromOffset(80, 16), Text = "MPH", FontFace = F.Heading, TextColor3 = C.Cyan, TextXAlignment = Enum.TextXAlignment.Center }, dial)
+local gearCircle = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0.5, 48), Size = UDim2.fromOffset(38, 38), BackgroundColor3 = C.PanelLight }, dial)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, gearCircle)
+local gearStroke = new("UIStroke", { Color = C.Gold, Thickness = 2 }, gearCircle)
+local gearLabel = label({ Size = UDim2.fromScale(1, 1), Text = "1", FontFace = F.Display, TextColor3 = C.Gold, TextXAlignment = Enum.TextXAlignment.Center }, gearCircle)
+new("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6) }, gearCircle)
+local classChip = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 36), Size = UDim2.fromOffset(120, 20), BackgroundColor3 = C.PanelLight }, dial)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, classChip)
+local classLabel = label({ Size = UDim2.fromScale(1, 1), Text = "", FontFace = F.Heading, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.Dim }, classChip)
+new("UIPadding", { PaddingTop = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3) }, classChip)
+-- nitrous under the dial
+local nitroText = label({ Position = UDim2.fromOffset(4, DIAL + 6), Size = UDim2.fromOffset(150, 14), Text = "NITROUS", FontFace = F.Heading, TextColor3 = C.Cyan }, speedo)
+local nitroFill = Theme.Bar(speedo, { Position = UDim2.fromOffset(0, DIAL + 24), Size = UDim2.new(1, 0, 0, 14) }, C.Cyan)
+local nitroBack = nitroFill.Parent :: Frame
+new("UIStroke", { Color = C.Cyan, Thickness = 1, Transparency = 0.6 }, nitroBack)
 local burstMarks: { Frame } = {}
 for k = 1, 2 do
-	burstMarks[k] = new("Frame", { Position = UDim2.new(k / 3, -1, 0, 0), Size = UDim2.new(0, 3, 1, 0), BackgroundColor3 = Color3.fromRGB(10, 10, 18), BorderSizePixel = 0, ZIndex = 3, Visible = false }, nitroBack)
+	burstMarks[k] = new("Frame", { Position = UDim2.new(k / 3, -2, 0, 0), Size = UDim2.new(0, 4, 1, 0), BackgroundColor3 = C.Panel, BorderSizePixel = 0, ZIndex = 3, Visible = false }, nitroBack)
 end
+
 function HUD.SetBurst(on: boolean)
 	for _, m in burstMarks do
 		m.Visible = on
@@ -9873,271 +10235,185 @@ function HUD.SetBurst(on: boolean)
 	nitroText.Text = if on then "BURST NITROUS" else "NITROUS"
 end
 
----------------------------------------------------------------------------
--- Heat + pursuit (top centre)
----------------------------------------------------------------------------
-local heatFrame = new("Frame", {
-	AnchorPoint = Vector2.new(0.5, 0),
-	Position = UDim2.new(0.5, 0, 0, 12),
-	Size = UDim2.fromOffset(360, 100),
-	BackgroundTransparency = 1,
-}, gui)
-local stars: { TextLabel } = {}
-for k = 1, 5 do
-	stars[k] = label({
-		Position = UDim2.fromOffset(40 + (k - 1) * 58, 0),
-		Size = UDim2.fromOffset(52, 44),
-		Text = "★",
-		TextColor3 = Color3.fromRGB(70, 70, 80),
-		Font = Enum.Font.GothamBlack,
-	}, heatFrame)
+local rpmNow = 0
+function HUD.SetEngine(gear: number, rpm: number, reversing: boolean)
+	gearLabel.Text = if reversing then "R" else tostring(gear)
+	rpmNow = rpm
+	local lit = math.floor(math.clamp(rpm, 0, 1) * TICKS + 0.5)
+	for k, t in ticks do
+		local frac = (k - 1) / (TICKS - 1)
+		if k <= lit then
+			t.BackgroundColor3 = if frac > 0.82 then C.Red elseif frac > 0.62 then C.Gold else C.Cyan
+		else
+			t.BackgroundColor3 = if frac > 0.82 then Color3.fromRGB(90, 34, 44) else Color3.fromRGB(55, 60, 86)
+		end
+	end
+	local redline = rpm > 0.9
+	gearLabel.TextColor3 = if redline then C.Red else C.Gold
+	gearStroke.Color = if redline then C.Red else C.Gold
 end
-local statusLabel = label({ Position = UDim2.fromOffset(0, 46), Size = UDim2.new(1, 0, 0, 22), Text = "", Font = FONT2 }, heatFrame)
-local meterBack = new("Frame", {
-	Position = UDim2.fromOffset(30, 72),
-	Size = UDim2.new(1, -60, 0, 12),
-	BackgroundColor3 = Color3.fromRGB(30, 30, 40),
-	Visible = false,
-}, heatFrame)
-corner(meterBack, 6)
-local meterFill = new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = BLUE }, meterBack)
-corner(meterFill, 6)
-local bustBack = new("Frame", {
-	Position = UDim2.fromOffset(30, 88),
-	Size = UDim2.new(1, -60, 0, 8),
-	BackgroundColor3 = Color3.fromRGB(30, 30, 40),
-	Visible = false,
-}, heatFrame)
-corner(bustBack, 4)
-local bustFill = new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = RED }, bustBack)
-corner(bustFill, 4)
 
 ---------------------------------------------------------------------------
--- Money (top left)
+-- Weapon chip (above the speedometer)
 ---------------------------------------------------------------------------
-local money = new("Frame", {
-	Position = UDim2.fromOffset(16, 56),
-	Size = UDim2.fromOffset(260, 110),
-	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
-	BackgroundTransparency = 0.4,
-}, gui)
-corner(money, 12)
-local bankLabel = label({ Position = UDim2.fromOffset(12, 6), Size = UDim2.new(1, -24, 0, 26), Text = "$0", TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(120, 255, 150) }, money)
-local unbankedLabel = label({ Position = UDim2.fromOffset(12, 34), Size = UDim2.new(1, -24, 0, 20), Text = "", Font = FONT2, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(255, 190, 60) }, money)
-local bountyLabel = label({ Position = UDim2.fromOffset(12, 58), Size = UDim2.new(1, -24, 0, 20), Text = "", Font = FONT2, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(255, 120, 120) }, money)
-local repFrame = new("Frame", {
-	Position = UDim2.fromOffset(16, 172),
-	Size = UDim2.fromOffset(260, 28),
-	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
-	BackgroundTransparency = 0.4,
-}, gui)
-corner(repFrame, 10)
-local repLabel = label({ Position = UDim2.fromOffset(10, 4), Size = UDim2.fromOffset(90, 20), Text = "REP 1", Font = FONT2, TextColor3 = Color3.fromRGB(190, 160, 255), TextXAlignment = Enum.TextXAlignment.Left }, repFrame)
-local repBack = new("Frame", { Position = UDim2.fromOffset(100, 10), Size = UDim2.new(1, -112, 0, 8), BackgroundColor3 = Color3.fromRGB(40, 36, 60) }, repFrame)
-corner(repBack, 4)
-local repFill = new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = Color3.fromRGB(170, 120, 255) }, repBack)
-corner(repFill, 4)
-
--- mounted weapon + cooldown (bottom right, above the speedometer)
-local weaponFrame = new("Frame", {
-	AnchorPoint = Vector2.new(1, 1),
-	Position = UDim2.new(1, -20, 1, -168),
-	Size = UDim2.fromOffset(230, 44),
-	BackgroundColor3 = Color3.fromRGB(18, 8, 10),
-	BackgroundTransparency = 0.25,
-	Visible = false,
-}, gui)
-corner(weaponFrame, 10)
-new("UIStroke", { Color = Color3.fromRGB(255, 50, 60), Thickness = 2, Transparency = 0.3 }, weaponFrame)
-local weaponLabel = label({ Position = UDim2.fromOffset(10, 4), Size = UDim2.new(1, -20, 0, 20), Text = "", Font = FONT2, TextXAlignment = Enum.TextXAlignment.Left }, weaponFrame)
-local weaponBack = new("Frame", { Position = UDim2.fromOffset(10, 28), Size = UDim2.new(1, -20, 0, 8), BackgroundColor3 = Color3.fromRGB(50, 30, 34) }, weaponFrame)
-corner(weaponBack, 4)
-local weaponFill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(255, 60, 70) }, weaponBack)
-corner(weaponFill, 4)
-
-local timeLabel = label({ Position = UDim2.fromOffset(12, 82), Size = UDim2.new(1, -24, 0, 18), Text = "", Font = FONT2, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(190, 170, 255) }, money)
+local weaponFrame = new("Frame", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -20, 1, -(DIAL + 76)), Size = UDim2.fromOffset(DIAL, 44), Visible = false }, gui)
+Theme.Panel(weaponFrame, C.Red, 12)
+local weaponLabel = label({ Position = UDim2.fromOffset(12, 6), Size = UDim2.new(1, -24, 0, 16), Text = "", FontFace = F.Heading }, weaponFrame)
+local weaponFill = Theme.Bar(weaponFrame, { Position = UDim2.fromOffset(12, 28), Size = UDim2.new(1, -24, 0, 7) }, C.Red)
 
 ---------------------------------------------------------------------------
 -- Race panel (right)
 ---------------------------------------------------------------------------
-local racePanel = new("Frame", {
-	AnchorPoint = Vector2.new(1, 0),
-	Position = UDim2.new(1, -16, 0, 250),
-	Size = UDim2.fromOffset(230, 290),
-	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
-	BackgroundTransparency = 0.35,
-	Visible = false,
-}, gui)
-corner(racePanel, 12)
-new("UIStroke", { Color = PINK, Thickness = 2 }, racePanel)
-local raceName = label({ Position = UDim2.fromOffset(10, 6), Size = UDim2.new(1, -20, 0, 22), Text = "", TextColor3 = PINK }, racePanel)
-local racePos = label({ Position = UDim2.fromOffset(10, 30), Size = UDim2.new(1, -20, 0, 50), Text = "" }, racePanel)
-local raceInfo = label({ Position = UDim2.fromOffset(10, 84), Size = UDim2.new(1, -20, 0, 22), Text = "", Font = FONT2 }, racePanel)
-local raceTime = label({ Position = UDim2.fromOffset(10, 110), Size = UDim2.new(1, -20, 0, 22), Text = "", Font = FONT2, TextColor3 = Color3.fromRGB(200, 200, 220) }, racePanel)
-local sideBetLabel = label({
-	Position = UDim2.fromOffset(10, 250),
-	Size = UDim2.new(1, -20, 0, 32),
-	Text = "",
-	Font = FONT2,
-	TextWrapped = true,
-	TextColor3 = Color3.fromRGB(255, 200, 60),
-}, racePanel)
-local standings = label({
-	Position = UDim2.fromOffset(14, 140),
-	Size = UDim2.new(1, -28, 0, 100),
-	Text = "",
-	Font = FONT2,
-	TextScaled = false,
-	TextSize = 17,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	TextYAlignment = Enum.TextYAlignment.Top,
-	TextColor3 = Color3.fromRGB(230, 230, 240),
-}, racePanel)
-
-local countdown = label({
-	AnchorPoint = Vector2.new(0.5, 0.5),
-	Position = UDim2.fromScale(0.5, 0.38),
-	Size = UDim2.fromOffset(400, 160),
-	Text = "",
-	TextColor3 = PINK,
-	TextStrokeTransparency = 0,
-	Visible = false,
-}, gui)
+local racePanel = new("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -20, 0, 120), Size = UDim2.fromOffset(260, 300), Visible = false }, gui)
+Theme.Panel(racePanel, C.Pink)
+local raceName = label({ Position = UDim2.fromOffset(16, 12), Size = UDim2.new(1, -32, 0, 18), Text = "", FontFace = F.Heading, TextColor3 = C.Pink }, racePanel)
+local racePos = label({ Position = UDim2.fromOffset(14, 34), Size = UDim2.new(1, -28, 0, 50), Text = "", FontFace = F.Display }, racePanel)
+local raceInfo = label({ Position = UDim2.fromOffset(16, 90), Size = UDim2.new(1, -32, 0, 18), Text = "", FontFace = F.Body }, racePanel)
+local raceTime = label({ Position = UDim2.fromOffset(16, 112), Size = UDim2.new(1, -32, 0, 16), Text = "", FontFace = F.Light, TextColor3 = C.Dim }, racePanel)
+new("Frame", { Position = UDim2.fromOffset(16, 136), Size = UDim2.new(1, -32, 0, 1), BackgroundColor3 = C.Pink, BackgroundTransparency = 0.6, BorderSizePixel = 0 }, racePanel)
+local standings = label({ Position = UDim2.fromOffset(16, 144), Size = UDim2.new(1, -32, 0, 100), Text = "", FontFace = F.Body, TextScaled = false, TextSize = 16, TextYAlignment = Enum.TextYAlignment.Top, RichText = true }, racePanel)
+local sideBetChip = new("Frame", { Position = UDim2.new(0, 12, 1, -46), Size = UDim2.new(1, -24, 0, 34), BackgroundColor3 = Color3.fromRGB(60, 46, 10), BackgroundTransparency = 0.2, Visible = false }, racePanel)
+new("UICorner", { CornerRadius = UDim.new(0, 8) }, sideBetChip)
+local sideBetLabel = label({ Position = UDim2.fromOffset(8, 4), Size = UDim2.new(1, -16, 1, -8), Text = "", FontFace = F.Body, TextColor3 = C.Gold, TextWrapped = true }, sideBetChip)
 
 ---------------------------------------------------------------------------
--- Drift combo (centre)
+-- Countdown + drift combo
 ---------------------------------------------------------------------------
-local driftLabel = label({
-	AnchorPoint = Vector2.new(0.5, 0),
-	Position = UDim2.new(0.5, 0, 0, 130),
-	Size = UDim2.fromOffset(360, 40),
-	Text = "",
-	TextColor3 = Color3.fromRGB(255, 150, 40),
-	TextStrokeTransparency = 0.1,
-}, gui)
+local countdown = label({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.36), Size = UDim2.fromOffset(420, 170), Text = "", FontFace = F.Display, TextColor3 = C.Pink, TextXAlignment = Enum.TextXAlignment.Center, TextStrokeTransparency = 0, Visible = false }, gui)
+local countdownScale = new("UIScale", {}, countdown)
+local lastCountdown = -1
+
+local driftLabel = label({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 132), Size = UDim2.fromOffset(420, 42), Text = "", FontFace = F.Display, TextXAlignment = Enum.TextXAlignment.Center, TextStrokeTransparency = 0.3 }, gui)
+new("UIGradient", { Color = ColorSequence.new(C.Gold, C.Orange), Rotation = 90 }, driftLabel)
 
 ---------------------------------------------------------------------------
--- Notifications (centre left)
+-- Notifications: pills that slide in under the heat meter
 ---------------------------------------------------------------------------
-local notifyFrame = new("Frame", {
-	AnchorPoint = Vector2.new(0.5, 0),
-	Position = UDim2.new(0.5, 0, 0, 180),
-	Size = UDim2.fromOffset(600, 220),
-	BackgroundTransparency = 1,
-}, gui)
-new("UIListLayout", {
-	SortOrder = Enum.SortOrder.LayoutOrder,
-	HorizontalAlignment = Enum.HorizontalAlignment.Center,
-	Padding = UDim.new(0, 4),
-}, notifyFrame)
+local notifyFrame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 184), Size = UDim2.fromOffset(560, 240), BackgroundTransparency = 1 }, gui)
+new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, HorizontalAlignment = Enum.HorizontalAlignment.Center, Padding = UDim.new(0, 6) }, notifyFrame)
 local notifyOrder = 0
 
 function HUD.Notify(text: string, color: Color3?)
 	notifyOrder += 1
-	local l = label({
-		Size = UDim2.new(1, 0, 0, 28),
-		Text = text,
-		TextColor3 = color or Color3.new(1, 1, 1),
-		TextStrokeTransparency = 0.1,
-		LayoutOrder = notifyOrder,
-	}, notifyFrame)
+	local accent = color or C.Text
+	local pill = new("Frame", { Size = UDim2.fromOffset(0, 30), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = C.Panel, BackgroundTransparency = 0.15, LayoutOrder = notifyOrder }, notifyFrame)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, pill)
+	new("UIStroke", { Color = accent, Thickness = 1.5, Transparency = 0.4 }, pill)
+	new("UIPadding", { PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16) }, pill)
+	local t = label({ Size = UDim2.fromOffset(0, 30), AutomaticSize = Enum.AutomaticSize.X, Text = text, TextScaled = false, TextSize = 16, FontFace = F.Heading, TextColor3 = accent }, pill)
+	local s = new("UIScale", { Scale = 0.6 }, pill)
+	TweenService:Create(s, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
 	local kids = {}
 	for _, c in notifyFrame:GetChildren() do
-		if c:IsA("TextLabel") then
+		if c:IsA("Frame") then
 			table.insert(kids, c)
 		end
 	end
-	if #kids > 6 then
+	if #kids > 5 then
 		table.sort(kids, function(a, b)
 			return a.LayoutOrder < b.LayoutOrder
 		end)
 		kids[1]:Destroy()
 	end
 	task.delay(4, function()
-		if l.Parent then
-			local t = TweenService:Create(l, TweenInfo.new(0.6), { TextTransparency = 1, TextStrokeTransparency = 1 })
-			t:Play()
-			t.Completed:Wait()
-			l:Destroy()
+		if pill.Parent then
+			local info = TweenInfo.new(0.5)
+			TweenService:Create(pill, info, { BackgroundTransparency = 1 }):Play()
+			TweenService:Create(t, info, { TextTransparency = 1 }):Play()
+			task.wait(0.5)
+			pill:Destroy()
 		end
 	end)
 end
 
 ---------------------------------------------------------------------------
--- Prompt (bottom centre)
+-- Prompt with a key badge (bottom centre)
 ---------------------------------------------------------------------------
-local promptButton = new("TextButton", {
-	AnchorPoint = Vector2.new(0.5, 1),
-	Position = UDim2.new(0.5, 0, 1, -30),
-	Size = UDim2.fromOffset(460, 46),
-	BackgroundColor3 = Color3.fromRGB(15, 15, 25),
-	BackgroundTransparency = 0.2,
-	Font = FONT2,
-	TextScaled = true,
-	TextColor3 = Color3.new(1, 1, 1),
-	Text = "",
-	Visible = false,
-	AutoButtonColor = true,
-}, gui)
-corner(promptButton, 10)
-new("UIStroke", { Color = PINK, Thickness = 2 }, promptButton)
-new("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6) }, promptButton)
+local promptButton = new("TextButton", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -40), Size = UDim2.fromOffset(0, 50), AutomaticSize = Enum.AutomaticSize.X, Text = "", AutoButtonColor = true, Visible = false }, gui)
+Theme.Panel(promptButton, C.Pink, 25)
+new("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 22) }, promptButton)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 12) }, promptButton)
+local keyBadge = new("Frame", { Size = UDim2.fromOffset(0, 34), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = C.Pink, LayoutOrder = 1 }, promptButton)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, keyBadge)
+new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12) }, keyBadge)
+local keyText = label({ Size = UDim2.fromOffset(0, 34), AutomaticSize = Enum.AutomaticSize.X, Text = "E", TextScaled = false, TextSize = 18, FontFace = F.Display, TextXAlignment = Enum.TextXAlignment.Center }, keyBadge)
+local promptText = label({ Size = UDim2.fromOffset(0, 34), AutomaticSize = Enum.AutomaticSize.X, Text = "", TextScaled = false, TextSize = 18, FontFace = F.Heading, LayoutOrder = 2 }, promptButton)
+local promptStroke = promptButton:FindFirstChildOfClass("UIStroke") :: UIStroke
 HUD.PromptButton = promptButton
 
 function HUD.SetPrompt(text: string?)
-	if text then
-		promptButton.Text = text
-		promptButton.Visible = true
-	else
+	if not text then
 		promptButton.Visible = false
+		return
 	end
+	-- split a leading key label like "[E]", "(B)" or "TAP" into the badge
+	local key, rest = string.match(text, "^([%[%(].-[%]%)])%s+(.*)$")
+	if not key then
+		key, rest = string.match(text, "^(TAP)%s+(.*)$")
+	end
+	if key and rest then
+		keyText.Text = (string.gsub(key, "[%[%]%(%)]", ""))
+		promptText.Text = rest
+		keyBadge.Visible = true
+	else
+		promptText.Text = text
+		keyBadge.Visible = false
+	end
+	promptButton.Visible = true
 end
 
-local controlsLabel = label({
-	AnchorPoint = Vector2.new(0, 1),
-	Position = UDim2.new(0, 16, 1, -250),
-	Size = UDim2.fromOffset(640, 16),
-	Text = "",
-	Font = FONT2,
-	TextColor3 = Color3.fromRGB(200, 200, 220),
-	TextXAlignment = Enum.TextXAlignment.Left,
-}, gui)
+-- device hint, bottom centre, fades after a while
+local controlsLabel = label({ AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -6), Size = UDim2.fromOffset(900, 16), Text = "", TextScaled = false, TextSize = 13, FontFace = F.Light, TextColor3 = C.Dim, TextXAlignment = Enum.TextXAlignment.Center, TextStrokeTransparency = 0.6 }, gui)
+local hintToken = 0
+local function refreshHint()
+	hintToken += 1
+	local token = hintToken
+	controlsLabel.Text = Input.ControlsHint()
+	controlsLabel.TextTransparency = 0
+	task.delay(15, function()
+		if token == hintToken then
+			TweenService:Create(controlsLabel, TweenInfo.new(1.5), { TextTransparency = 1 }):Play()
+		end
+	end)
+end
+Input.OnChanged(refreshHint)
+refreshHint()
 
 ---------------------------------------------------------------------------
--- Minimap (bottom left)
+-- Radar (bottom left). A CanvasGroup clips its content to the rounded corner.
 ---------------------------------------------------------------------------
 local MAP_PX = 210
-local RADAR_RANGE = 1200 -- studs shown across the radar
+local RADAR_RANGE = 1200
 local scale = MAP_PX / RADAR_RANGE
-local minimap = new("Frame", {
-	AnchorPoint = Vector2.new(0, 1),
-	Position = UDim2.new(0, 16, 1, -20),
-	Size = UDim2.fromOffset(MAP_PX, MAP_PX),
-	BackgroundColor3 = Color3.fromRGB(12, 12, 20),
-	BackgroundTransparency = 0.1,
-	ClipsDescendants = true,
-}, gui)
+local radarHolder = new("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 20, 1, -24), Size = UDim2.fromOffset(MAP_PX, MAP_PX), BackgroundTransparency = 1 }, gui)
+local minimap = new("CanvasGroup", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(10, 12, 20) }, radarHolder)
 new("UICorner", { CornerRadius = UDim.new(1, 0) }, minimap)
-new("UIStroke", { Color = PINK, Thickness = 3, Transparency = 0.2 }, minimap)
--- the radar canvas holds the whole city; it slides so your car stays in the middle
 local canvas: Frame = new("Frame", { Name = "Canvas", BackgroundTransparency = 1 }, minimap)
 local canvasPx = MapDraw.Draw(canvas, scale, false)
+-- ring + compass on top (outside the CanvasGroup so they stay crisp)
+local ring = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, radarHolder)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, ring)
+new("UIStroke", { Color = C.Pink, Thickness = 3, Transparency = 0.15 }, ring)
+local vignette = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0, ZIndex = 8 }, minimap)
+new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.5), NumberSequenceKeypoint.new(0.25, 1), NumberSequenceKeypoint.new(0.75, 1), NumberSequenceKeypoint.new(1, 0.5) }), Rotation = 90 }, vignette)
+local northBadge = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0), Size = UDim2.fromOffset(24, 24), BackgroundColor3 = C.Pink }, radarHolder)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, northBadge)
+label({ Size = UDim2.fromScale(1, 1), Text = "N", FontFace = F.Heading, TextXAlignment = Enum.TextXAlignment.Center }, northBadge)
+new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4) }, northBadge)
 
 local function toMap(pos: Vector3): UDim2
 	local p = canvasPx(pos)
 	return UDim2.fromOffset(p.X, p.Y)
 end
-label({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 4), Size = UDim2.fromOffset(20, 14), Text = "N", Font = FONT2, TextColor3 = Color3.new(1, 1, 1), ZIndex = 8 }, minimap)
 
 local dotPool: { Frame } = {}
 local dotsUsed = 0
-
 local function dot(pos: Vector3, color: Color3, size: number)
 	dotsUsed += 1
 	local d = dotPool[dotsUsed]
 	if not d then
-		local nd: Frame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 7 }, canvas)
-		corner(nd, 10)
+		local nd: Frame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 7, BorderSizePixel = 0 }, canvas)
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, nd)
 		dotPool[dotsUsed] = nd
 		d = nd
 	end
@@ -10147,37 +10423,26 @@ local function dot(pos: Vector3, color: Color3, size: number)
 	d.BackgroundColor3 = color
 end
 
-local arrow = label({
-	AnchorPoint = Vector2.new(0.5, 0.5),
-	Size = UDim2.fromOffset(18, 18),
-	Text = "▲",
-	TextColor3 = CYAN,
-	ZIndex = 9,
-	TextStrokeTransparency = 0,
-}, minimap)
+local arrow = label({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(22, 22), Text = "▲", FontFace = F.Heading, TextColor3 = C.Cyan, TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 9, TextStrokeTransparency = 0 }, radarHolder)
 
 ---------------------------------------------------------------------------
 -- Per-frame update
 ---------------------------------------------------------------------------
-local function num(name: string): number
-	local v = player:GetAttribute(name)
-	return if type(v) == "number" then v else 0
-end
-
 local blink = 0
 function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, nitroOn: boolean, car: Model?)
 	blink += dt
 	local shown, unit = Settings.Speed(speed, Config.MphPerStud)
 	speedLabel.Text = tostring(math.floor(shown))
 	unitLabel.Text = unit
+	speedLabel.TextColor3 = if nitroOn then C.Cyan elseif rpmNow > 0.9 then Color3.fromRGB(255, 200, 200) else C.Text
 	nitroFill.Size = UDim2.fromScale(math.clamp(nitro / math.max(capacity, 0.01), 0, 1), 1)
-	nitroFill.BackgroundColor3 = if nitroOn then Color3.fromRGB(255, 255, 255) else CYAN
+	nitroFill.BackgroundColor3 = if nitroOn then Color3.new(1, 1, 1) else C.Cyan
 	if car then
 		local rating = car:GetAttribute("rating")
 		local class = car:GetAttribute("RatingClass")
-		carNameLabel.Text = tostring(car:GetAttribute("CarName") or "") .. (if class then "   " .. tostring(class) .. " " .. tostring(rating) else "")
+		classLabel.Text = string.upper(tostring(car:GetAttribute("CarName") or "")) .. (if class then "  ·  " .. tostring(class) .. " " .. tostring(rating) else "")
 	else
-		carNameLabel.Text = ""
+		classLabel.Text = ""
 	end
 
 	-- heat
@@ -10186,58 +10451,62 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	local level = math.floor(heat)
 	for k = 1, 5 do
 		local lit = k <= level
-		local color = Color3.fromRGB(70, 70, 80)
+		local color = Color3.fromRGB(60, 62, 80)
 		if lit then
 			if mode ~= "idle" then
-				color = if (math.floor(blink * 4) + k) % 2 == 0 then RED else BLUE
+				color = if (math.floor(blink * 4) + k) % 2 == 0 then C.Red else C.Blue
 			else
-				color = Color3.fromRGB(255, 80, 80)
+				color = Color3.fromRGB(255, 90, 90)
 			end
 		end
 		stars[k].TextColor3 = color
 	end
-
 	if mode == "pursuit" then
-		statusLabel.Text = "PURSUIT  -  lose them!"
-		statusLabel.TextColor3 = RED
+		statusLabel.Text = "PURSUIT  ·  LOSE THEM"
+		statusLabel.TextColor3 = C.Red
 		meterBack.Visible = true
-		meterFill.BackgroundColor3 = Color3.fromRGB(255, 200, 60)
+		meterFill.BackgroundColor3 = C.Gold
 		meterFill.Size = UDim2.fromScale(num("Evade"), 1)
 	elseif mode == "cooldown" then
-		statusLabel.Text = if player:GetAttribute("Hiding") then "COOLDOWN  -  hiding (x3)" else "COOLDOWN  -  stay out of sight"
-		statusLabel.TextColor3 = BLUE
+		statusLabel.Text = if player:GetAttribute("Hiding") then "COOLDOWN  ·  HIDING x3" else "COOLDOWN  ·  STAY OUT OF SIGHT"
+		statusLabel.TextColor3 = C.Blue
 		meterBack.Visible = true
-		meterFill.BackgroundColor3 = BLUE
+		meterFill.BackgroundColor3 = C.Blue
 		meterFill.Size = UDim2.fromScale(num("Cooldown"), 1)
 	else
-		statusLabel.Text = if level > 0 then "HEAT " .. level .. "  -  bank at the safehouse to clear it" else ""
+		statusLabel.Text = if level > 0 then "HEAT " .. level .. "  ·  BANK AT THE SAFEHOUSE TO CLEAR IT" else ""
 		statusLabel.TextColor3 = Color3.fromRGB(255, 160, 160)
 		meterBack.Visible = false
 	end
 	local bust = num("Bust")
 	bustBack.Visible = bust > 0.01
 	bustFill.Size = UDim2.fromScale(bust, 1)
+	starPill.Visible = level > 0 or mode ~= "idle"
 
-	-- money
-	bankLabel.Text = "$" .. commas(num("Cash"))
+	-- wallet
+	cashLabel.Text = "$" .. commas(num("Cash"))
 	local unbanked = num("Unbanked")
-	unbankedLabel.Text = if unbanked > 0 then "Unbanked: $" .. commas(unbanked) .. "  (at risk!)" else "Unbanked: $0"
+	unbankedLabel.Text = "UNBANKED  $" .. commas(unbanked)
+	riskTag.Visible = unbanked > 0 and math.floor(blink * 2) % 2 == 0
 	local bounty = num("Bounty")
-	bountyLabel.Text = if mode ~= "idle" then "Pursuit bounty: " .. commas(bounty) else "Total bounty: " .. commas(num("TotalBounty"))
+	bountyLabel.Text = if mode ~= "idle" then "Pursuit bounty  " .. commas(bounty) else "Total bounty  " .. commas(num("TotalBounty"))
 	repLabel.Text = "REP " .. math.floor(num("RepLevel"))
 	repFill.Size = UDim2.fromScale(math.clamp(num("RepProgress"), 0, 1), 1)
+	local night = player:GetAttribute("Night") == true
+	timeLabel.Text = if night then "☾ NIGHT x" .. Config.NightMultiplier else "☀ DAY"
+	timeLabel.TextColor3 = if night then C.Purple else C.Gold
+
+	-- weapon
 	local weaponId = player:GetAttribute("Weapon")
 	local weaponDef = if type(weaponId) == "string" and weaponId ~= "" then Config.GetWeapon(weaponId) else nil
 	weaponFrame.Visible = weaponDef ~= nil
 	if weaponDef then
-		local readyAt = num("WeaponReadyAt")
-		local left = readyAt - workspace:GetServerTimeNow()
+		local left = num("WeaponReadyAt") - workspace:GetServerTimeNow()
 		local ready = left <= 0
-		weaponLabel.Text = string.upper(weaponDef.name) .. (if ready then "   [F] READY" else string.format("   %.1fs", left))
+		weaponLabel.Text = string.upper(weaponDef.name) .. (if ready then "   ·   " .. Input.Label("fire") .. " READY" else string.format("   ·   %.1fs", left))
 		weaponFill.Size = UDim2.fromScale(if ready then 1 else math.clamp(1 - left / weaponDef.cooldown, 0, 1), 1)
 		weaponFill.BackgroundColor3 = if ready then weaponDef.color else Color3.fromRGB(120, 60, 60)
 	end
-	timeLabel.Text = if player:GetAttribute("Night") then "NIGHT  -  x" .. Config.NightMultiplier .. " payouts" else "DAY"
 
 	-- drift combo
 	local combo = num("DriftCombo")
@@ -10247,43 +10516,56 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	local racing = player:GetAttribute("RaceActive") == true
 	racePanel.Visible = racing
 	if racing then
-		raceName.Text = tostring(player:GetAttribute("RaceName") or "")
+		raceName.Text = string.upper(tostring(player:GetAttribute("RaceName") or ""))
 		local kind = player:GetAttribute("RaceKind")
-		sideBetLabel.Text = tostring(player:GetAttribute("RaceSideBet") or "")
+		local bet = tostring(player:GetAttribute("RaceSideBet") or "")
+		sideBetLabel.Text = bet
+		sideBetChip.Visible = bet ~= ""
 		if kind == "drift" or kind == "takeover" then
 			racePos.Text = commas(num("RaceScore"))
-			raceInfo.Text = if player:GetAttribute("RaceInZone") == false then "LEAVING THE ZONE!" else "Target: " .. commas(num("RaceTarget"))
-			raceTime.Text = string.format("Time left: %.1fs", math.max(0, num("RaceTimeLeft")))
+			raceInfo.Text = if player:GetAttribute("RaceInZone") == false then "LEAVING THE ZONE!" else "Target  " .. commas(num("RaceTarget"))
+			raceInfo.TextColor3 = if player:GetAttribute("RaceInZone") == false then C.Red else C.Text
+			raceTime.Text = string.format("Time left  %.1fs", math.max(0, num("RaceTimeLeft")))
 			standings.Text = ""
 		else
-			racePos.Text = string.format("%d / %d", num("RacePos"), num("RaceRacers"))
+			racePos.Text = string.format("%d<font size=\"24\"> / %d</font>", num("RacePos"), num("RaceRacers"))
+			racePos.RichText = true
 			local laps = num("RaceLaps")
 			raceInfo.Text = if laps > 1
-				then string.format("Lap %d/%d   CP %d/%d", num("RaceLap"), laps, num("RaceCP"), num("RaceCPTotal"))
-				else string.format("Checkpoint %d/%d", num("RaceCP"), num("RaceCPTotal"))
-			raceTime.Text = string.format("Time: %.1fs", num("RaceTime"))
-			standings.Text = tostring(player:GetAttribute("RaceStandings") or "")
+				then string.format("Lap %d/%d   ·   CP %d/%d", num("RaceLap"), laps, num("RaceCP"), num("RaceCPTotal"))
+				else string.format("Checkpoint %d / %d", num("RaceCP"), num("RaceCPTotal"))
+			raceInfo.TextColor3 = C.Text
+			raceTime.Text = string.format("Time  %.1fs", num("RaceTime"))
+			local raw = tostring(player:GetAttribute("RaceStandings") or "")
+			standings.Text = (string.gsub(raw, "(%d+%.%s+YOU)", "<font color=\"#00E1FF\"><b>%1</b></font>"))
 		end
 	end
+	local cdAttr = player:GetAttribute("RaceCountdown")
 	local cd = num("RaceCountdown")
-	if racing and player:GetAttribute("RaceCountdown") ~= nil and cd >= 0 then
+	if racing and cdAttr ~= nil and cd >= 0 then
 		countdown.Visible = true
 		countdown.Text = if cd == 0 then "GO!" else tostring(cd)
+		countdown.TextColor3 = if cd == 0 then C.Green else C.Pink
+		if cd ~= lastCountdown then
+			lastCountdown = cd
+			countdownScale.Scale = 1.8
+			TweenService:Create(countdownScale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+		end
 	else
 		countdown.Visible = false
+		lastCountdown = -1
 	end
 
-	-- minimap dynamic dots
+	-- radar dots
 	dotsUsed = 0
 	local blinkOn = math.floor(blink * 5) % 2 == 0
 	local police = workspace:FindFirstChild("Police")
 	if police then
 		for _, m in police:GetChildren() do
 			if m:IsA("Model") and m.PrimaryPart and m.Name ~= "Roadblock" then
-				dot(m.PrimaryPart.Position, if blinkOn then RED else BLUE, if m.Name == "PoliceHeli" then 10 else 7)
+				dot(m.PrimaryPart.Position, if blinkOn then C.Red else C.Blue, if m.Name == "PoliceHeli" then 11 else 8)
 			elseif m:IsA("Model") and m.Name == "Roadblock" then
-				local p = m:GetPivot().Position
-				dot(p, Color3.fromRGB(255, 120, 0), 9)
+				dot(m:GetPivot().Position, C.Orange, 10)
 			end
 		end
 	end
@@ -10291,7 +10573,7 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	if cars then
 		for _, m in cars:GetChildren() do
 			if m:IsA("Model") and m ~= car and m.PrimaryPart then
-				dot(m.PrimaryPart.Position, Color3.new(1, 1, 1), 7)
+				dot(m.PrimaryPart.Position, Color3.new(1, 1, 1), 8)
 			end
 		end
 	end
@@ -10299,7 +10581,7 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	if traffic then
 		for _, m in traffic:GetChildren() do
 			if m:IsA("Model") and m.PrimaryPart then
-				dot(m.PrimaryPart.Position, Color3.fromRGB(130, 130, 145), 4)
+				dot(m.PrimaryPart.Position, Color3.fromRGB(130, 134, 150), 4)
 			end
 		end
 	end
@@ -10308,7 +10590,7 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 		for _, f in races:GetChildren() do
 			for _, m in f:GetChildren() do
 				if m:IsA("Model") and m.PrimaryPart then
-					dot(m.PrimaryPart.Position, Color3.fromRGB(255, 220, 60), 6)
+					dot(m.PrimaryPart.Position, C.Gold, 7)
 				end
 			end
 		end
@@ -10316,7 +10598,7 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	if racing then
 		local nextCp = player:GetAttribute("RaceNext")
 		if typeof(nextCp) == "Vector3" and nextCp.Magnitude > 0 then
-			dot(nextCp, Color3.fromRGB(255, 255, 0), 11)
+			dot(nextCp, Color3.fromRGB(255, 255, 0), 12)
 		end
 	end
 	for k = dotsUsed + 1, #dotPool do
@@ -10326,7 +10608,6 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 		local cf = car.PrimaryPart.CFrame
 		local p = canvasPx(cf.Position)
 		canvas.Position = UDim2.fromOffset(MAP_PX / 2 - p.X, MAP_PX / 2 - p.Y)
-		arrow.Position = UDim2.fromScale(0.5, 0.5)
 		local look = cf.LookVector
 		arrow.Rotation = math.deg(math.atan2(look.X, -look.Z))
 		arrow.Visible = true
@@ -10338,21 +10619,21 @@ end
 ---------------------------------------------------------------------------
 -- Screen scaling + device layouts (keyboard / gamepad / touch)
 ---------------------------------------------------------------------------
-for _, f in { speedo, heatFrame, money, repFrame, weaponFrame, racePanel, minimap, promptButton } :: { GuiObject } do
+for _, f in { speedo, heatFrame, wallet, weaponFrame, racePanel, radarHolder, promptButton } :: { GuiObject } do
 	Scale.Attach(f)
 end
 
 local defaults: { [GuiObject]: { pos: UDim2, anchor: Vector2 } } = {}
-for _, f in { speedo, weaponFrame, minimap, racePanel, promptButton } :: { GuiObject } do
+for _, f in { speedo, weaponFrame, radarHolder, racePanel, promptButton } :: { GuiObject } do
 	defaults[f] = { pos = f.Position, anchor = f.AnchorPoint }
 end
 local TOUCH: { [GuiObject]: { pos: UDim2, anchor: Vector2 } } = {
 	-- the pedals take the bottom right, the steering pad the bottom left
-	[speedo] = { pos = UDim2.new(0.5, 0, 1, -16), anchor = Vector2.new(0.5, 1) },
-	[weaponFrame] = { pos = UDim2.new(0.5, 0, 1, -160), anchor = Vector2.new(0.5, 1) },
-	[minimap] = { pos = UDim2.new(1, -16, 0, 112), anchor = Vector2.new(1, 0) },
-	[racePanel] = { pos = UDim2.new(1, -16, 0, 300), anchor = Vector2.new(1, 0) },
-	[promptButton] = { pos = UDim2.new(0.5, 0, 1, -210), anchor = Vector2.new(0.5, 1) },
+	[speedo] = { pos = UDim2.new(0.5, 0, 1, -8), anchor = Vector2.new(0.5, 1) },
+	[weaponFrame] = { pos = UDim2.new(0.5, 0, 1, -300), anchor = Vector2.new(0.5, 1) },
+	[radarHolder] = { pos = UDim2.new(1, -20, 0, 116), anchor = Vector2.new(1, 0) },
+	[racePanel] = { pos = UDim2.new(1, -20, 0, 340), anchor = Vector2.new(1, 0) },
+	[promptButton] = { pos = UDim2.new(0.5, 0, 1, -330), anchor = Vector2.new(0.5, 1) },
 }
 
 function HUD.SetTouchLayout(on: boolean)
@@ -10366,14 +10647,9 @@ function HUD.SetTouchLayout(on: boolean)
 	controlsLabel.Visible = not on
 end
 
-local function refreshHint()
-	controlsLabel.Text = Input.ControlsHint()
-end
-Input.OnChanged(refreshHint)
-refreshHint()
-
+local _ = promptStroke
 return HUD
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001D"><Properties><string name="Name">Input</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001E"><Properties><string name="Name">Input</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Knows which device the player is using right now (keyboard, gamepad or touch) so prompts
 -- and hints can show the right button.
 
@@ -10463,7 +10739,262 @@ function Input.ClearSelection()
 end
 
 return Input
-]]></ProtectedString></Properties></Item><Item class="LocalScript" referent="RBX0000000000000000000000000000001E"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001F"><Properties><string name="Name">LeaderboardUI</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Leaderboard screen (press L / D-pad → or the trophy button): everyone on this server, plus the
+-- all-time Most Wanted boards for total bounty and REP.
+
+local ContextActionService = game:GetService("ContextActionService")
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Theme = require(script.Parent.Theme)
+local Scale = require(script.Parent.Scale)
+local Sounds = require(script.Parent.Sounds)
+local HUD = require(script.Parent.HUD)
+
+local player = Players.LocalPlayer
+local F, C = Theme.Fonts, Theme.Colors
+local new = Theme.new
+local label = Theme.Label
+
+local LeaderboardUI = {}
+LeaderboardUI.Open = false
+
+local gui: ScreenGui = new("ScreenGui", { Name = "WantedUnboundLeaderboard", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 25, Enabled = false }, player:WaitForChild("PlayerGui"))
+local backdrop = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(4, 4, 10), BackgroundTransparency = 0.4, BorderSizePixel = 0 }, gui)
+
+local W, H = 760, 560
+local holder: CanvasGroup = new("CanvasGroup", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(W + 10, H + 10), BackgroundTransparency = 1 }, gui)
+Scale.Attach(holder)
+local panel = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(W, H) }, holder)
+Theme.Panel(panel, C.Gold, 18)
+
+-- header
+local title = label({ Position = UDim2.fromOffset(28, 20), Size = UDim2.fromOffset(460, 40), Text = "LEADERBOARD", FontFace = F.Display }, panel)
+new("UIGradient", { Color = ColorSequence.new(C.Gold, C.Orange) }, title)
+local subtitle = label({ Position = UDim2.fromOffset(30, 62), Size = UDim2.fromOffset(460, 18), Text = "", FontFace = F.Light, TextColor3 = C.Dim }, panel)
+local closeButton = new("TextButton", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -20, 0, 20), Size = UDim2.fromOffset(40, 40), BackgroundColor3 = C.PanelLight, Text = "✕", TextScaled = true, FontFace = F.Heading, TextColor3 = C.Text }, panel)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, closeButton)
+new("UIPadding", { PaddingTop = UDim.new(0, 9), PaddingBottom = UDim.new(0, 9) }, closeButton)
+
+-- tabs
+type Tab = { id: string, name: string, button: TextButton }
+local TABS = {
+	{ id = "server", name = "THIS SERVER" },
+	{ id = "bounty", name = "ALL-TIME BOUNTY" },
+	{ id = "rep", name = "ALL-TIME REP" },
+}
+local tabs: { Tab } = {}
+local current = "server"
+local tabBar = new("Frame", { Position = UDim2.fromOffset(28, 94), Size = UDim2.new(1, -56, 0, 40), BackgroundColor3 = C.PanelLight, BackgroundTransparency = 0.3 }, panel)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, tabBar)
+local highlight = new("Frame", { Size = UDim2.new(1 / #TABS, 0, 1, 0), BackgroundColor3 = C.Gold }, tabBar)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, highlight)
+new("UIGradient", { Color = ColorSequence.new(C.Gold, C.Orange) }, highlight)
+
+-- column headers
+local head = new("Frame", { Position = UDim2.fromOffset(28, 146), Size = UDim2.new(1, -56, 0, 22), BackgroundTransparency = 1 }, panel)
+local headLabels: { TextLabel } = {}
+local COLS = { { x = 0.0, w = 0.08 }, { x = 0.09, w = 0.4 }, { x = 0.5, w = 0.14 }, { x = 0.65, w = 0.14 }, { x = 0.8, w = 0.2 } }
+for k, col in COLS do
+	headLabels[k] = label({ Position = UDim2.fromScale(col.x, 0), Size = UDim2.fromScale(col.w, 1), Text = "", FontFace = F.Heading, TextColor3 = C.Dim, TextXAlignment = if k >= 3 then Enum.TextXAlignment.Right else Enum.TextXAlignment.Left }, head)
+end
+
+-- rows
+local ROWS = 10
+type Row = { frame: Frame, cells: { TextLabel }, bar: Frame }
+local rows: { Row } = {}
+local listFrame = new("Frame", { Position = UDim2.fromOffset(28, 174), Size = UDim2.new(1, -56, 1, -214), BackgroundTransparency = 1 }, panel)
+new("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, listFrame)
+for r = 1, ROWS do
+	local frame = new("Frame", { Size = UDim2.new(1, 0, 1 / ROWS, -5), BackgroundColor3 = C.PanelLight, BackgroundTransparency = 0.35, LayoutOrder = r }, listFrame)
+	new("UICorner", { CornerRadius = UDim.new(0, 8) }, frame)
+	local bar = new("Frame", { Size = UDim2.new(0, 4, 1, -10), Position = UDim2.fromOffset(0, 5), BackgroundColor3 = C.Dim, BorderSizePixel = 0 }, frame)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, bar)
+	local cellsHolder = new("Frame", { Position = UDim2.fromOffset(14, 0), Size = UDim2.new(1, -26, 1, 0), BackgroundTransparency = 1 }, frame)
+	local cells: { TextLabel } = {}
+	for k, col in COLS do
+		cells[k] = label({
+			Position = UDim2.fromScale(col.x, 0.2),
+			Size = UDim2.fromScale(col.w, 0.6),
+			Text = "",
+			FontFace = if k == 1 or k == 5 then F.Display else F.Body,
+			TextXAlignment = if k >= 3 then Enum.TextXAlignment.Right else Enum.TextXAlignment.Left,
+		}, cellsHolder)
+	end
+	rows[r] = { frame = frame, cells = cells, bar = bar }
+end
+local empty = label({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 290), Size = UDim2.fromOffset(460, 24), Text = "", TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.Dim }, panel)
+label({ AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -12), Size = UDim2.fromOffset(500, 16), Text = "All-time boards refresh every minute   ·   [L] close", FontFace = F.Light, TextColor3 = C.Dim, TextXAlignment = Enum.TextXAlignment.Center }, panel)
+
+local RANK_COLORS = { C.Gold, Color3.fromRGB(215, 220, 235), Color3.fromRGB(215, 140, 80) }
+
+local function decode(name: string, fallback: any): any
+	local v = ReplicatedStorage:FindFirstChild(name)
+	if not v or not v:IsA("StringValue") then
+		return fallback
+	end
+	local ok, data = pcall(function()
+		return HttpService:JSONDecode(v.Value)
+	end)
+	return if ok and data ~= nil then data else fallback
+end
+
+type Line = { id: number, name: string, a: string, b: string, c: string }
+
+local function render()
+	local lines: { Line } = {}
+	if current == "server" then
+		subtitle.Text = "Everyone racing in Neon Bay right now"
+		local heads = { "#", "RACER", "REP", "WINS", "BOUNTY" }
+		for k, h in heads do
+			headLabels[k].Text = h
+		end
+		local list = decode("LeaderboardServer", {})
+		table.sort(list, function(x: any, y: any)
+			return (x.bounty or 0) > (y.bounty or 0)
+		end)
+		for _, e in list do
+			table.insert(lines, { id = e.id or 0, name = tostring(e.name), a = "LV " .. tostring(e.level or 1), b = tostring(e.races or 0), c = HUD.Commas(e.bounty or 0) })
+		end
+	else
+		local data = decode("LeaderboardAllTime", {})
+		local global = data.global == true
+		subtitle.Text = if global then "The most wanted racers across every server" else "Global boards need API access - showing this server"
+		local heads = { "#", "RACER", "", "", if current == "bounty" then "TOTAL BOUNTY" else "REP" }
+		for k, h in heads do
+			headLabels[k].Text = h
+		end
+		for _, e in data[current] or {} do
+			local v = e.value or 0
+			table.insert(lines, { id = e.id or 0, name = tostring(e.name), a = "", b = "", c = (if current == "bounty" then "$" else "") .. HUD.Commas(v) })
+		end
+	end
+	for r, row in rows do
+		local line = lines[r]
+		row.frame.Visible = line ~= nil
+		if line then
+			local mine = line.id == player.UserId
+			local rankColor = RANK_COLORS[r] or C.Dim
+			row.cells[1].Text = tostring(r)
+			row.cells[1].TextColor3 = rankColor
+			row.cells[2].Text = string.upper(line.name) .. (if mine then "  (YOU)" else "")
+			row.cells[2].TextColor3 = if mine then C.Cyan else C.Text
+			row.cells[3].Text = line.a
+			row.cells[4].Text = line.b
+			row.cells[5].Text = line.c
+			row.cells[5].TextColor3 = if r <= 3 then rankColor else C.Text
+			row.bar.BackgroundColor3 = if mine then C.Cyan else rankColor
+			row.frame.BackgroundColor3 = if mine then Color3.fromRGB(16, 50, 70) else C.PanelLight
+		end
+	end
+	empty.Text = if #lines == 0 then "No scores yet - go earn some bounty!" else ""
+end
+
+local function selectTab(id: string, animate: boolean)
+	current = id
+	for k, t in tabs do
+		local on = t.id == id
+		t.button.TextColor3 = if on then Color3.fromRGB(20, 14, 4) else C.Dim
+		if on then
+			local pos = UDim2.new((k - 1) / #TABS, 0, 0, 0)
+			if animate then
+				Theme.Tween(highlight, 0.3, { Position = pos }, Enum.EasingStyle.Back)
+			else
+				highlight.Position = pos
+			end
+		end
+	end
+	-- rows cascade in
+	render()
+	if animate then
+		for r, row in rows do
+			row.frame.BackgroundTransparency = 1
+			task.delay(r * 0.025, function()
+				Theme.Tween(row.frame, 0.2, { BackgroundTransparency = 0.35 })
+			end)
+		end
+	end
+end
+
+for k, def in TABS do
+	local b = new("TextButton", {
+		Position = UDim2.fromScale((k - 1) / #TABS, 0),
+		Size = UDim2.fromScale(1 / #TABS, 1),
+		BackgroundTransparency = 1,
+		Text = def.name,
+		TextScaled = true,
+		FontFace = F.Heading,
+		TextColor3 = C.Dim,
+		ZIndex = 2,
+	}, tabBar)
+	new("UIPadding", { PaddingTop = UDim.new(0, 11), PaddingBottom = UDim.new(0, 11) }, b)
+	b.Activated:Connect(function()
+		Sounds.Tick(1.3, 0.35)
+		selectTab(def.id, true)
+	end)
+	table.insert(tabs, { id = def.id, name = def.name, button = b })
+end
+selectTab("server", false)
+
+function LeaderboardUI.Toggle(open: boolean?)
+	local want = if open == nil then not LeaderboardUI.Open else open
+	if want == LeaderboardUI.Open then
+		return
+	end
+	LeaderboardUI.Open = want
+	Sounds.Tick(if want then 1.2 else 0.9, 0.4)
+	if want then
+		selectTab(current, true)
+	end
+	Theme.Popup(gui, backdrop, holder, want)
+end
+
+closeButton.Activated:Connect(function()
+	LeaderboardUI.Toggle(false)
+end)
+
+-- live refresh while open
+for _, name in { "LeaderboardServer", "LeaderboardAllTime" } do
+	task.spawn(function()
+		local v = ReplicatedStorage:WaitForChild(name, 30)
+		if v and v:IsA("StringValue") then
+			v.Changed:Connect(function()
+				if LeaderboardUI.Open then
+					render()
+				end
+			end)
+		end
+	end)
+end
+
+ContextActionService:BindAction("WU_Leaderboard", function(_, state)
+	if state ~= Enum.UserInputState.Begin then
+		return Enum.ContextActionResult.Pass
+	end
+	LeaderboardUI.Toggle()
+	return Enum.ContextActionResult.Sink
+end, false, Enum.KeyCode.L, Enum.KeyCode.DPadRight)
+
+-- ButtonL1/R1 only while open (RB is also fire), so bind them separately at a higher priority
+ContextActionService:BindActionAtPriority("WU_LeaderboardTabs", function(_, state, input)
+	if state ~= Enum.UserInputState.Begin or not LeaderboardUI.Open then
+		return Enum.ContextActionResult.Pass
+	end
+	local idx = 1
+	for k, t in tabs do
+		if t.id == current then
+			idx = k
+		end
+	end
+	idx = (idx - 1 + (if input.KeyCode == Enum.KeyCode.ButtonR1 then 1 else -1)) % #tabs + 1
+	selectTab(tabs[idx].id, true)
+	return Enum.ContextActionResult.Sink
+end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.ButtonL1, Enum.KeyCode.ButtonR1)
+
+return LeaderboardUI
+]]></ProtectedString></Properties></Item><Item class="LocalScript" referent="RBX00000000000000000000000000000020"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
 -- WANTED: UNBOUND - client entry point.
 
 local ContextActionService = game:GetService("ContextActionService")
@@ -10725,6 +11256,11 @@ RunService.RenderStepped:Connect(function(dt)
 	promptTimer += dt
 	if promptTimer > 0.2 then
 		promptTimer = 0
+		-- your own name floating over your car only gets in the way
+		local tag = car and car:FindFirstChild("Tag", true)
+		if tag and tag:IsA("BillboardGui") and tag.Enabled then
+			tag.Enabled = false
+		end
 		local pos = car and car.PrimaryPart and car.PrimaryPart.Position
 		updatePrompt(pos)
 		if Garage.Open and not player:GetAttribute("AtSafehouse") and not Garage.InGarage() then
@@ -10743,7 +11279,7 @@ RunService.RenderStepped:Connect(function(dt)
 end)
 
 print("[" .. Config.GameName .. "] client ready")
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001F"><Properties><string name="Name">MapDraw</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000021"><Properties><string name="Name">MapDraw</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Draws the city (districts, roads, coast and points of interest) into a GUI frame at any
 -- scale. Used by the radar minimap and the full-screen city map.
 
@@ -10878,7 +11414,7 @@ function MapDraw.Draw(canvas: Frame, scale: number, labels: boolean): (Vector3) 
 end
 
 return MapDraw
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000020"><Properties><string name="Name">Menu</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000022"><Properties><string name="Name">Menu</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Main menu and pause menu.
 -- Title screen: cinematic camera shots around the safehouse, animated menu buttons, a player card
 -- with your stats, settings, how to play, credits and a rotating tips bar.
@@ -10905,6 +11441,8 @@ local FullMap = require(script.Parent.FullMap)
 local HUD = require(script.Parent.HUD)
 local Input = require(script.Parent.Input)
 local Scale = require(script.Parent.Scale)
+local Theme = require(script.Parent.Theme)
+local LeaderboardUI = require(script.Parent.LeaderboardUI)
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -10928,7 +11466,7 @@ local function new(className: string, props: { [string]: any }, parent: Instance
 end
 
 local function text(parent: Instance, props: { [string]: any }): TextLabel
-	local base = { BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextColor3 = Color3.new(1, 1, 1), TextScaled = true, TextXAlignment = Enum.TextXAlignment.Left }
+	local base: { [string]: any } = { BackgroundTransparency = 1, FontFace = Theme.Fonts.Body, TextColor3 = Color3.new(1, 1, 1), TextScaled = true, TextXAlignment = Enum.TextXAlignment.Left }
 	for k, v in props do
 		base[k] = v
 	end
@@ -10951,19 +11489,29 @@ local barBottom = new("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDi
 local fade = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 50 }, gui)
 
 -- left column: logo + buttons
-local left = new("Frame", { Position = UDim2.new(0, 60, 0, 90), Size = UDim2.new(0, 460, 1, -160), BackgroundTransparency = 1 }, gui)
+local left = new("Frame", { Position = UDim2.new(0, 60, 0, 70), Size = UDim2.new(0, 460, 1, -120), BackgroundTransparency = 1 }, gui)
 local logo = new("Frame", { Size = UDim2.new(1, 0, 0, 170), BackgroundTransparency = 1 }, left)
-text(logo, { Size = UDim2.new(1, 0, 0, 92), Text = "WANTED", Font = Enum.Font.GothamBlack, TextColor3 = RED, TextStrokeTransparency = 0, TextStrokeColor3 = Color3.fromRGB(40, 0, 10) })
-text(logo, { Position = UDim2.fromOffset(4, 86), Size = UDim2.new(1, 0, 0, 50), Text = "U N B O U N D", Font = Enum.Font.GothamBlack, TextColor3 = CYAN, TextStrokeTransparency = 0 })
-local tagline = text(logo, { Position = UDim2.fromOffset(4, 142), Size = UDim2.new(1, 0, 0, 22), Text = "Race.  Raise your heat.  Escape the cops.  Climb the Blacklist.", Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(220, 220, 230) })
+local wantedText = text(logo, { Size = UDim2.new(1, 0, 0, 92), Text = "WANTED", FontFace = Theme.Fonts.Display, TextColor3 = Color3.new(1, 1, 1) })
+new("UIGradient", { Color = ColorSequence.new(Color3.fromRGB(255, 70, 70), Color3.fromRGB(255, 150, 40)), Rotation = 0 }, wantedText)
+new("UIStroke", { Color = Color3.fromRGB(40, 0, 10), Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual }, wantedText)
+local unboundText = text(logo, { Position = UDim2.fromOffset(4, 88), Size = UDim2.new(1, 0, 0, 46), Text = "U N B O U N D", FontFace = Theme.Fonts.Heading, TextColor3 = Color3.new(1, 1, 1) })
+local logoShine = new("UIGradient", { Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, CYAN),
+	ColorSequenceKeypoint.new(0.45, CYAN),
+	ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
+	ColorSequenceKeypoint.new(0.55, PINK),
+	ColorSequenceKeypoint.new(1, PINK),
+}), Offset = Vector2.new(-1, 0) }, unboundText)
+local tagline = text(logo, { Position = UDim2.fromOffset(4, 142), Size = UDim2.new(1, 0, 0, 22), Text = "Race.  Raise your heat.  Escape the cops.  Climb the Blacklist.", FontFace = Theme.Fonts.Light, TextColor3 = Color3.fromRGB(220, 220, 230) })
 
-local list = new("Frame", { Position = UDim2.fromOffset(0, 200), Size = UDim2.new(1, 0, 1, -200), BackgroundTransparency = 1 }, left)
-new("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+local list = new("Frame", { Position = UDim2.fromOffset(0, 182), Size = UDim2.new(1, 0, 1, -182), BackgroundTransparency = 1 }, left)
+new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, list)
 
-type Button = { frame: TextButton, setLabel: (string) -> () }
+type Button = { frame: TextButton, setLabel: (string) -> (), slide: UIPadding }
+local buttons: { Button } = {}
 local function menuButton(label: string, order: number, onClick: () -> ()): Button
 	local b = new("TextButton", {
-		Size = UDim2.new(0, 360, 0, 54),
+		Size = UDim2.new(0, 360, 0, 44),
 		BackgroundColor3 = Color3.fromRGB(12, 12, 20),
 		BackgroundTransparency = 0.25,
 		AutoButtonColor = false,
@@ -10971,21 +11519,23 @@ local function menuButton(label: string, order: number, onClick: () -> ()): Butt
 		LayoutOrder = order,
 	}, list)
 	new("UICorner", { CornerRadius = UDim.new(0, 6) }, b)
+	new("UIGradient", { Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(150, 150, 170)), Rotation = 90 }, b)
+	local slide = new("UIPadding", {}, b)
 	local accent = new("Frame", { Size = UDim2.new(0, 5, 1, 0), BackgroundColor3 = PINK, BorderSizePixel = 0 }, b)
 	local fill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = PINK, BackgroundTransparency = 0.15, BorderSizePixel = 0 }, b)
 	new("UICorner", { CornerRadius = UDim.new(0, 6) }, fill)
-	local t = text(b, { Position = UDim2.fromOffset(24, 10), Size = UDim2.new(1, -40, 1, -20), Text = label, Font = Enum.Font.GothamBlack, ZIndex = 2 })
-	local arrowLbl = text(b, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 14), Size = UDim2.fromOffset(24, 26), Text = "›", TextXAlignment = Enum.TextXAlignment.Right, TextTransparency = 1, ZIndex = 2 })
+	local t = text(b, { Position = UDim2.fromOffset(24, 11), Size = UDim2.new(1, -40, 1, -22), Text = label, FontFace = Theme.Fonts.Heading, ZIndex = 2 })
+	local arrowLbl = text(b, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 9), Size = UDim2.fromOffset(24, 26), Text = "›", TextXAlignment = Enum.TextXAlignment.Right, TextTransparency = 1, ZIndex = 2 })
 	local quick = TweenInfo.new(0.16, Enum.EasingStyle.Quad)
 	b.MouseEnter:Connect(function()
 		Sounds.Tick(1.4, 0.25)
 		TweenService:Create(fill, quick, { Size = UDim2.new(1, 0, 1, 0) }):Play()
-		TweenService:Create(t, quick, { Position = UDim2.fromOffset(34, 10) }):Play()
+		TweenService:Create(t, quick, { Position = UDim2.fromOffset(34, 11) }):Play()
 		TweenService:Create(arrowLbl, quick, { TextTransparency = 0 }):Play()
 	end)
 	b.MouseLeave:Connect(function()
 		TweenService:Create(fill, quick, { Size = UDim2.new(0, 0, 1, 0) }):Play()
-		TweenService:Create(t, quick, { Position = UDim2.fromOffset(24, 10) }):Play()
+		TweenService:Create(t, quick, { Position = UDim2.fromOffset(24, 11) }):Play()
 		TweenService:Create(arrowLbl, quick, { TextTransparency = 1 }):Play()
 	end)
 	b.Activated:Connect(function()
@@ -10993,12 +11543,16 @@ local function menuButton(label: string, order: number, onClick: () -> ()): Butt
 		onClick()
 	end)
 	local _ = accent
-	return {
+	local made: Button
+	made = {
 		frame = b,
 		setLabel = function(s: string)
 			t.Text = s
 		end,
+		slide = slide,
 	}
+	table.insert(buttons, made)
+	return made
 end
 
 Scale.Attach(left)
@@ -11011,8 +11565,7 @@ local card = new("Frame", {
 	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
 	BackgroundTransparency = 0.2,
 }, gui)
-new("UICorner", { CornerRadius = UDim.new(0, 12) }, card)
-new("UIStroke", { Color = CYAN, Thickness = 2, Transparency = 0.4 }, card)
+Theme.Panel(card, CYAN, 16)
 Scale.Attach(card)
 local avatar = new("ImageLabel", { Position = UDim2.fromOffset(16, 16), Size = UDim2.fromOffset(72, 72), BackgroundColor3 = Color3.fromRGB(30, 30, 40) }, card)
 new("UICorner", { CornerRadius = UDim.new(1, 0) }, avatar)
@@ -11024,7 +11577,7 @@ task.spawn(function()
 		avatar.Image = img
 	end
 end)
-text(card, { Position = UDim2.fromOffset(100, 22), Size = UDim2.new(1, -116, 0, 28), Text = player.DisplayName, Font = Enum.Font.GothamBlack })
+text(card, { Position = UDim2.fromOffset(100, 22), Size = UDim2.new(1, -116, 0, 28), Text = player.DisplayName, FontFace = Theme.Fonts.Heading })
 local rankLabel = text(card, { Position = UDim2.fromOffset(100, 54), Size = UDim2.new(1, -116, 0, 20), Text = "", TextColor3 = RED })
 local statRows: { TextLabel } = {}
 for k = 1, 6 do
@@ -11086,10 +11639,9 @@ local panel = new("Frame", {
 	BackgroundTransparency = 0.1,
 	Visible = false,
 }, gui)
-new("UICorner", { CornerRadius = UDim.new(0, 12) }, panel)
-new("UIStroke", { Color = PINK, Thickness = 2 }, panel)
+Theme.Panel(panel, PINK, 16)
 Scale.Attach(panel)
-local panelTitle = text(panel, { Position = UDim2.fromOffset(20, 14), Size = UDim2.new(1, -40, 0, 32), Text = "", Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
+local panelTitle = text(panel, { Position = UDim2.fromOffset(20, 14), Size = UDim2.new(1, -40, 0, 32), Text = "", FontFace = Theme.Fonts.Display, TextColor3 = CYAN })
 local panelBody = new("Frame", { Position = UDim2.fromOffset(20, 60), Size = UDim2.new(1, -40, 1, -80), BackgroundTransparency = 1 }, panel)
 
 local function clearPanel()
@@ -11318,15 +11870,33 @@ local tipIndex = 1
 
 -- buttons
 local playButton: Button
+local menuToken = 0
+local LEFT_HOME = left.Position
+local CARD_HOME = card.Position
 local function closeMenu()
 	if Menu.Mode == "closed" then
 		return
 	end
+	local wasTitle = Menu.Mode == "title"
 	Menu.Mode = "closed"
 	Drive.MenuOpen = false
 	Input.ClearSelection()
-	TweenService:Create(fade, TweenInfo.new(0.25), { BackgroundTransparency = 0 }):Play()
+	Theme.Blur("menu", false)
+	menuToken += 1
+	local token = menuToken
+	-- slide everything off screen; from the title screen also dip to black
+	local out = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	TweenService:Create(left, out, { Position = LEFT_HOME - UDim2.fromOffset(560, 0) }):Play()
+	TweenService:Create(card, out, { Position = CARD_HOME + UDim2.fromOffset(460, 0) }):Play()
+	TweenService:Create(panel, out, { Position = CARD_HOME + UDim2.fromOffset(640, 0) }):Play()
+	TweenService:Create(shade, out, { BackgroundTransparency = 1 }):Play()
+	if wasTitle then
+		TweenService:Create(fade, TweenInfo.new(0.25), { BackgroundTransparency = 0 }):Play()
+	end
 	task.delay(0.28, function()
+		if menuToken ~= token then
+			return
+		end
 		gui.Enabled = false
 		fade.BackgroundTransparency = 1
 	end)
@@ -11334,7 +11904,25 @@ end
 
 local function openMenu(mode: string)
 	Menu.Mode = mode
+	menuToken += 1
 	gui.Enabled = true
+	Theme.Blur("menu", mode == "pause")
+	-- animate in: columns slide from the sides, buttons cascade, shade fades up
+	left.Position = LEFT_HOME - UDim2.fromOffset(560, 0)
+	card.Position = CARD_HOME + UDim2.fromOffset(460, 0)
+	panel.Position = CARD_HOME
+	local back = TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	TweenService:Create(left, back, { Position = LEFT_HOME }):Play()
+	TweenService:Create(card, TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out, 0, false, 0.08), { Position = CARD_HOME }):Play()
+	for k, btn in buttons do
+		btn.slide.PaddingLeft = UDim.new(0, -120)
+		btn.frame.BackgroundTransparency = 1
+		local info = TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out, 0, false, 0.1 + k * 0.045)
+		TweenService:Create(btn.slide, info, { PaddingLeft = UDim.new(0, 0) }):Play()
+		TweenService:Create(btn.frame, info, { BackgroundTransparency = 0.25 }):Play()
+	end
+	logoShine.Offset = Vector2.new(-1, 0)
+	TweenService:Create(logoShine, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.Out, 0, false, 0.3), { Offset = Vector2.new(1, 0) }):Play()
 	panel.Visible = false
 	card.Visible = true
 	activePanel = ""
@@ -11343,7 +11931,8 @@ local function openMenu(mode: string)
 	barTop.Visible = mode == "title"
 	barBottom.Visible = true
 	tagline.Visible = mode == "title"
-	shade.BackgroundTransparency = if mode == "title" then 0.2 else 0.05
+	shade.BackgroundTransparency = 1
+	TweenService:Create(shade, TweenInfo.new(0.35), { BackgroundTransparency = if mode == "title" then 0.2 else 0.15 }):Play()
 	shotClock = 0
 	refreshCard()
 	Input.Select(playButton.frame)
@@ -11364,16 +11953,19 @@ end)
 menuButton("CITY MAP", 3, function()
 	FullMap.Toggle(true)
 end)
-menuButton("CODES", 4, function()
+menuButton("LEADERBOARD", 4, function()
+	LeaderboardUI.Toggle(true)
+end)
+menuButton("CODES", 5, function()
 	togglePanel("codes", showCodes)
 end)
-menuButton("SETTINGS", 5, function()
+menuButton("SETTINGS", 6, function()
 	togglePanel("settings", showSettings)
 end)
-menuButton("HOW TO PLAY", 6, function()
+menuButton("HOW TO PLAY", 7, function()
 	togglePanel("help", showHelp)
 end)
-menuButton("CREDITS", 7, function()
+menuButton("CREDITS", 8, function()
 	togglePanel("credits", showCredits)
 end)
 
@@ -11389,31 +11981,44 @@ ContextActionService:BindAction("WU_Pause", function(_, state)
 	return Enum.ContextActionResult.Sink
 end, false, Enum.KeyCode.P, Enum.KeyCode.DPadDown)
 
-local pauseButton = new("TextButton", {
-	AnchorPoint = Vector2.new(1, 0),
-	Position = UDim2.new(1, -16, 0, 60),
-	Size = UDim2.fromOffset(44, 44),
-	BackgroundColor3 = Color3.fromRGB(12, 12, 20),
-	BackgroundTransparency = 0.25,
-	Text = "☰",
-	TextScaled = true,
-	Font = Enum.Font.GothamBlack,
-	TextColor3 = Color3.new(1, 1, 1),
-}, HUD.Gui)
-new("UICorner", { CornerRadius = UDim.new(0, 10) }, pauseButton)
-local mapButton = new("TextButton", {
-	AnchorPoint = Vector2.new(1, 0),
-	Position = UDim2.new(1, -68, 0, 60),
-	Size = UDim2.fromOffset(60, 44),
-	BackgroundColor3 = Color3.fromRGB(12, 12, 20),
-	BackgroundTransparency = 0.25,
-	Text = "MAP",
-	TextScaled = true,
-	Font = Enum.Font.GothamBlack,
-	TextColor3 = Color3.new(1, 1, 1),
-}, HUD.Gui)
-new("UICorner", { CornerRadius = UDim.new(0, 10) }, mapButton)
-new("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10) }, mapButton)
+-- round glass buttons, top right of the HUD
+local function hudButton(icon: string, slot: number, accent: Color3): TextButton
+	local btn = new("TextButton", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -16 - (slot - 1) * 52, 0, 60),
+		Size = UDim2.fromOffset(44, 44),
+		BackgroundColor3 = Theme.Colors.Panel,
+		BackgroundTransparency = 0.15,
+		AutoButtonColor = false,
+		Text = icon,
+		TextScaled = true,
+		FontFace = Theme.Fonts.Heading,
+		TextColor3 = Color3.new(1, 1, 1),
+	}, HUD.Gui)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, btn)
+	local stroke = new("UIStroke", { Color = accent, Thickness = 1.5, Transparency = 0.4, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, btn)
+	new("UIPadding", { PaddingTop = UDim.new(0, 11), PaddingBottom = UDim.new(0, 11), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, btn)
+	local scale = new("UIScale", {}, btn)
+	btn.MouseEnter:Connect(function()
+		Theme.Tween(scale, 0.15, { Scale = 1.1 })
+		Theme.Tween(stroke, 0.15, { Transparency = 0 })
+	end)
+	btn.MouseLeave:Connect(function()
+		Theme.Tween(scale, 0.15, { Scale = 1 })
+		Theme.Tween(stroke, 0.15, { Transparency = 0.4 })
+	end)
+	btn.Activated:Connect(function()
+		scale.Scale = 0.85
+		Theme.Tween(scale, 0.3, { Scale = 1 }, Enum.EasingStyle.Back)
+	end)
+	return btn
+end
+local pauseButton = hudButton("☰", 1, PINK)
+local mapButton = hudButton("MAP", 2, CYAN)
+local boardButton = hudButton("🏆", 3, Theme.Colors.Gold)
+boardButton.Activated:Connect(function()
+	LeaderboardUI.Toggle()
+end)
 mapButton.Activated:Connect(function()
 	FullMap.Toggle()
 end)
@@ -11457,7 +12062,7 @@ end)
 
 openMenu("title")
 return Menu
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000021"><Properties><string name="Name">Scale</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000023"><Properties><string name="Name">Scale</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Scales fixed-size UI panels down on small screens (phones) and slightly up on big ones.
 -- Attach it to panels that are anchored to a screen edge; they shrink around their anchor.
 
@@ -11494,7 +12099,7 @@ camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
 end)
 
 return Scale
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000022"><Properties><string name="Name">Settings</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000024"><Properties><string name="Name">Settings</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Player settings, saved in the player's profile on the server.
 
 local Lighting = game:GetService("Lighting")
@@ -11591,7 +12196,7 @@ Lighting.ChildAdded:Connect(function()
 end)
 
 return Settings
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000023"><Properties><string name="Name">Sounds</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000025"><Properties><string name="Name">Sounds</string><ProtectedString name="Source"><![CDATA[--!strict
 -- All game audio. Roblox only ships a handful of built-in sounds, so the engine and tyre sounds
 -- are synthesized from its wind-noise loop: pitched down, bass boosted, distorted and pulsed by a
 -- tremolo at the engine's firing rate (it follows the simulated RPM and gear shifts). If you put
@@ -11957,7 +12562,163 @@ RunService.RenderStepped:Connect(function(dt: number)
 end)
 
 return Sounds
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000024"><Properties><string name="Name">TouchControls</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000026"><Properties><string name="Name">Theme</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Shared UI look: fonts, colours and small helpers for glassy panels, so every screen matches.
+
+local Lighting = game:GetService("Lighting")
+local TweenService = game:GetService("TweenService")
+
+local Theme = {}
+
+Theme.Fonts = {
+	Display = Font.new("rbxasset://fonts/families/Michroma.json", Enum.FontWeight.Regular), -- racing / sci-fi numbers
+	Heading = Font.new("rbxasset://fonts/families/Montserrat.json", Enum.FontWeight.Heavy),
+	Body = Font.new("rbxasset://fonts/families/Montserrat.json", Enum.FontWeight.SemiBold),
+	Light = Font.new("rbxasset://fonts/families/Montserrat.json", Enum.FontWeight.Medium),
+}
+
+Theme.Colors = {
+	Panel = Color3.fromRGB(10, 12, 22),
+	PanelLight = Color3.fromRGB(28, 32, 50),
+	Text = Color3.fromRGB(240, 242, 250),
+	Dim = Color3.fromRGB(150, 156, 180),
+	Cyan = Color3.fromRGB(0, 225, 255),
+	Pink = Color3.fromRGB(255, 45, 150),
+	Red = Color3.fromRGB(255, 60, 70),
+	Blue = Color3.fromRGB(70, 140, 255),
+	Gold = Color3.fromRGB(255, 205, 60),
+	Green = Color3.fromRGB(90, 255, 150),
+	Orange = Color3.fromRGB(255, 150, 40),
+	Purple = Color3.fromRGB(170, 120, 255),
+}
+
+function Theme.new(className: string, props: { [string]: any }, parent: Instance?): any
+	local inst = Instance.new(className)
+	for k, v in props do
+		(inst :: any)[k] = v
+	end
+	if parent then
+		inst.Parent = parent
+	end
+	return inst
+end
+
+-- Dark glass panel: rounded, subtle top highlight and a thin accent outline.
+function Theme.Panel(frame: GuiObject, accent: Color3?, radius: number?)
+	frame.BackgroundColor3 = Theme.Colors.Panel
+	if frame.BackgroundTransparency >= 1 then
+		frame.BackgroundTransparency = 0.18
+	end
+	Theme.new("UICorner", { CornerRadius = UDim.new(0, radius or 14) }, frame)
+	Theme.new("UIGradient", {
+		Rotation = 90,
+		Color = ColorSequence.new(Color3.fromRGB(46, 52, 78), Color3.fromRGB(10, 12, 22)),
+		Transparency = NumberSequence.new(0, 0.05),
+	}, frame)
+	Theme.new("UIStroke", {
+		Color = accent or Theme.Colors.Cyan,
+		Thickness = 1.5,
+		Transparency = 0.55,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	}, frame)
+end
+
+function Theme.Label(props: { [string]: any }, parent: Instance?): TextLabel
+	local base: { [string]: any } = {
+		BackgroundTransparency = 1,
+		FontFace = Theme.Fonts.Body,
+		TextColor3 = Theme.Colors.Text,
+		TextScaled = true,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}
+	for k, v in props do
+		base[k] = v
+	end
+	return Theme.new("TextLabel", base, parent)
+end
+
+-- Horizontal progress bar; returns the fill frame.
+function Theme.Bar(parent: Instance, props: { [string]: any }, color: Color3): Frame
+	local back = Theme.new("Frame", { BackgroundColor3 = Color3.fromRGB(34, 38, 58), BorderSizePixel = 0 }, parent)
+	for k, v in props do
+		(back :: any)[k] = v
+	end
+	Theme.new("UICorner", { CornerRadius = UDim.new(1, 0) }, back)
+	local fill = Theme.new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = color, BorderSizePixel = 0 }, back)
+	Theme.new("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
+	Theme.new("UIGradient", { Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(200, 200, 200)) }, fill)
+	return fill
+end
+
+function Theme.Tween(obj: Instance, time: number, props: { [string]: any }, style: Enum.EasingStyle?, dir: Enum.EasingDirection?): Tween
+	local t = TweenService:Create(obj, TweenInfo.new(time, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), props)
+	t:Play()
+	return t
+end
+
+-- Background blur while any menu is open (several menus can ask for it at once).
+local blur = Instance.new("BlurEffect")
+blur.Name = "WU_MenuBlur"
+blur.Size = 0
+blur.Enabled = false
+blur.Parent = Lighting
+local blurUsers: { [string]: true } = {}
+function Theme.Blur(key: string, on: boolean)
+	if on then
+		blurUsers[key] = true
+	else
+		blurUsers[key] = nil
+	end
+	local any = next(blurUsers) ~= nil
+	if any then
+		blur.Enabled = true
+	end
+	local t = Theme.Tween(blur, 0.3, { Size = if any then 16 else 0 })
+	if not any then
+		t.Completed:Once(function()
+			if next(blurUsers) == nil then
+				blur.Enabled = false
+			end
+		end)
+	end
+end
+
+-- Animated popup: `holder` is a centred CanvasGroup (so everything inside fades together) and
+-- `backdrop` a full-screen dimmer. Opening pops the window up with a little overshoot, closing
+-- drops and fades it, then disables the ScreenGui.
+local popupTokens: { [Instance]: number } = {}
+function Theme.Popup(gui: ScreenGui, backdrop: GuiObject, holder: CanvasGroup, open: boolean)
+	local token = (popupTokens[holder] or 0) + 1
+	popupTokens[holder] = token
+	local dim = backdrop:GetAttribute("Dim")
+	if type(dim) ~= "number" then
+		dim = backdrop.BackgroundTransparency
+		backdrop:SetAttribute("Dim", dim)
+	end
+	local home = UDim2.fromScale(0.5, 0.5)
+	Theme.Blur(gui.Name, open)
+	if open then
+		gui.Enabled = true
+		holder.GroupTransparency = 1
+		holder.Position = home + UDim2.fromOffset(0, 60)
+		holder.Rotation = -2
+		backdrop.BackgroundTransparency = 1
+		Theme.Tween(backdrop, 0.25, { BackgroundTransparency = dim })
+		Theme.Tween(holder, 0.22, { GroupTransparency = 0 })
+		Theme.Tween(holder, 0.45, { Position = home, Rotation = 0 }, Enum.EasingStyle.Back)
+	else
+		Theme.Tween(backdrop, 0.2, { BackgroundTransparency = 1 })
+		Theme.Tween(holder, 0.2, { GroupTransparency = 1, Position = home + UDim2.fromOffset(0, 40), Rotation = 1.5 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		task.delay(0.21, function()
+			if popupTokens[holder] == token then
+				gui.Enabled = false
+			end
+		end)
+	end
+end
+
+return Theme
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000027"><Properties><string name="Name">TouchControls</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Mobile driving controls: an analog steering pad on the left, GAS / BRAKE pedals on the right,
 -- and NOS, DRIFT, FIRE and RESET buttons. Shown only on touch devices while driving; the
 -- default thumbstick is switched off meanwhile.
@@ -12151,7 +12912,7 @@ RunService.RenderStepped:Connect(function()
 end)
 
 return TouchControls
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000025"><Properties><string name="Name">Weather</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000028"><Properties><string name="Name">Weather</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Rain showers (the server decides when it rains; see workspace attribute "Raining").
 -- Rain streaks follow the camera, the picture goes greyer, and you hear the rain.
 

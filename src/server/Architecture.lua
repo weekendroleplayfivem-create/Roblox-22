@@ -487,12 +487,13 @@ local function stopSign(corner: Vector3, facing: Vector3)
 	local pos = Vector3.new(corner.X, SURFACE, corner.Z)
 	deco({ Name = "SignPost", Size = Vector3.new(0.3, 8, 0.3), CFrame = CFrame.new(pos + Vector3.new(0, 4, 0)), Color = rgb(150, 150, 155), Material = Enum.Material.Metal })
 	local cf = CFrame.lookAt(pos + Vector3.new(0, 8.5, 0), pos + Vector3.new(0, 8.5, 0) + facing)
-	-- two overlapping squares make an octagon
-	local a = deco({ Name = "StopSign", Size = Vector3.new(2.6, 2.6, 0.1), CFrame = cf, Color = rgb(190, 20, 25) })
-	deco({ Name = "StopSign", Size = Vector3.new(2.6, 2.6, 0.1), CFrame = cf * CFrame.Angles(0, 0, math.rad(45)), Color = rgb(190, 20, 25) })
+	-- four w x w*tan(22.5deg) strips rotated in 45 degree steps form an exact octagon
+	local w = 2.8
+	for k = 0, 3 do
+		deco({ Name = "StopSign", Size = Vector3.new(w, w * 0.4142, 0.1), CFrame = cf * CFrame.Angles(0, 0, math.rad(45 * k)), Color = rgb(190, 20, 25), Material = Enum.Material.SmoothPlastic })
+	end
 	local label = deco({ Name = "StopText", Size = Vector3.new(2.2, 0.9, 0.02), CFrame = cf * CFrame.new(0, 0, -0.07), Color = rgb(190, 20, 25), Transparency = 1 })
 	surfaceText(label, "STOP", rgb(255, 255, 255), false)
-	local _ = a
 end
 
 -- mode: "signals" (city: crosswalks + traffic lights), "stop" (stop signs) or "plain"

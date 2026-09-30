@@ -260,6 +260,11 @@ RunService.RenderStepped:Connect(function(dt)
 	promptTimer += dt
 	if promptTimer > 0.2 then
 		promptTimer = 0
+		-- your own name floating over your car only gets in the way
+		local tag = car and car:FindFirstChild("Tag", true)
+		if tag and tag:IsA("BillboardGui") and tag.Enabled then
+			tag.Enabled = false
+		end
 		local pos = car and car.PrimaryPart and car.PrimaryPart.Position
 		updatePrompt(pos)
 		if Garage.Open and not player:GetAttribute("AtSafehouse") and not Garage.InGarage() then
