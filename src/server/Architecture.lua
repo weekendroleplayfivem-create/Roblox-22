@@ -590,6 +590,23 @@ local function house(front: Vector3, n: Vector3)
 	-- a parked car-shaped block in some driveways would be heavy; a mailbox is cheap
 	deco({ Name = "Mailbox", Size = Vector3.new(0.9, 0.9, 1.6), CFrame = hcf * CFrame.new(-6, 3.6, -d / 2 - driveLen + 1.5), Color = rgb(50, 50, 55), Material = Enum.Material.Metal })
 	deco({ Name = "MailPost", Size = Vector3.new(0.25, 3.2, 0.25), CFrame = hcf * CFrame.new(-6, 1.6, -d / 2 - driveLen + 1.5), Color = rgb(110, 85, 60), Material = Enum.Material.Wood })
+	-- front garden: hedge under the windows, a flower bed and a round bush by the door
+	local greens = { rgb(46, 96, 44), rgb(58, 110, 50), rgb(40, 84, 40) }
+	local hedgeW = w / 2 - 5
+	deco({ Name = "Hedge", Size = Vector3.new(hedgeW, 2.4, 2.2), CFrame = hcf * CFrame.new(-w / 2 + hedgeW / 2 + 1, 1.2, -d / 2 - 1.8), Color = pick(greens), Material = Enum.Material.LeafyGrass })
+	local flowers = pick({ rgb(220, 60, 90), rgb(250, 200, 60), rgb(170, 90, 220), rgb(250, 130, 60), rgb(240, 240, 240) })
+	deco({ Name = "FlowerBed", Size = Vector3.new(hedgeW, 0.7, 1.4), CFrame = hcf * CFrame.new(-w / 2 + hedgeW / 2 + 1, 0.35, -d / 2 - 3.8), Color = flowers, Material = Enum.Material.Grass })
+	deco({ Name = "Bush", Shape = Enum.PartType.Ball, Size = Vector3.new(3, 3, 3), CFrame = hcf * CFrame.new(1.2, 1.3, -d / 2 - 2.2), Color = pick(greens), Material = Enum.Material.LeafyGrass })
+	-- some families are home: a simple parked car in the driveway
+	if rng:NextNumber() < 0.35 then
+		local carColor = pick({ rgb(200, 200, 205), rgb(30, 30, 34), rgb(120, 20, 25), rgb(30, 60, 120), rgb(90, 95, 100), rgb(235, 235, 235) })
+		local carCF = hcf * CFrame.new(garageX, 0, -d / 2 - 9)
+		deco({ Name = "ParkedBody", Size = Vector3.new(5.6, 1.9, 13), CFrame = carCF * CFrame.new(0, 1.55, 0), Color = carColor, Material = Enum.Material.SmoothPlastic, CanCollide = true, CanQuery = true, Reflectance = 0.12 })
+		deco({ Name = "ParkedCabin", Size = Vector3.new(5, 1.5, 6.5), CFrame = carCF * CFrame.new(0, 3.25, 0.6), Color = rgb(24, 30, 40), Material = Enum.Material.Glass })
+		for _, z in { -4.2, 4.2 } do
+			deco({ Name = "ParkedWheels", Shape = Enum.PartType.Cylinder, Size = Vector3.new(5.8, 2, 2), CFrame = carCF * CFrame.new(0, 1, z), Color = rgb(22, 22, 24), Material = Enum.Material.Rubber })
+		end
+	end
 	-- back yard tree
 	if rng:NextNumber() < 0.6 then
 		local t = hcf * CFrame.new(rng:NextNumber(-w / 2, w / 2), 0, d / 2 + 10)

@@ -15,8 +15,9 @@ in code, so you don't need any models, meshes or assets.
 | Interact (start race / garage / quit race) | E | B | on-screen prompt |
 | Garage (at the safehouse) | G | — | on-screen prompt |
 | Fire roof weapon | F | RB | FIRE button |
-| City map | M | — | menu → CITY MAP |
-| Pause menu | P | — | ☰ button |
+| City map | M | D-pad ↑ | MAP button |
+| Leaderboard | L | D-pad → (LB / RB switch tabs) | 🏆 button |
+| Pause menu | P | D-pad ↓ | ☰ button |
 
 ### The loop
 1. **Race.** Drive into a pink race marker (**R** on the minimap) and press **E**. You pay a buy-in
@@ -30,6 +31,37 @@ in code, so you don't need any models, meshes or assets.
    (**S**). If you get busted, you lose all of it. Banking at the safehouse also clears your heat.
 5. **Climb the Blacklist.** Earn total bounty and race wins, then challenge Blacklist rivals #5 → #1
    from the garage. Beat one and you win their car's **pink slip**.
+
+### Looks, leaderboard and new cars update
+- **Brand-new racing HUD:**
+  - A glass-panel theme with the Michroma and Montserrat fonts.
+  - An analog speed dial with an LED tach ring, gear and nitro gauge.
+  - A wallet card, a heat star pill and a weapon chip.
+  - A race panel with live standings.
+  - Notification pills that pop in.
+  - The **minimap is now a proper circle** (clipped) with a ring and north marker.
+  - The controls hint moved to the bottom centre and fades out, so it no longer covers the minimap.
+- **Leaderboards:**
+  - **THIS SERVER** shows REP level, wins and bounty.
+  - **ALL-TIME BOUNTY** and **ALL-TIME REP** are global boards that use OrderedDataStores and refresh every minute.
+  - Open them with **L** or the 🏆 button, or look at the big screen next to the safehouse garage.
+  - Without API access (Studio), the all-time boards fall back to the players on the server.
+- **Animations:**
+  - The city map, pause menu and leaderboard slide and pop in and out, and the world behind them blurs.
+  - The menu buttons cascade in, and the logo gets a shine sweep.
+  - Tabs slide, rows fade in, and the HUD buttons bounce when you press them.
+  - The map now opens on top of the pause menu (before, it was hidden behind it).
+- **3 new car models:**
+  - **Outlaw 4x4 Pickup** (class C): an open bed with rails, a roll bar, running boards, cab lights and a chrome grille.
+  - **Stallion GT500** (class B): a fastback GT with racing stripes, a hood scoop, side scoops, round headlights and a ducktail.
+  - **Cuneo 5000 QV** (class A): an 80s wedge supercar with pop-up lights, NACA ducts, engine air boxes, a louvred deck and a GT wing.
+  - Pickups now also show up in traffic.
+- **Every car looks better:** chrome window trim, wipers, grille slats, amber side markers and a third brake light.
+- **Prettier world:**
+  - Richer colour grading, with more saturation and contrast by day and at golden hour.
+  - Suburb houses get front hedges, flower beds and bushes, and sometimes a car parked in the driveway.
+  - Stop signs are real octagons now.
+  - Your own name tag no longer floats over your car.
 
 ### Driving, performance, console & mobile update
 - **New driving physics (hover suspension):**
@@ -286,10 +318,13 @@ src/server/   (ServerScriptService.Server)
   Races.lua         races, drift events and Blacklist challenges
   Session.lua       per-player runtime state and money helpers
   PlayerData.lua    DataStore save / load
+  Leaderboard.lua   all-time (OrderedDataStore) + live server leaderboards, safehouse screen
 src/client/   (StarterPlayerScripts.Client)
   Main.client.lua   prompts, checkpoint beacon, siren lights, main loop
   DriveController.lua  input, physics, nitro, chase camera
   HUD.lua           all on-screen UI + minimap
+  Theme.lua         shared UI look: fonts, colours, glass panels, blur + popup animations
+  LeaderboardUI.lua leaderboard screen (L)
   Garage.lua        garage: cars, performance parts, handling, visuals, Blacklist
   CarVisuals.lua    spinning / steering wheels, headlights at night, brake lights
   Effects.lua       banners, speed lines, blur, near-miss popups, GPS arrow

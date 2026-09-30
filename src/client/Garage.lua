@@ -15,6 +15,7 @@ local Sounds = require(script.Parent.Sounds)
 local Drive = require(script.Parent.DriveController)
 local Input = require(script.Parent.Input)
 local Scale = require(script.Parent.Scale)
+local Theme = require(script.Parent.Theme)
 local GarageEvent = Remotes:WaitForChild("Garage") :: RemoteEvent
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -32,8 +33,16 @@ local CARD = Color3.fromRGB(28, 28, 44)
 
 local function new(className: string, props: { [string]: any }, parent: Instance?): any
 	local inst = Instance.new(className)
+	if props.Font ~= nil then
+		(inst :: any).FontFace = Theme.FontFor(props.Font)
+	end
 	for k, v in props do
-		(inst :: any)[k] = v
+		if k ~= "Font" and k ~= "FontFace" then
+			(inst :: any)[k] = v
+		end
+	end
+	if props.FontFace ~= nil then
+		(inst :: any).FontFace = props.FontFace
 	end
 	if parent then
 		inst.Parent = parent
@@ -48,13 +57,15 @@ end
 local function text(parent: Instance, props: { [string]: any }): TextLabel
 	local base = {
 		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamBold,
 		TextColor3 = Color3.new(1, 1, 1),
 		TextScaled = true,
 		TextXAlignment = Enum.TextXAlignment.Left,
 	}
 	for k, v in props do
 		base[k] = v
+	end
+	if base.Font == nil and base.FontFace == nil then
+		base.FontFace = Theme.Fonts.Body
 	end
 	return new("TextLabel", base, parent)
 end
@@ -90,12 +101,11 @@ local window = new("Frame", {
 	Visible = false,
 	ZIndex = 10,
 }, HUD.Gui)
-corner(window, 16)
-new("UIStroke", { Color = PINK, Thickness = 3 }, window)
+Theme.Panel(window, PINK, 18)
 new("UISizeConstraint", { MaxSize = Vector2.new(640, 680), MinSize = Vector2.new(320, 300) }, window)
 Scale.Attach(window)
 
-text(window, { Position = UDim2.fromOffset(20, 10), Size = UDim2.new(0.5, 0, 0, 36), Text = "SAFEHOUSE GARAGE", Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
+text(window, { Position = UDim2.fromOffset(20, 10), Size = UDim2.new(0.5, 0, 0, 36), Text = "SAFEHOUSE GARAGE", FontFace = Theme.Fonts.Display, TextColor3 = CYAN })
 local cashText = text(window, { Position = UDim2.new(0.5, 0, 0, 14), Size = UDim2.new(0.5, -70, 0, 28), Text = "", TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = Color3.fromRGB(120, 255, 150) })
 button(window, { Position = UDim2.new(1, -56, 0, 10), Size = UDim2.fromOffset(44, 36), Text = "X", BackgroundColor3 = Color3.fromRGB(80, 30, 50) }, function()
 	Garage.Exit()

@@ -44,6 +44,7 @@ type Dims = {
 	spoiler: number, -- default spoiler
 	fullTail: boolean, -- full width tail light bar
 	exhausts: number,
+	extra: string?, -- style specific add-ons: "fastback" | "wedge" | "pickup"
 }
 
 -- Proportions are based on real cars at roughly 1 stud = 0.35 m.
@@ -53,6 +54,12 @@ local STYLES: { [string]: Dims } = {
 	muscle = { W = 5.9, L = 14, c = 0.5, top = 2.5, roof = 3.9, r = 1.05, cabS = 0.42, cabE = 0.8, ws = 2.2, rw = 1.8, hood = 0.25, fAxle = 0.18, rAxle = 0.17, spoiler = 2, fullTail = true, exhausts = 4 },
 	sedan = { W = 5.8, L = 14, c = 0.5, top = 2.45, roof = 4.1, r = 1.05, cabS = 0.31, cabE = 0.8, ws = 2.4, rw = 2.3, hood = 0.25, fAxle = 0.19, rAxle = 0.18, spoiler = 1, fullTail = false, exhausts = 1 },
 	hatch = { W = 5.6, L = 12, c = 0.5, top = 2.35, roof = 4.0, r = 1.0, cabS = 0.33, cabE = 0.93, ws = 2.3, rw = 0.9, hood = 0.25, fAxle = 0.17, rAxle = 0.15, spoiler = 1, fullTail = false, exhausts = 1 },
+	-- 60s/70s muscle GT with a long sloping fastback roof, ducktail and racing stripes
+	fastback = { W = 5.9, L = 14.2, c = 0.5, top = 2.3, roof = 3.6, r = 1.05, cabS = 0.4, cabE = 0.9, ws = 2.1, rw = 3.9, hood = 0.3, fAxle = 0.18, rAxle = 0.16, spoiler = 2, fullTail = true, exhausts = 2, extra = "fastback" },
+	-- 80s wedge supercar: flat and low, steep raked windscreen, louvred engine deck, pop-up lights
+	wedge = { W = 6.1, L = 13.4, c = 0.35, top = 1.85, roof = 3.0, r = 1.05, cabS = 0.27, cabE = 0.64, ws = 3.3, rw = 1.2, hood = 0.12, fAxle = 0.17, rAxle = 0.19, spoiler = 4, fullTail = false, exhausts = 4, extra = "wedge" },
+	-- full-size pickup: tall cab, open bed with rails and a roll bar
+	pickup = { W = 6.3, L = 15.4, c = 0.95, top = 3.3, roof = 5.1, r = 1.3, cabS = 0.27, cabE = 0.56, ws = 1.9, rw = 0.35, hood = 0.2, fAxle = 0.17, rAxle = 0.19, spoiler = 1, fullTail = false, exhausts = 1, extra = "pickup" },
 	suv = { W = 6.2, L = 14.2, c = 0.85, top = 3.2, roof = 5.1, r = 1.25, cabS = 0.28, cabE = 0.93, ws = 2.0, rw = 0.8, hood = 0.2, fAxle = 0.18, rAxle = 0.17, spoiler = 1, fullTail = false, exhausts = 1 },
 }
 
@@ -340,7 +347,7 @@ function CarBuilder.Build(opts: BuildOptions): Model
 	local rwp = wedge(ctx, "RearWindow", Vector3.new(cabW, roofH, d.rw), CFrame.new(0, top + roofH / 2, cabE - d.rw / 2) * CFrame.Angles(0, math.pi, 0), GLASS, Enum.Material.Glass)
 	rwp.Transparency = tint
 	rwp.Reflectance = 0.25
-	if rear - 0.3 - cabE > 0.5 then
+	if rear - 0.3 - cabE > 0.5 and d.extra ~= "pickup" then
 		local trunkLen = rear - 0.3 - cabE
 		paint(wedge(ctx, "Trunk", Vector3.new(W - 0.3, 0.15, trunkLen), CFrame.new(0, top + 0.075, cabE + trunkLen / 2) * CFrame.Angles(0, math.pi, 0), bodyColor))
 	end
@@ -357,6 +364,92 @@ function CarBuilder.Build(opts: BuildOptions): Model
 		end
 		box(ctx, "Dash", Vector3.new(cabW - 0.2, 0.35, 0.9), CFrame.new(0, top + 0.1, cabS + d.ws * 0.65), Color3.fromRGB(25, 25, 28))
 		cylinder(ctx, "SteeringWheel", Vector3.new(0.12, 0.9, 0.9), CFrame.new(-cabW / 4, top + 0.45, cabS + d.ws * 0.95) * CFrame.Angles(0, math.rad(90), math.rad(20)), DARK)
+	end
+
+	-- Extra detail on every car: chrome window line, wipers, grille slats, side markers, 3rd brake light
+	if detail then
+		for _, s in { -1, 1 } do
+			local beltLen = cabE - cabS
+			box(ctx, "BeltTrim", Vector3.new(0.05, 0.07, beltLen), CFrame.new(s * (W / 2 + 0.01), top + 0.02, (cabS + cabE) / 2), CHROME, Enum.Material.Metal).Reflectance = 0.4
+			box(ctx, "SideMarker", Vector3.new(0.05, 0.14, 0.4), CFrame.new(s * (W / 2 + 0.01), top - 0.35, front + 0.55), Color3.fromRGB(255, 150, 20), Enum.Material.Neon)
+			box(ctx, "Wiper", Vector3.new(cabW * 0.4, 0.04, 0.06), CFrame.new(s * cabW * 0.18, top + 0.06, cabS + 0.2) * CFrame.Angles(0, 0, s * math.rad(6)), DARK)
+		end
+		for k = -1, 1 do
+			box(ctx, "GrilleSlat", Vector3.new(W * 0.4, 0.05, 0.05), CFrame.new(0, bottom + H * 0.42 + k * H * 0.1, front - 0.1), if d.extra == "pickup" then CHROME else TRIM, Enum.Material.Metal)
+		end
+		if d.extra ~= "pickup" then
+			box(ctx, "BrakeLight3", Vector3.new(cabW * 0.3, 0.07, 0.08), CFrame.new(0, roof - 0.12, roofE + 0.05), Color3.fromRGB(255, 20, 35), Enum.Material.Neon)
+		end
+	end
+
+	-- Style specific bodywork
+	if d.extra == "fastback" then
+		-- twin racing stripes over hood, roof, rear glass line and deck
+		local luminance = bodyColor.R * 0.3 + bodyColor.G * 0.59 + bodyColor.B * 0.11
+		local stripe = if luminance > 0.65 then Color3.fromRGB(20, 20, 24) else Color3.fromRGB(240, 240, 235)
+		-- the hood is a wedge rising towards the windscreen: tilt the stripes to follow it
+		local hoodTilt = CFrame.Angles(-math.atan2(d.hood, hoodLen), 0, 0)
+		for _, x in { -0.45, 0.45 } do
+			box(ctx, "Stripe", Vector3.new(0.55, 0.03, hoodLen + 0.05), CFrame.new(x, top + d.hood / 2 + 0.03, front + 0.3 + hoodLen / 2) * hoodTilt, stripe)
+			box(ctx, "Stripe", Vector3.new(0.55, 0.03, roofLen), CFrame.new(x, roof + 0.01, roofMid), stripe)
+			box(ctx, "Stripe", Vector3.new(0.55, 0.03, rear - 0.3 - cabE), CFrame.new(x, top + 0.17, (cabE + rear - 0.3) / 2), stripe)
+		end
+		-- hood scoop and side scoops
+		local scoopZ = front + 0.3 + hoodLen * 0.5
+		local scoopY = top + d.hood * 0.5 + 0.17
+		paint(wedge(ctx, "HoodScoop", Vector3.new(1.6, 0.35, 1.6), CFrame.new(0, scoopY, scoopZ) * CFrame.Angles(0, math.pi, 0), bodyColor))
+		box(ctx, "ScoopMouth", Vector3.new(1.3, 0.22, 0.05), CFrame.new(0, scoopY + 0.02, scoopZ - 0.81), DARK)
+		for _, s in { -1, 1 } do
+			box(ctx, "SideScoop", Vector3.new(0.12, 0.45, 0.9), CFrame.new(s * (W / 2 + 0.03), midY + 0.1, rz - a - 0.7), DARK)
+			-- rear quarter window louvre
+			for k = 0, 2 do
+				box(ctx, "Louvre", Vector3.new(0.05, 0.05, 0.9), CFrame.new(s * (cabW / 2 + 0.02), top + 0.25 + k * 0.25, cabE - d.rw * 0.55), DARK)
+			end
+		end
+		-- round retro headlights inside the grille
+		for _, s in { -1, 1 } do
+			cylinder(ctx, "RoundLight", Vector3.new(0.08, 0.55, 0.55), CFrame.new(s * (W * 0.16), bottom + H * 0.45, front - 0.1) * CFrame.Angles(0, math.rad(90), 0), Color3.fromRGB(255, 250, 230), Enum.Material.Neon)
+		end
+	elseif d.extra == "wedge" then
+		-- pop-up headlight pods on the nose
+		for _, s in { -1, 1 } do
+			local x = s * (W / 2 - 1.2)
+			paint(box(ctx, "PopUp", Vector3.new(1.3, 0.3, 0.9), CFrame.new(x, top + d.hood + 0.15, front + 1.2), bodyColor))
+			box(ctx, "PopUpLens", Vector3.new(1.15, 0.2, 0.05), CFrame.new(x, top + d.hood + 0.15, front + 0.74), Color3.fromRGB(255, 250, 235), Enum.Material.Neon)
+			-- NACA ducts on the doors and big intake boxes behind the cabin
+			wedge(ctx, "NACA", Vector3.new(0.1, 0.4, 1.4), CFrame.new(s * (W / 2 + 0.02), midY + 0.1, (cabS + cabE) / 2 + 0.6), DARK)
+			paint(box(ctx, "AirBox", Vector3.new(1.0, 0.5, 1.4), CFrame.new(s * (W / 2 - 0.55), top + 0.25, cabE + 0.9), bodyColor))
+			box(ctx, "AirBoxMouth", Vector3.new(0.8, 0.35, 0.05), CFrame.new(s * (W / 2 - 0.55), top + 0.25, cabE + 0.18), DARK)
+		end
+		-- louvred engine cover
+		for k = 0, 5 do
+			box(ctx, "EngineLouvre", Vector3.new(cabW * 0.55, 0.06, 0.12), CFrame.new(0, top + 0.2, cabE + 0.5 + k * 0.4), DARK)
+		end
+		-- chunky full-width black rear panel with louvres
+		box(ctx, "RearGrille", Vector3.new(W - 0.6, 0.5, 0.06), CFrame.new(0, bottom + H * 0.45, rear + 0.08), DARK)
+	elseif d.extra == "pickup" then
+		local bedS = cabE + 0.35
+		local bedLen = rear - 0.25 - bedS
+		local bedMid = bedS + bedLen / 2
+		-- bed floor and liner, side rails and a tailgate
+		box(ctx, "BedLiner", Vector3.new(W - 0.7, 0.05, bedLen), CFrame.new(0, top + 0.02, bedMid), Color3.fromRGB(24, 24, 26), Enum.Material.DiamondPlate)
+		for _, s in { -1, 1 } do
+			paint(box(ctx, "BedRail", Vector3.new(0.3, 0.55, bedLen), CFrame.new(s * (W / 2 - 0.15), top + 0.27, bedMid), bodyColor))
+			box(ctx, "RailCap", Vector3.new(0.34, 0.06, bedLen), CFrame.new(s * (W / 2 - 0.15), top + 0.57, bedMid), TRIM)
+			-- running boards
+			box(ctx, "Step", Vector3.new(0.45, 0.12, (rz - a) - (fz + a) - 0.4), CFrame.new(s * (W / 2 + 0.2), bottom + 0.05, (fz + rz) / 2), TRIM, Enum.Material.DiamondPlate)
+			-- roll bar hoops
+			box(ctx, "RollBarPost", Vector3.new(0.16, 1.1, 0.16), CFrame.new(s * (W / 2 - 0.5), top + 0.55, bedS + 0.4), DARK, Enum.Material.Metal)
+			-- roof marker lights
+			box(ctx, "CabLight", Vector3.new(0.3, 0.1, 0.15), CFrame.new(s * 0.9, roof + 0.03, roofS + 0.2), Color3.fromRGB(255, 150, 20), Enum.Material.Neon)
+		end
+		box(ctx, "CabLight", Vector3.new(0.3, 0.1, 0.15), CFrame.new(0, roof + 0.03, roofS + 0.2), Color3.fromRGB(255, 150, 20), Enum.Material.Neon)
+		box(ctx, "RollBar", Vector3.new(W - 0.84, 0.16, 0.16), CFrame.new(0, top + 1.1, bedS + 0.4), DARK, Enum.Material.Metal)
+		box(ctx, "CabBack", Vector3.new(W - 0.3, 0.6, 0.2), CFrame.new(0, top + 0.3, bedS - 0.2), bodyColor)
+		paint(box(ctx, "Tailgate", Vector3.new(W - 0.3, 0.55, 0.2), CFrame.new(0, top + 0.27, rear - 0.15), bodyColor))
+		box(ctx, "Hitch", Vector3.new(0.35, 0.35, 0.6), CFrame.new(0, bottom + 0.1, rear + 0.5), Color3.fromRGB(60, 60, 65), Enum.Material.Metal)
+		-- big chrome grille surround
+		box(ctx, "GrilleSurround", Vector3.new(W * 0.62, H * 0.5, 0.06), CFrame.new(0, bottom + H * 0.45, front - 0.02), CHROME, Enum.Material.Metal).Reflectance = 0.4
 	end
 
 	-- Front end

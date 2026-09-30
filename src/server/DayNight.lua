@@ -43,18 +43,18 @@ local NIGHT: Key = {
 	density = 0.34,
 	haze = 1.6,
 	tint = rgb(222, 228, 255),
-	saturation = 0.02,
+	saturation = 0.14,
 	sunRays = 0,
 	bloom = 0.65,
 }
 
 local KEYS: { Key } = {
 	NIGHT,
-	{ t = 5.3, ambient = rgb(38, 38, 52), outdoor = rgb(88, 86, 106), brightness = 1.3, exposure = 0.12, atmoColor = rgb(190, 165, 170), atmoDecay = rgb(110, 90, 110), density = 0.33, haze = 1.6, tint = rgb(250, 232, 232), saturation = 0, sunRays = 0.05, bloom = 0.5 },
-	{ t = 7, ambient = rgb(70, 64, 62), outdoor = rgb(150, 130, 118), brightness = 2.2, exposure = 0, atmoColor = rgb(240, 200, 170), atmoDecay = rgb(170, 120, 100), density = 0.3, haze = 1.1, tint = rgb(255, 240, 225), saturation = 0, sunRays = 0.14, bloom = 0.35 },
-	{ t = 12, ambient = rgb(92, 94, 100), outdoor = rgb(138, 140, 148), brightness = 3, exposure = 0, atmoColor = rgb(199, 212, 230), atmoDecay = rgb(106, 124, 150), density = 0.26, haze = 0.5, tint = rgb(255, 255, 255), saturation = 0, sunRays = 0.07, bloom = 0.25 },
-	{ t = 17.3, ambient = rgb(84, 70, 62), outdoor = rgb(160, 126, 104), brightness = 2.4, exposure = 0.02, atmoColor = rgb(250, 185, 135), atmoDecay = rgb(180, 110, 85), density = 0.3, haze = 1.2, tint = rgb(255, 230, 205), saturation = 0.05, sunRays = 0.2, bloom = 0.35 },
-	{ t = 19, ambient = rgb(40, 40, 60), outdoor = rgb(80, 82, 112), brightness = 1.4, exposure = 0.15, atmoColor = rgb(150, 140, 175), atmoDecay = rgb(80, 70, 110), density = 0.33, haze = 1.6, tint = rgb(232, 228, 255), saturation = 0.02, sunRays = 0.08, bloom = 0.55 },
+	{ t = 5.3, ambient = rgb(38, 38, 52), outdoor = rgb(88, 86, 106), brightness = 1.3, exposure = 0.12, atmoColor = rgb(190, 165, 170), atmoDecay = rgb(110, 90, 110), density = 0.33, haze = 1.6, tint = rgb(250, 232, 232), saturation = 0.08, sunRays = 0.05, bloom = 0.5 },
+	{ t = 7, ambient = rgb(70, 64, 62), outdoor = rgb(150, 130, 118), brightness = 2.2, exposure = 0, atmoColor = rgb(240, 200, 170), atmoDecay = rgb(170, 120, 100), density = 0.3, haze = 1.1, tint = rgb(255, 240, 225), saturation = 0.14, sunRays = 0.14, bloom = 0.35 },
+	{ t = 12, ambient = rgb(92, 94, 100), outdoor = rgb(138, 140, 148), brightness = 3, exposure = 0, atmoColor = rgb(199, 212, 230), atmoDecay = rgb(106, 124, 150), density = 0.26, haze = 0.5, tint = rgb(255, 252, 246), saturation = 0.16, sunRays = 0.07, bloom = 0.25 },
+	{ t = 17.3, ambient = rgb(84, 70, 62), outdoor = rgb(160, 126, 104), brightness = 2.4, exposure = 0.02, atmoColor = rgb(250, 185, 135), atmoDecay = rgb(180, 110, 85), density = 0.3, haze = 1.2, tint = rgb(255, 230, 205), saturation = 0.22, sunRays = 0.2, bloom = 0.35 },
+	{ t = 19, ambient = rgb(40, 40, 60), outdoor = rgb(80, 82, 112), brightness = 1.4, exposure = 0.15, atmoColor = rgb(150, 140, 175), atmoDecay = rgb(80, 70, 110), density = 0.33, haze = 1.6, tint = rgb(232, 228, 255), saturation = 0.14, sunRays = 0.08, bloom = 0.55 },
 	{ t = 20.5, ambient = NIGHT.ambient, outdoor = NIGHT.outdoor, brightness = NIGHT.brightness, exposure = NIGHT.exposure, atmoColor = NIGHT.atmoColor, atmoDecay = NIGHT.atmoDecay, density = NIGHT.density, haze = NIGHT.haze, tint = NIGHT.tint, saturation = NIGHT.saturation, sunRays = NIGHT.sunRays, bloom = NIGHT.bloom },
 }
 
@@ -150,7 +150,7 @@ function DayNight.Init(nightLights: { Light }, nightNeon: { BasePart }, toggles:
 	sunRays.Parent = Lighting
 
 	cc = Instance.new("ColorCorrectionEffect")
-	cc.Contrast = 0.12
+	cc.Contrast = 0.17
 	cc.Parent = Lighting
 
 	local dof = Instance.new("DepthOfFieldEffect")

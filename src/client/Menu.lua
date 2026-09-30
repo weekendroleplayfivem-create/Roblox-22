@@ -40,8 +40,16 @@ local RED = Color3.fromRGB(255, 50, 60)
 
 local function new(className: string, props: { [string]: any }, parent: Instance?): any
 	local inst = Instance.new(className)
+	if props.Font ~= nil then
+		(inst :: any).FontFace = Theme.FontFor(props.Font)
+	end
 	for k, v in props do
-		(inst :: any)[k] = v
+		if k ~= "Font" and k ~= "FontFace" then
+			(inst :: any)[k] = v
+		end
+	end
+	if props.FontFace ~= nil then
+		(inst :: any).FontFace = props.FontFace
 	end
 	if parent then
 		inst.Parent = parent
@@ -50,9 +58,12 @@ local function new(className: string, props: { [string]: any }, parent: Instance
 end
 
 local function text(parent: Instance, props: { [string]: any }): TextLabel
-	local base: { [string]: any } = { BackgroundTransparency = 1, FontFace = Theme.Fonts.Body, TextColor3 = Color3.new(1, 1, 1), TextScaled = true, TextXAlignment = Enum.TextXAlignment.Left }
+	local base: { [string]: any } = { BackgroundTransparency = 1, TextColor3 = Color3.new(1, 1, 1), TextScaled = true, TextXAlignment = Enum.TextXAlignment.Left }
 	for k, v in props do
 		base[k] = v
+	end
+	if base.Font == nil and base.FontFace == nil then
+		base.FontFace = Theme.Fonts.Body
 	end
 	return new("TextLabel", base, parent)
 end

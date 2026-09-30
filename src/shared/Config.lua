@@ -45,7 +45,7 @@ export type CarDef = {
 	grip: number, -- lateral grip (higher = less slide)
 	nitroMult: number,
 	color: Color3,
-	style: string, -- body shape: "coupe" | "muscle" | "hyper" | "suv"
+	style: string, -- body shape: "coupe" | "muscle" | "hyper" | "sedan" | "hatch" | "suv" | "fastback" | "wedge" | "pickup"
 	blacklistOnly: boolean?,
 }
 
@@ -161,6 +161,48 @@ Config.Cars = {
 		nitroMult = 1.38,
 		color = Color3.fromRGB(170, 60, 255),
 		style = "hyper",
+	},
+	{
+		id = "outlaw",
+		name = "Outlaw 4x4 Pickup",
+		class = "C",
+		price = 26000,
+		maxSpeed = 146,
+		accel = 55,
+		brake = 92,
+		turn = 2.2,
+		grip = 6.9,
+		nitroMult = 1.34,
+		color = Color3.fromRGB(175, 40, 32),
+		style = "pickup",
+	},
+	{
+		id = "stallion",
+		name = "Stallion GT500",
+		class = "B",
+		price = 45000,
+		maxSpeed = 170,
+		accel = 60,
+		brake = 98,
+		turn = 2.35,
+		grip = 5.9,
+		nitroMult = 1.35,
+		color = Color3.fromRGB(18, 84, 58),
+		style = "fastback",
+	},
+	{
+		id = "cuneo",
+		name = "Cuneo 5000 QV",
+		class = "A",
+		price = 120000,
+		maxSpeed = 190,
+		accel = 66,
+		brake = 104,
+		turn = 2.4,
+		grip = 6.4,
+		nitroMult = 1.36,
+		color = Color3.fromRGB(255, 196, 0),
+		style = "wedge",
 	},
 	-- Pink-slip cars won from the Blacklist
 	{
@@ -762,7 +804,7 @@ Config.Traffic = {
 		Color3.fromRGB(60, 80, 55),
 		Color3.fromRGB(150, 120, 80),
 	},
-	Styles = { "sedan", "sedan", "coupe", "suv", "muscle" },
+	Styles = { "sedan", "sedan", "coupe", "suv", "muscle", "pickup", "hatch" },
 }
 
 ---------------------------------------------------------------------------

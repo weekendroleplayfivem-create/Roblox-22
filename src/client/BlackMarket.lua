@@ -15,6 +15,7 @@ local Sounds = require(script.Parent.Sounds)
 local Drive = require(script.Parent.DriveController)
 local Input = require(script.Parent.Input)
 local Scale = require(script.Parent.Scale)
+local Theme = require(script.Parent.Theme)
 
 local player = Players.LocalPlayer
 local BlackMarket = {}
@@ -24,8 +25,16 @@ local RED = Color3.fromRGB(255, 50, 60)
 
 local function new(className: string, props: { [string]: any }, parent: Instance?): any
 	local inst = Instance.new(className)
+	if props.Font ~= nil then
+		(inst :: any).FontFace = Theme.FontFor(props.Font)
+	end
 	for k, v in props do
-		(inst :: any)[k] = v
+		if k ~= "Font" and k ~= "FontFace" then
+			(inst :: any)[k] = v
+		end
+	end
+	if props.FontFace ~= nil then
+		(inst :: any).FontFace = props.FontFace
 	end
 	if parent then
 		inst.Parent = parent
@@ -34,9 +43,12 @@ local function new(className: string, props: { [string]: any }, parent: Instance
 end
 
 local function text(parent: Instance, props: { [string]: any }): TextLabel
-	local base = { BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextColor3 = Color3.new(1, 1, 1), TextScaled = true, TextXAlignment = Enum.TextXAlignment.Left }
+	local base: { [string]: any } = { BackgroundTransparency = 1, TextColor3 = Color3.new(1, 1, 1), TextScaled = true, TextXAlignment = Enum.TextXAlignment.Left }
 	for k, v in props do
 		base[k] = v
+	end
+	if base.Font == nil and base.FontFace == nil then
+		base.FontFace = Theme.Fonts.Body
 	end
 	return new("TextLabel", base, parent)
 end
@@ -54,7 +66,7 @@ new("UICorner", { CornerRadius = UDim.new(0, 14) }, window)
 new("UIStroke", { Color = RED, Thickness = 3 }, window)
 new("UISizeConstraint", { MaxSize = Vector2.new(620, 520) }, window)
 Scale.Attach(window)
-text(window, { Position = UDim2.fromOffset(20, 12), Size = UDim2.new(0.7, 0, 0, 36), Text = "BLACK MARKET AUTO", Font = Enum.Font.GothamBlack, TextColor3 = RED })
+text(window, { Position = UDim2.fromOffset(20, 12), Size = UDim2.new(0.7, 0, 0, 36), Text = "BLACK MARKET AUTO", FontFace = Theme.Fonts.Display, TextColor3 = RED })
 text(window, { Position = UDim2.fromOffset(20, 48), Size = UDim2.new(1, -40, 0, 18), Text = "Roof-mounted hardware. Works on cops and rivals only. One weapon at a time - fire with F.", Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(200, 180, 180) })
 local cashText = text(window, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -70, 0, 16), Size = UDim2.fromOffset(200, 26), Text = "", TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = Color3.fromRGB(120, 255, 150) })
 local close = new("TextButton", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 12), Size = UDim2.fromOffset(44, 36), BackgroundColor3 = Color3.fromRGB(80, 20, 30), Text = "X", TextScaled = true, Font = Enum.Font.GothamBlack, TextColor3 = Color3.new(1, 1, 1) }, window)

@@ -28,6 +28,16 @@ Theme.Colors = {
 	Purple = Color3.fromRGB(170, 120, 255),
 }
 
+-- Maps the old Gotham fonts onto the theme so older screens match the new look.
+function Theme.FontFor(font: Enum.Font): Font
+	if font == Enum.Font.GothamBlack then
+		return Theme.Fonts.Heading
+	elseif font == Enum.Font.Gotham then
+		return Theme.Fonts.Light
+	end
+	return Theme.Fonts.Body
+end
+
 function Theme.new(className: string, props: { [string]: any }, parent: Instance?): any
 	local inst = Instance.new(className)
 	for k, v in props do
