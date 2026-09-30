@@ -136,6 +136,9 @@ local function finishPlayer(race: Race, place: number?)
 	local s = race.session
 	local def = race.def
 	race.state = "done"
+	local unbankedBefore = s.unbanked
+	local repBefore = s.profile.rep
+	local cashBefore = s.profile.cash
 	local night = Session.NightMult()
 	local heatMult = Session.HeatPayoutMult(s)
 	-- side bet against a named rival
@@ -203,6 +206,54 @@ local function finishPlayer(race: Race, place: number?)
 		end
 	end
 	Session.CheckMilestones(s)
+	if place then
+		-- results screen: final order, time and what you earned
+		local order = {}
+		for _, r in race.racers do
+			local score
+			if r.finished then
+				score = 1e9 - (r.place or 99)
+			else
+				local p = racerPos(race, r)
+				score = if p then progress(race, r, p) else -1e9
+			end
+			table.insert(order, { name = if r == race.player then "YOU" else r.name, score = score })
+		end
+		table.sort(order, function(x, y)
+			return x.score > y.score
+		end)
+		local names = {}
+		for _, o in order do
+			table.insert(names, o.name)
+		end
+		local kind = def.kind
+		local win, title
+		if scored(kind) then
+			win = race.driftScore >= (def.driftTarget or 1)
+			title = if win then (if kind == "takeover" then "TAKEOVER COMPLETE" else "DRIFT EVENT COMPLETE") else "TARGET MISSED"
+		elseif race.rival then
+			win = place == 1
+			title = if win then "BLACKLIST #" .. (race.rival :: Config.Rival).rank .. " DEFEATED" else "YOU LOST"
+		else
+			win = place == 1
+			title = place .. (if place == 1 then "ST" elseif place == 2 then "ND" elseif place == 3 then "RD" else "TH") .. " PLACE"
+		end
+		Session.Fire(s.player, "RaceResult", {
+			title = title,
+			event = def.name,
+			win = win,
+			place = place,
+			racers = #race.racers,
+			scored = scored(kind),
+			score = math.floor(race.driftScore),
+			target = def.driftTarget or 0,
+			time = os.clock() - race.startTime,
+			cash = math.floor(s.unbanked - unbankedBefore + (s.profile.cash - cashBefore)),
+			rep = math.floor(s.profile.rep - repBefore),
+			heat = Session.HeatLevel(s),
+			standings = if scored(kind) then {} else names,
+		})
+	end
 	cleanup(race)
 end
 

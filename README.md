@@ -18,6 +18,7 @@ in code, so you don't need any models, meshes or assets.
 | City map | M | D-pad ↑ | MAP button |
 | Leaderboard | L | D-pad → (LB / RB switch tabs) | 🏆 button |
 | Pause menu | P | D-pad ↓ | ☰ button |
+| Photo mode | C (Q/E filter, H hide UI, Z/X tilt) | View button (LB/RB filter, Y hide UI) | 📷 button |
 
 ### The loop
 1. **Race.** Drive into a pink race marker (**R** on the minimap) and press **E**. You pay a buy-in
@@ -31,6 +32,27 @@ in code, so you don't need any models, meshes or assets.
    (**S**). If you get busted, you lose all of it. Banking at the safehouse also clears your heat.
 5. **Climb the Blacklist.** Earn total bounty and race wins, then challenge Blacklist rivals #5 → #1
    from the garage. Beat one and you win their car's **pink slip**.
+
+### Garage cutscenes, animations and rewards update
+- **Garage cutscenes:**
+  - Press E at the safehouse and the roll-up door rolls open.
+  - Your car drives across the lot and into the garage while the camera tracks it, with letterbox bars and your engine revving.
+  - Driving out, the workshop door opens and you roll through the tunnel. Outside, the car pulls out of the safehouse garage onto the lot and the door closes behind you.
+  - The safehouse garage is now a real building with a lit interior, not a solid block.
+- **Everything animates:**
+  - The garage window slides in, its cards cascade in when you switch tabs, and the garage camera sweeps in when you arrive.
+  - The Black Market slides up, and the menu side panels slide in and out.
+  - The race panel, weapon chip, heat pill and interact prompt slide on and off screen.
+  - After menus and cutscenes the HUD flies back in from the edges.
+  - The drift counter pops, and the REP badge bounces when you level up.
+- **Rolling cash counters** with floating +$ / -$ popups whenever your cash or unbanked money changes.
+- **Race results screen:**
+  - Shows a medal with your place (or score), your time, and the cash and REP counting up.
+  - Shows your heat and the final order of the race.
+  - Confetti when you win.
+- **Daily reward:** log in each day for a growing reward (up to $8,000 on day 7) plus REP, shown on a 7-day streak track.
+- **Photo mode:** orbit the camera around your car, zoom, tilt and pick one of 7 filters (Vivid, Neon Nights, Golden, Ice, Noir, Vintage...). Depth of field is on, and you can hide the UI for clean shots.
+- **Wet roads:** when it rains, the asphalt turns glossy and reflects the city.
 
 ### Looks, leaderboard and new cars update
 - **Brand-new racing HUD:**
@@ -325,6 +347,9 @@ src/client/   (StarterPlayerScripts.Client)
   HUD.lua           all on-screen UI + minimap
   Theme.lua         shared UI look: fonts, colours, glass panels, blur + popup animations
   LeaderboardUI.lua leaderboard screen (L)
+  GarageCinematic.lua  garage door cutscenes (drive in / drive out)
+  Rewards.lua       race results screen + daily reward
+  PhotoMode.lua     photo mode (C)
   Garage.lua        garage: cars, performance parts, handling, visuals, Blacklist
   CarVisuals.lua    spinning / steering wheels, headlights at night, brake lights
   Effects.lua       banners, speed lines, blur, near-miss popups, GPS arrow

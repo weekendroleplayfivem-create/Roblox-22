@@ -158,6 +158,17 @@ function Session.Sync(s: Session)
 	end
 end
 
+-- Fire any client remote by name (safe before the remotes exist).
+function Session.Fire(player: Player, name: string, ...: any)
+	if not remotes then
+		return
+	end
+	local ev = (remotes :: Folder):FindFirstChild(name)
+	if ev and ev:IsA("RemoteEvent") then
+		ev:FireClient(player, ...)
+	end
+end
+
 function Session.Banner(player: Player, title: string, subtitle: string?, color: Color3?)
 	if not remotes then
 		return

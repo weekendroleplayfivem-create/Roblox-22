@@ -28,6 +28,8 @@ export type Profile = {
 	weapon: string, -- equipped weapon id ("" = none)
 	collected: { [string]: boolean }, -- street art found
 	rep: number, -- total REP earned
+	dailyDay: number, -- last UTC day the daily reward was claimed
+	dailyStreak: number, -- consecutive days
 }
 
 local STORE_NAME = "WantedUnbound_v1"
@@ -65,6 +67,8 @@ local function default(): Profile
 		weapon = "",
 		collected = {},
 		rep = 0,
+		dailyDay = 0,
+		dailyStreak = 0,
 	}
 end
 

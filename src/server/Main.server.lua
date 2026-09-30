@@ -34,6 +34,8 @@ local function remote(className: string, name: string): Instance
 end
 remote("RemoteEvent", "Notify")
 remote("RemoteEvent", "Banner")
+remote("RemoteEvent", "RaceResult")
+remote("RemoteEvent", "DailyReward")
 local nearMissEvent = remote("RemoteEvent", "NearMiss") :: RemoteEvent
 local nitroEvent = remote("RemoteEvent", "NitroState") :: RemoteEvent
 local raceEvent = remote("RemoteEvent", "RequestRace") :: RemoteEvent
@@ -154,6 +156,24 @@ local function onPlayerAdded(player: Player)
 		task.spawn(onCharacter, s, player.Character)
 	end
 	Session.Notify(player, "Welcome to " .. Config.GameName .. "!  Race, raise your heat, escape the cops and climb the Blacklist.", Color3.fromRGB(0, 255, 220))
+
+	-- daily reward (UTC days); a missed day resets the streak
+	local today = math.floor(os.time() / 86400)
+	if profile.dailyDay ~= today then
+		local streak = if profile.dailyDay == today - 1 then profile.dailyStreak + 1 else 1
+		profile.dailyDay = today
+		profile.dailyStreak = streak
+		local rewards = Config.DailyRewards
+		local amount = rewards[math.min(streak, #rewards)]
+		profile.cash += amount
+		Session.AddRep(s, Config.DailyRep, nil)
+		Session.Sync(s)
+		task.delay(4, function()
+			if player.Parent then
+				Session.Fire(player, "DailyReward", { day = streak, amount = amount, rep = Config.DailyRep, rewards = rewards })
+			end
+		end)
+	end
 end
 
 Players.PlayerAdded:Connect(onPlayerAdded)

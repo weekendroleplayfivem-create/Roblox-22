@@ -68,6 +68,28 @@ new("UICorner", { CornerRadius = UDim.new(1, 0) }, timeChip)
 local timeLabel = label({ Size = UDim2.fromScale(1, 1), Text = "DAY", FontFace = F.Heading, TextXAlignment = Enum.TextXAlignment.Center }, timeChip)
 new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4) }, timeChip)
 
+-- rolling counters: the shown value chases the real one, with a floating +$ / -$ popup
+local shownCash: number? = nil
+local shownUnbanked = 0
+local lastCash = 0
+local lastUnbanked = 0
+local lastRep = -1
+local function moneyPopup(delta: number, color: Color3, y: number)
+	local t = label({ Position = UDim2.fromOffset(170, y), Size = UDim2.fromOffset(160, 24), Text = (if delta > 0 then "+$" else "-$") .. commas(math.abs(delta)), FontFace = F.Display, TextColor3 = color, TextStrokeTransparency = 0.4, TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 5 }, wallet)
+	Theme.Pop(t, 1.5)
+	Theme.Tween(t, 1.4, { Position = UDim2.fromOffset(170, y - 34), TextTransparency = 1, TextStrokeTransparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	task.delay(1.5, function()
+		t:Destroy()
+	end)
+end
+local function roll(shown: number, target: number, dt: number): number
+	if math.abs(target - shown) < 1 then
+		return target
+	end
+	-- fast for big jumps, always done within about a second
+	return shown + (target - shown) * math.min(1, dt * 6) + math.sign(target - shown) * math.min(math.abs(target - shown), dt * 40)
+end
+
 ---------------------------------------------------------------------------
 -- Heat (top centre)
 ---------------------------------------------------------------------------
@@ -394,9 +416,30 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	Theme.Show(starPill, level > 0 or mode ~= "idle", UDim2.fromOffset(0, -80))
 
 	-- wallet
-	cashLabel.Text = "$" .. commas(num("Cash"))
+	local cash = num("Cash")
+	if shownCash == nil then
+		shownCash = cash
+		lastCash = cash
+	end
+	if cash ~= lastCash then
+		moneyPopup(cash - lastCash, if cash > lastCash then C.Green else C.Red, 26)
+		Theme.Pop(cashLabel, if cash > lastCash then 1.15 else 0.9)
+		lastCash = cash
+	end
+	shownCash = roll(shownCash :: number, cash, dt)
+	cashLabel.Text = "$" .. commas(math.floor(shownCash :: number + 0.5))
 	local unbanked = num("Unbanked")
-	unbankedLabel.Text = "UNBANKED  $" .. commas(unbanked)
+	if unbanked > lastUnbanked + 0.5 then
+		moneyPopup(unbanked - lastUnbanked, C.Orange, 64)
+	end
+	lastUnbanked = unbanked
+	shownUnbanked = roll(shownUnbanked, unbanked, dt)
+	unbankedLabel.Text = "UNBANKED  $" .. commas(math.floor(shownUnbanked + 0.5))
+	local repLevel = math.floor(num("RepLevel"))
+	if lastRep >= 0 and repLevel > lastRep then
+		Theme.Pop(repBadge, 1.8)
+	end
+	lastRep = repLevel
 	riskTag.Visible = unbanked > 0 and math.floor(blink * 2) % 2 == 0
 	local bounty = num("Bounty")
 	bountyLabel.Text = if mode ~= "idle" then "Pursuit bounty  " .. commas(bounty) else "Total bounty  " .. commas(num("TotalBounty"))

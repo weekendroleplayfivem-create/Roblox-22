@@ -27,6 +27,7 @@ local Input = require(script.Parent.Input)
 local Scale = require(script.Parent.Scale)
 local Theme = require(script.Parent.Theme)
 local LeaderboardUI = require(script.Parent.LeaderboardUI)
+local PhotoMode = require(script.Parent.PhotoMode)
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -620,6 +621,10 @@ local mapButton = hudButton("MAP", 2, CYAN)
 local boardButton = hudButton("🏆", 3, Theme.Colors.Gold)
 boardButton.Activated:Connect(function()
 	LeaderboardUI.Toggle()
+end)
+local photoButton = hudButton("📷", 4, Theme.Colors.Purple)
+photoButton.Activated:Connect(function()
+	PhotoMode.Toggle()
 end)
 mapButton.Activated:Connect(function()
 	FullMap.Toggle()

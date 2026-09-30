@@ -1,4 +1,4 @@
-<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4"><Item class="Workspace" referent="RBX0000000000000000000000000000002C"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">true</bool><int name="StreamingTargetRadius">900</int><int name="StreamingMinRadius">280</int><token name="StreamOutBehavior">2</token></Properties></Item><Item class="Lighting" referent="RBX0000000000000000000000000000002D"><Properties><string name="Name">Lighting</string><token name="Technology">3</token></Properties></Item><Item class="ReplicatedStorage" referent="RBX0000000000000000000000000000002E"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">Shared</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">CarPhysics</string><ProtectedString name="Source"><![CDATA[--!strict
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4"><Item class="Workspace" referent="RBX0000000000000000000000000000002E"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">true</bool><int name="StreamingTargetRadius">900</int><int name="StreamingMinRadius">280</int><token name="StreamOutBehavior">2</token></Properties></Item><Item class="Lighting" referent="RBX0000000000000000000000000000002F"><Properties><string name="Name">Lighting</string><token name="Technology">3</token></Properties></Item><Item class="ReplicatedStorage" referent="RBX00000000000000000000000000000030"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">Shared</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">CarPhysics</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Arcade driving model shared by the player's car (simulated on the client that owns it)
 -- and AI cars (police and rivals, simulated on the server).
 --
@@ -1340,6 +1340,10 @@ function Config.GetWeapon(id: string): WeaponDef?
 end
 
 ---------------------------------------------------------------------------
+-- Daily login reward: grows with the streak (day 1..7, then stays at day 7)
+Config.DailyRewards = { 1000, 1500, 2000, 3000, 4000, 5500, 8000 }
+Config.DailyRep = 150
+
 -- REP levels (Unbound): earned from races, escapes, style and takeovers
 ---------------------------------------------------------------------------
 Config.Rep = {
@@ -1493,7 +1497,7 @@ function Signals.Now(): number
 end
 
 return Signals
-]]></ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX0000000000000000000000000000002F"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000015"><Properties><string name="Name">Server</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000006"><Properties><string name="Name">AIDriver</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX00000000000000000000000000000031"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000015"><Properties><string name="Name">Server</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000006"><Properties><string name="Name">AIDriver</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Server-side driver for AI cars (police and race rivals). Each AI has a `think` callback
 -- that picks a goal; AIDriver handles road-grid navigation, steering, unsticking and
 -- runs the shared arcade physics.
@@ -3845,6 +3849,8 @@ local function remote(className: string, name: string): Instance
 end
 remote("RemoteEvent", "Notify")
 remote("RemoteEvent", "Banner")
+remote("RemoteEvent", "RaceResult")
+remote("RemoteEvent", "DailyReward")
 local nearMissEvent = remote("RemoteEvent", "NearMiss") :: RemoteEvent
 local nitroEvent = remote("RemoteEvent", "NitroState") :: RemoteEvent
 local raceEvent = remote("RemoteEvent", "RequestRace") :: RemoteEvent
@@ -3965,6 +3971,24 @@ local function onPlayerAdded(player: Player)
 		task.spawn(onCharacter, s, player.Character)
 	end
 	Session.Notify(player, "Welcome to " .. Config.GameName .. "!  Race, raise your heat, escape the cops and climb the Blacklist.", Color3.fromRGB(0, 255, 220))
+
+	-- daily reward (UTC days); a missed day resets the streak
+	local today = math.floor(os.time() / 86400)
+	if profile.dailyDay ~= today then
+		local streak = if profile.dailyDay == today - 1 then profile.dailyStreak + 1 else 1
+		profile.dailyDay = today
+		profile.dailyStreak = streak
+		local rewards = Config.DailyRewards
+		local amount = rewards[math.min(streak, #rewards)]
+		profile.cash += amount
+		Session.AddRep(s, Config.DailyRep, nil)
+		Session.Sync(s)
+		task.delay(4, function()
+			if player.Parent then
+				Session.Fire(player, "DailyReward", { day = streak, amount = amount, rep = Config.DailyRep, rewards = rewards })
+			end
+		end)
+	end
 end
 
 Players.PlayerAdded:Connect(onPlayerAdded)
@@ -5472,6 +5496,8 @@ export type Profile = {
 	weapon: string, -- equipped weapon id ("" = none)
 	collected: { [string]: boolean }, -- street art found
 	rep: number, -- total REP earned
+	dailyDay: number, -- last UTC day the daily reward was claimed
+	dailyStreak: number, -- consecutive days
 }
 
 local STORE_NAME = "WantedUnbound_v1"
@@ -5509,6 +5535,8 @@ local function default(): Profile
 		weapon = "",
 		collected = {},
 		rep = 0,
+		dailyDay = 0,
+		dailyStreak = 0,
 	}
 end
 
@@ -6686,6 +6714,9 @@ local function finishPlayer(race: Race, place: number?)
 	local s = race.session
 	local def = race.def
 	race.state = "done"
+	local unbankedBefore = s.unbanked
+	local repBefore = s.profile.rep
+	local cashBefore = s.profile.cash
 	local night = Session.NightMult()
 	local heatMult = Session.HeatPayoutMult(s)
 	-- side bet against a named rival
@@ -6753,6 +6784,54 @@ local function finishPlayer(race: Race, place: number?)
 		end
 	end
 	Session.CheckMilestones(s)
+	if place then
+		-- results screen: final order, time and what you earned
+		local order = {}
+		for _, r in race.racers do
+			local score
+			if r.finished then
+				score = 1e9 - (r.place or 99)
+			else
+				local p = racerPos(race, r)
+				score = if p then progress(race, r, p) else -1e9
+			end
+			table.insert(order, { name = if r == race.player then "YOU" else r.name, score = score })
+		end
+		table.sort(order, function(x, y)
+			return x.score > y.score
+		end)
+		local names = {}
+		for _, o in order do
+			table.insert(names, o.name)
+		end
+		local kind = def.kind
+		local win, title
+		if scored(kind) then
+			win = race.driftScore >= (def.driftTarget or 1)
+			title = if win then (if kind == "takeover" then "TAKEOVER COMPLETE" else "DRIFT EVENT COMPLETE") else "TARGET MISSED"
+		elseif race.rival then
+			win = place == 1
+			title = if win then "BLACKLIST #" .. (race.rival :: Config.Rival).rank .. " DEFEATED" else "YOU LOST"
+		else
+			win = place == 1
+			title = place .. (if place == 1 then "ST" elseif place == 2 then "ND" elseif place == 3 then "RD" else "TH") .. " PLACE"
+		end
+		Session.Fire(s.player, "RaceResult", {
+			title = title,
+			event = def.name,
+			win = win,
+			place = place,
+			racers = #race.racers,
+			scored = scored(kind),
+			score = math.floor(race.driftScore),
+			target = def.driftTarget or 0,
+			time = os.clock() - race.startTime,
+			cash = math.floor(s.unbanked - unbankedBefore + (s.profile.cash - cashBefore)),
+			rep = math.floor(s.profile.rep - repBefore),
+			heat = Session.HeatLevel(s),
+			standings = if scored(kind) then {} else names,
+		})
+	end
 	cleanup(race)
 end
 
@@ -7291,6 +7370,17 @@ function Session.Sync(s: Session)
 		if heat then
 			heat.Value = Session.HeatLevel(s)
 		end
+	end
+end
+
+-- Fire any client remote by name (safe before the remotes exist).
+function Session.Fire(player: Player, name: string, ...: any)
+	if not remotes then
+		return
+	end
+	local ev = (remotes :: Folder):FindFirstChild(name)
+	if ev and ev:IsA("RemoteEvent") then
+		ev:FireClient(player, ...)
 	end
 end
 
@@ -8259,7 +8349,7 @@ function Weapons.Fire(s: Session.Session): boolean
 end
 
 return Weapons
-]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX00000000000000000000000000000030"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX0000000000000000000000000000002B"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="Folder" referent="RBX0000000000000000000000000000002A"><Properties><string name="Name">Client</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000016"><Properties><string name="Name">BlackMarket</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX00000000000000000000000000000032"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX0000000000000000000000000000002D"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="Folder" referent="RBX0000000000000000000000000000002C"><Properties><string name="Name">Client</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000016"><Properties><string name="Name">BlackMarket</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Black Market window (buy / mount roof weapons) and the fire button (F / gamepad RB / touch).
 
 local ContextActionService = game:GetService("ContextActionService")
@@ -10366,11 +10456,11 @@ return Garage
 -- physics and network ownership of the real car are never touched.
 
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 
 local Drive = require(script.Parent.DriveController)
 local Sounds = require(script.Parent.Sounds)
 local Theme = require(script.Parent.Theme)
+local HUD = require(script.Parent.HUD)
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -10905,14 +10995,8 @@ function GarageCinematic.Exit(fire: () -> ())
 		end
 	end
 	finish()
+	HUD.Intro()
 end
-
--- safety net: never leave the screen black or the controls locked
-RunService.Heartbeat:Connect(function()
-	if not GarageCinematic.Busy and Drive.Cinematic then
-		Drive.Cinematic = false
-	end
-end)
 
 return GarageCinematic
 ]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001E"><Properties><string name="Name">HUD</string><ProtectedString name="Source"><![CDATA[--!strict
@@ -10984,6 +11068,28 @@ local timeChip = new("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim
 new("UICorner", { CornerRadius = UDim.new(1, 0) }, timeChip)
 local timeLabel = label({ Size = UDim2.fromScale(1, 1), Text = "DAY", FontFace = F.Heading, TextXAlignment = Enum.TextXAlignment.Center }, timeChip)
 new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4) }, timeChip)
+
+-- rolling counters: the shown value chases the real one, with a floating +$ / -$ popup
+local shownCash: number? = nil
+local shownUnbanked = 0
+local lastCash = 0
+local lastUnbanked = 0
+local lastRep = -1
+local function moneyPopup(delta: number, color: Color3, y: number)
+	local t = label({ Position = UDim2.fromOffset(170, y), Size = UDim2.fromOffset(160, 24), Text = (if delta > 0 then "+$" else "-$") .. commas(math.abs(delta)), FontFace = F.Display, TextColor3 = color, TextStrokeTransparency = 0.4, TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 5 }, wallet)
+	Theme.Pop(t, 1.5)
+	Theme.Tween(t, 1.4, { Position = UDim2.fromOffset(170, y - 34), TextTransparency = 1, TextStrokeTransparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	task.delay(1.5, function()
+		t:Destroy()
+	end)
+end
+local function roll(shown: number, target: number, dt: number): number
+	if math.abs(target - shown) < 1 then
+		return target
+	end
+	-- fast for big jumps, always done within about a second
+	return shown + (target - shown) * math.min(1, dt * 6) + math.sign(target - shown) * math.min(math.abs(target - shown), dt * 40)
+end
 
 ---------------------------------------------------------------------------
 -- Heat (top centre)
@@ -11311,9 +11417,30 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	Theme.Show(starPill, level > 0 or mode ~= "idle", UDim2.fromOffset(0, -80))
 
 	-- wallet
-	cashLabel.Text = "$" .. commas(num("Cash"))
+	local cash = num("Cash")
+	if shownCash == nil then
+		shownCash = cash
+		lastCash = cash
+	end
+	if cash ~= lastCash then
+		moneyPopup(cash - lastCash, if cash > lastCash then C.Green else C.Red, 26)
+		Theme.Pop(cashLabel, if cash > lastCash then 1.15 else 0.9)
+		lastCash = cash
+	end
+	shownCash = roll(shownCash :: number, cash, dt)
+	cashLabel.Text = "$" .. commas(math.floor(shownCash :: number + 0.5))
 	local unbanked = num("Unbanked")
-	unbankedLabel.Text = "UNBANKED  $" .. commas(unbanked)
+	if unbanked > lastUnbanked + 0.5 then
+		moneyPopup(unbanked - lastUnbanked, C.Orange, 64)
+	end
+	lastUnbanked = unbanked
+	shownUnbanked = roll(shownUnbanked, unbanked, dt)
+	unbankedLabel.Text = "UNBANKED  $" .. commas(math.floor(shownUnbanked + 0.5))
+	local repLevel = math.floor(num("RepLevel"))
+	if lastRep >= 0 and repLevel > lastRep then
+		Theme.Pop(repBadge, 1.8)
+	end
+	lastRep = repLevel
 	riskTag.Visible = unbanked > 0 and math.floor(blink * 2) % 2 == 0
 	local bounty = num("Bounty")
 	bountyLabel.Text = if mode ~= "idle" then "Pursuit bounty  " .. commas(bounty) else "Total bounty  " .. commas(num("TotalBounty"))
@@ -11862,6 +11989,7 @@ require(script.Parent.TouchControls)
 require(script.Parent.Collectibles)
 require(script.Parent.Weather)
 require(script.Parent.Menu)
+require(script.Parent.Rewards)
 
 local player = Players.LocalPlayer
 
@@ -12282,6 +12410,7 @@ local Input = require(script.Parent.Input)
 local Scale = require(script.Parent.Scale)
 local Theme = require(script.Parent.Theme)
 local LeaderboardUI = require(script.Parent.LeaderboardUI)
+local PhotoMode = require(script.Parent.PhotoMode)
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -12876,6 +13005,10 @@ local boardButton = hudButton("🏆", 3, Theme.Colors.Gold)
 boardButton.Activated:Connect(function()
 	LeaderboardUI.Toggle()
 end)
+local photoButton = hudButton("📷", 4, Theme.Colors.Purple)
+photoButton.Activated:Connect(function()
+	PhotoMode.Toggle()
+end)
 mapButton.Activated:Connect(function()
 	FullMap.Toggle()
 end)
@@ -12919,7 +13052,563 @@ end)
 
 openMenu("title")
 return Menu
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000024"><Properties><string name="Name">Scale</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000024"><Properties><string name="Name">PhotoMode</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Photo mode (C / View button / 📷): the controls lock, the HUD hides and you orbit a free camera
+-- around your car. Filters, zoom, tilt, depth of field and a hide-UI toggle for clean shots.
+
+local ContextActionService = game:GetService("ContextActionService")
+local Lighting = game:GetService("Lighting")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local Drive = require(script.Parent.DriveController)
+local Theme = require(script.Parent.Theme)
+local Sounds = require(script.Parent.Sounds)
+local HUD = require(script.Parent.HUD)
+local Input = require(script.Parent.Input)
+
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+local F, C = Theme.Fonts, Theme.Colors
+
+local PhotoMode = {}
+PhotoMode.Active = false
+
+type Filter = { name: string, saturation: number, contrast: number, brightness: number, tint: Color3 }
+local FILTERS: { Filter } = {
+	{ name = "NATURAL", saturation = 0, contrast = 0, brightness = 0, tint = Color3.new(1, 1, 1) },
+	{ name = "VIVID", saturation = 0.45, contrast = 0.15, brightness = 0.02, tint = Color3.new(1, 1, 1) },
+	{ name = "NEON NIGHTS", saturation = 0.3, contrast = 0.2, brightness = 0, tint = Color3.fromRGB(235, 200, 255) },
+	{ name = "GOLDEN", saturation = 0.15, contrast = 0.08, brightness = 0.03, tint = Color3.fromRGB(255, 225, 180) },
+	{ name = "ICE", saturation = -0.1, contrast = 0.12, brightness = 0.02, tint = Color3.fromRGB(200, 225, 255) },
+	{ name = "NOIR", saturation = -1, contrast = 0.35, brightness = -0.02, tint = Color3.new(1, 1, 1) },
+	{ name = "VINTAGE", saturation = -0.35, contrast = -0.05, brightness = 0.04, tint = Color3.fromRGB(255, 235, 200) },
+}
+
+local grade = Instance.new("ColorCorrectionEffect")
+grade.Name = "WU_PhotoGrade"
+grade.Enabled = false
+grade.Parent = Lighting
+local dof = Instance.new("DepthOfFieldEffect")
+dof.Name = "WU_PhotoDOF"
+dof.Enabled = false
+dof.FarIntensity = 0.45
+dof.NearIntensity = 0.2
+dof.InFocusRadius = 14
+dof.Parent = Lighting
+
+---------------------------------------------------------------------------
+-- UI
+---------------------------------------------------------------------------
+local gui: ScreenGui = Theme.new("ScreenGui", { Name = "WantedUnboundPhoto", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 18, Enabled = false }, player:WaitForChild("PlayerGui"))
+local bar = Theme.new("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -20), Size = UDim2.fromOffset(640, 86) }, gui)
+Theme.Panel(bar, C.Cyan, 16)
+local tag = Theme.Label({ Position = UDim2.fromOffset(20, 10), Size = UDim2.fromOffset(200, 22), Text = "PHOTO MODE", FontFace = F.Display }, bar)
+Theme.new("UIGradient", { Color = ColorSequence.new(C.Cyan, C.Pink) }, tag)
+local filterLabel = Theme.Label({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 8), Size = UDim2.fromOffset(220, 26), Text = "NATURAL", FontFace = F.Heading, TextXAlignment = Enum.TextXAlignment.Center }, bar)
+local hint = Theme.Label({ Position = UDim2.fromOffset(20, 48), Size = UDim2.new(1, -40, 0, 18), Text = "", FontFace = F.Light, TextColor3 = C.Dim, TextXAlignment = Enum.TextXAlignment.Center }, bar)
+
+local function smallButton(text: string, x: UDim2, onClick: () -> ()): TextButton
+	local b = Theme.new("TextButton", { AnchorPoint = Vector2.new(0.5, 0), Position = x, Size = UDim2.fromOffset(40, 30), BackgroundColor3 = C.PanelLight, Text = text, TextScaled = true, FontFace = F.Heading, TextColor3 = C.Text }, bar)
+	Theme.new("UICorner", { CornerRadius = UDim.new(1, 0) }, b)
+	Theme.new("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6) }, b)
+	b.Activated:Connect(function()
+		Theme.Pop(b, 0.8)
+		onClick()
+	end)
+	return b
+end
+
+local filterIndex = 1
+local function setFilter(i: number)
+	filterIndex = (i - 1) % #FILTERS + 1
+	local f = FILTERS[filterIndex]
+	Theme.Tween(grade, 0.35, { Saturation = f.saturation, Contrast = f.contrast, Brightness = f.brightness, TintColor = f.tint })
+	filterLabel.Text = f.name
+	Theme.Pop(filterLabel, 1.25)
+	Sounds.Tick(1.3, 0.3)
+end
+smallButton("‹", UDim2.new(0.5, -140, 0, 6), function()
+	setFilter(filterIndex - 1)
+end)
+smallButton("›", UDim2.new(0.5, 140, 0, 6), function()
+	setFilter(filterIndex + 1)
+end)
+local zoomOut = smallButton("−", UDim2.new(1, -124, 0, 8), function() end)
+local zoomIn = smallButton("+", UDim2.new(1, -78, 0, 8), function() end)
+local closeButton = Theme.new("TextButton", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 8), Size = UDim2.fromOffset(34, 34), BackgroundColor3 = C.PanelLight, Text = "✕", TextScaled = true, FontFace = F.Heading, TextColor3 = C.Text }, bar)
+Theme.new("UICorner", { CornerRadius = UDim.new(1, 0) }, closeButton)
+Theme.new("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8) }, closeButton)
+
+local function updateHint()
+	if Input.Device == "gamepad" then
+		hint.Text = "Right stick orbit · LT/RT zoom · LB/RB filter · Y hide UI · B exit"
+	elseif Input.Device == "touch" then
+		hint.Text = "Drag to orbit · − / + zoom · ‹ › filters · ✕ exit"
+	else
+		hint.Text = "Drag mouse to orbit · wheel zoom · Q/E filter · Z/X tilt · H hide UI · C exit"
+	end
+end
+Input.OnChanged(function()
+	updateHint()
+end)
+
+---------------------------------------------------------------------------
+-- Camera
+---------------------------------------------------------------------------
+local yaw, pitch, dist, roll, fov = 0, 0.25, 22, 0, 50
+zoomOut.Activated:Connect(function()
+	dist = math.clamp(dist + 5, 7, 70)
+end)
+zoomIn.Activated:Connect(function()
+	dist = math.clamp(dist - 5, 7, 70)
+end)
+local dragging = false
+local uiHidden = false
+
+local function setUiHidden(on: boolean)
+	uiHidden = on
+	Theme.Show(bar, not on, UDim2.fromOffset(0, 140))
+end
+
+function PhotoMode.Toggle(on: boolean?)
+	local want = if on == nil then not PhotoMode.Active else on
+	if want == PhotoMode.Active then
+		return
+	end
+	if want then
+		local car = Drive.Car
+		if not car or not car.PrimaryPart or Drive.Cinematic or Drive.MenuOpen or player:GetAttribute("InGarage") then
+			return
+		end
+		local look = car.PrimaryPart.CFrame.LookVector
+		yaw = math.atan2(-look.X, -look.Z) + math.pi * 0.8
+		pitch, dist, roll, fov = 0.22, 22, 0, 50
+	end
+	PhotoMode.Active = want
+	Drive.Cinematic = want
+	gui.Enabled = true
+	grade.Enabled = want
+	dof.Enabled = want
+	Theme.Blur("photo", false)
+	if want then
+		updateHint()
+		setFilter(filterIndex)
+		bar:SetAttribute("Shown", false)
+		setUiHidden(false)
+		Sounds.Play("rbxasset://sounds/volume_slider.ogg", 0.6, 0.6)
+	else
+		setUiHidden(true)
+		task.delay(0.25, function()
+			if not PhotoMode.Active then
+				gui.Enabled = false
+			end
+		end)
+		HUD.Intro()
+	end
+end
+closeButton.Activated:Connect(function()
+	PhotoMode.Toggle(false)
+end)
+
+UserInputService.InputBegan:Connect(function(input, processed)
+	if not PhotoMode.Active or processed then
+		return
+	end
+	local t = input.UserInputType
+	if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.MouseButton2 or t == Enum.UserInputType.Touch then
+		dragging = true
+	end
+end)
+UserInputService.InputEnded:Connect(function(input)
+	local t = input.UserInputType
+	if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.MouseButton2 or t == Enum.UserInputType.Touch then
+		dragging = false
+	end
+end)
+UserInputService.InputChanged:Connect(function(input: InputObject)
+	if not PhotoMode.Active then
+		return
+	end
+	local t = input.UserInputType
+	if (t == Enum.UserInputType.MouseMovement or t == Enum.UserInputType.Touch) and dragging then
+		yaw -= input.Delta.X * 0.008
+		pitch = math.clamp(pitch + input.Delta.Y * 0.006, -0.05, 1.3)
+	elseif t == Enum.UserInputType.MouseWheel then
+		dist = math.clamp(dist - input.Position.Z * 2.5, 7, 70)
+	end
+end)
+
+ContextActionService:BindActionAtPriority("WU_PhotoKeys", function(_, state, input)
+	if not PhotoMode.Active then
+		return Enum.ContextActionResult.Pass
+	end
+	if state ~= Enum.UserInputState.Begin then
+		return Enum.ContextActionResult.Sink
+	end
+	local k = input.KeyCode
+	if k == Enum.KeyCode.Q or k == Enum.KeyCode.ButtonL1 then
+		setFilter(filterIndex - 1)
+	elseif k == Enum.KeyCode.E or k == Enum.KeyCode.ButtonR1 then
+		setFilter(filterIndex + 1)
+	elseif k == Enum.KeyCode.H or k == Enum.KeyCode.ButtonY then
+		setUiHidden(not uiHidden)
+	elseif k == Enum.KeyCode.ButtonB or k == Enum.KeyCode.Escape then
+		PhotoMode.Toggle(false)
+	end
+	return Enum.ContextActionResult.Sink
+end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Q, Enum.KeyCode.E, Enum.KeyCode.H, Enum.KeyCode.ButtonL1, Enum.KeyCode.ButtonR1, Enum.KeyCode.ButtonY, Enum.KeyCode.ButtonB, Enum.KeyCode.F, Enum.KeyCode.R, Enum.KeyCode.G, Enum.KeyCode.M, Enum.KeyCode.L, Enum.KeyCode.P)
+
+ContextActionService:BindAction("WU_PhotoToggle", function(_, state)
+	if state == Enum.UserInputState.Begin then
+		PhotoMode.Toggle()
+	end
+	return Enum.ContextActionResult.Sink
+end, false, Enum.KeyCode.C, Enum.KeyCode.ButtonSelect)
+
+RunService:BindToRenderStep("WU_PhotoCam", Enum.RenderPriority.Camera.Value + 3, function(dt: number)
+	if not PhotoMode.Active then
+		return
+	end
+	local car = Drive.Car
+	local root = car and car.PrimaryPart
+	if not root then
+		PhotoMode.Toggle(false)
+		return
+	end
+	-- gamepad: right stick orbits, triggers zoom
+	for _, state in UserInputService:GetGamepadState(Enum.UserInputType.Gamepad1) do
+		if state.KeyCode == Enum.KeyCode.Thumbstick2 and state.Position.Magnitude > 0.15 then
+			yaw -= state.Position.X * dt * 2.2
+			pitch = math.clamp(pitch - state.Position.Y * dt * 1.6, -0.05, 1.3)
+		elseif state.KeyCode == Enum.KeyCode.ButtonR2 and state.Position.Z > 0.1 then
+			dist = math.clamp(dist - state.Position.Z * dt * 30, 7, 70)
+		elseif state.KeyCode == Enum.KeyCode.ButtonL2 and state.Position.Z > 0.1 then
+			dist = math.clamp(dist + state.Position.Z * dt * 30, 7, 70)
+		end
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.Z) then
+		roll = math.clamp(roll - dt * 0.6, -0.5, 0.5)
+	elseif UserInputService:IsKeyDown(Enum.KeyCode.X) then
+		roll = math.clamp(roll + dt * 0.6, -0.5, 0.5)
+	end
+	local center = root.Position + Vector3.new(0, 1.6, 0)
+	local offset = Vector3.new(math.sin(yaw) * math.cos(pitch), math.sin(pitch), math.cos(yaw) * math.cos(pitch)) * dist
+	local pos = center + offset
+	if pos.Y < center.Y - 1 then
+		pos = Vector3.new(pos.X, center.Y - 1, pos.Z)
+	end
+	camera.CameraType = Enum.CameraType.Scriptable
+	camera.CFrame = CFrame.lookAt(pos, center) * CFrame.Angles(0, 0, roll)
+	fov += (50 - fov) * math.min(1, dt * 4)
+	camera.FieldOfView = fov
+	dof.FocusDistance = dist
+end)
+
+-- leave photo mode automatically if something else takes over (pursuit, race start, garage)
+player:GetAttributeChangedSignal("RaceActive"):Connect(function()
+	PhotoMode.Toggle(false)
+end)
+player:GetAttributeChangedSignal("PursuitMode"):Connect(function()
+	if player:GetAttribute("PursuitMode") ~= "idle" then
+		PhotoMode.Toggle(false)
+	end
+end)
+
+return PhotoMode
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000025"><Properties><string name="Name">Rewards</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Reward screens: the race results card (place, time, cash and REP counting up, final order,
+-- confetti when you win) and the daily login reward with its 7-day streak track.
+
+local ContextActionService = game:GetService("ContextActionService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Theme = require(script.Parent.Theme)
+local Scale = require(script.Parent.Scale)
+local Sounds = require(script.Parent.Sounds)
+local HUD = require(script.Parent.HUD)
+local Drive = require(script.Parent.DriveController)
+
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local player = Players.LocalPlayer
+local F, C = Theme.Fonts, Theme.Colors
+local new = Theme.new
+local label = Theme.Label
+
+local Rewards = {}
+
+local gui: ScreenGui = new("ScreenGui", { Name = "WantedUnboundRewards", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 22, Enabled = false }, player:WaitForChild("PlayerGui"))
+local backdrop = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(4, 4, 10), BackgroundTransparency = 0.5, BorderSizePixel = 0 }, gui)
+local confettiLayer = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 20 }, gui)
+
+local W, H = 560, 470
+local holder: CanvasGroup = new("CanvasGroup", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(W + 10, H + 10), BackgroundTransparency = 1 }, gui)
+Scale.Attach(holder)
+local panel = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(W, H) }, holder)
+Theme.Panel(panel, C.Gold, 18)
+local stroke = panel:FindFirstChildOfClass("UIStroke") :: UIStroke
+local body = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, panel)
+
+local continueButton = new("TextButton", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -18), Size = UDim2.fromOffset(220, 44), BackgroundColor3 = C.Pink, Text = "CONTINUE", TextScaled = true, FontFace = F.Heading, TextColor3 = Color3.new(1, 1, 1), AutoButtonColor = true, ZIndex = 3 }, panel)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, continueButton)
+new("UIPadding", { PaddingTop = UDim.new(0, 11), PaddingBottom = UDim.new(0, 11) }, continueButton)
+new("UIGradient", { Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(200, 200, 210)), Rotation = 90 }, continueButton)
+
+local isOpen = false
+local token = 0
+local queue: { () -> () } = {}
+
+local function clearBody()
+	for _, c in body:GetChildren() do
+		c:Destroy()
+	end
+end
+
+local function close()
+	if not isOpen then
+		return
+	end
+	isOpen = false
+	token += 1
+	Theme.Popup(gui, backdrop, holder, false)
+	Sounds.Tick(0.9, 0.4)
+	-- next queued screen
+	task.delay(0.35, function()
+		local nextScreen = table.remove(queue, 1)
+		if nextScreen then
+			nextScreen()
+		end
+	end)
+end
+continueButton.Activated:Connect(close)
+
+local function open(accent: Color3, autoClose: number)
+	isOpen = true
+	token += 1
+	local my = token
+	stroke.Color = accent
+	Theme.Popup(gui, backdrop, holder, true)
+	Theme.Pop(continueButton, 0.6)
+	task.delay(autoClose, function()
+		if token == my then
+			close()
+		end
+	end)
+end
+
+-- show now, or after the current screen / menus / cutscenes
+local function present(show: () -> ())
+	if isOpen then
+		table.insert(queue, show)
+		return
+	end
+	task.spawn(function()
+		while Drive.MenuOpen or Drive.Cinematic do
+			task.wait(0.5)
+		end
+		if isOpen then
+			table.insert(queue, show)
+		else
+			show()
+		end
+	end)
+end
+
+-- number that counts up from 0
+local function countUp(l: TextLabel, target: number, prefix: string, suffix: string, delay: number, time: number)
+	l.Text = prefix .. "0" .. suffix
+	task.delay(delay, function()
+		local t0 = os.clock()
+		local ticks = 0
+		while l.Parent do
+			local k = math.clamp((os.clock() - t0) / time, 0, 1)
+			local e = 1 - (1 - k) ^ 3
+			l.Text = prefix .. HUD.Commas(math.floor(target * e + 0.5)) .. suffix
+			ticks += 1
+			if ticks % 3 == 0 and k < 1 then
+				Sounds.Tick(1.5 + k * 0.6, 0.12)
+			end
+			if k >= 1 then
+				break
+			end
+			task.wait()
+		end
+		Theme.Pop(l, 1.25)
+	end)
+end
+
+local CONFETTI = { C.Gold, C.Pink, C.Cyan, C.Green, C.Orange, C.Purple }
+local function confetti(count: number)
+	local cam = workspace.CurrentCamera
+	local vp = cam.ViewportSize
+	for _ = 1, count do
+		local size = math.random(6, 12)
+		local piece = new("Frame", {
+			Position = UDim2.fromOffset(math.random(0, math.floor(vp.X)), -20),
+			Size = UDim2.fromOffset(size, size * 0.6),
+			BackgroundColor3 = CONFETTI[math.random(1, #CONFETTI)],
+			BorderSizePixel = 0,
+			Rotation = math.random(0, 360),
+			ZIndex = 20,
+		}, confettiLayer)
+		local fall = 1.6 + math.random() * 1.4
+		local drift = math.random(-120, 120)
+		local delay = math.random() * 0.6
+		task.delay(delay, function()
+			Theme.Tween(piece, fall, {
+				Position = UDim2.fromOffset(piece.Position.X.Offset + drift, vp.Y + 30),
+				Rotation = piece.Rotation + math.random(-540, 540),
+			}, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+			task.delay(fall, function()
+				piece:Destroy()
+			end)
+		end)
+	end
+end
+
+---------------------------------------------------------------------------
+-- Race results
+---------------------------------------------------------------------------
+local function ordinal(n: number): string
+	local suffix = if n == 1 then "ST" elseif n == 2 then "ND" elseif n == 3 then "RD" else "TH"
+	return n .. suffix
+end
+
+local function showResult(r: any)
+	clearBody()
+	local win = r.win == true
+	local accent = if win then C.Gold else C.Red
+	local title = label({ Position = UDim2.fromOffset(28, 22), Size = UDim2.new(1, -56, 0, 34), Text = tostring(r.title), FontFace = F.Display, TextXAlignment = Enum.TextXAlignment.Center }, body)
+	new("UIGradient", { Color = if win then ColorSequence.new(C.Gold, C.Orange) else ColorSequence.new(C.Red, C.Pink) }, title)
+	label({ Position = UDim2.fromOffset(28, 60), Size = UDim2.new(1, -56, 0, 18), Text = string.upper(tostring(r.event)), FontFace = F.Light, TextColor3 = C.Dim, TextXAlignment = Enum.TextXAlignment.Center }, body)
+
+	-- big place medal (or score for drift / takeover events)
+	local medal = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.25, 0, 0, 96), Size = UDim2.fromOffset(150, 150), BackgroundColor3 = accent }, body)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, medal)
+	new("UIGradient", { Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(140, 140, 150)), Rotation = 45 }, medal)
+	new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = 3, Transparency = 0.3 }, medal)
+	local medalText = if r.scored then HUD.Commas(r.score or 0) else ordinal(r.place or 1)
+	label({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.45), Size = UDim2.fromScale(0.8, 0.4), Text = medalText, FontFace = F.Display, TextColor3 = Color3.fromRGB(20, 16, 10), TextXAlignment = Enum.TextXAlignment.Center }, medal)
+	label({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromScale(0.5, 0.68), Size = UDim2.fromScale(0.7, 0.12), Text = if r.scored then "TARGET " .. HUD.Commas(r.target or 0) else "OF " .. tostring(r.racers or 1), FontFace = F.Heading, TextColor3 = Color3.fromRGB(40, 30, 20), TextXAlignment = Enum.TextXAlignment.Center }, medal)
+	Theme.Pop(medal, 0.2)
+	medal.Rotation = -25
+	Theme.Tween(medal, 0.6, { Rotation = 0 }, Enum.EasingStyle.Back)
+
+	-- stat rows
+	local rows = new("Frame", { Position = UDim2.new(0.5, 10, 0, 100), Size = UDim2.new(0.5, -38, 0, 150), BackgroundTransparency = 1 }, body)
+	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, rows)
+	local function stat(order: number, name: string, color: Color3): TextLabel
+		local row = new("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.PanelLight, BackgroundTransparency = 0.3, LayoutOrder = order }, rows)
+		new("UICorner", { CornerRadius = UDim.new(0, 8) }, row)
+		label({ Position = UDim2.fromOffset(10, 6), Size = UDim2.new(0.5, -10, 1, -12), Text = name, FontFace = F.Heading, TextColor3 = C.Dim }, row)
+		local value = label({ AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 5), Size = UDim2.new(0.5, 0, 1, -10), Text = "", FontFace = F.Display, TextColor3 = color, TextXAlignment = Enum.TextXAlignment.Right }, row)
+		local pad = new("UIPadding", { PaddingLeft = UDim.new(0, 40) }, row)
+		row.BackgroundTransparency = 1
+		task.delay(0.25 + order * 0.12, function()
+			Theme.Tween(pad, 0.4, { PaddingLeft = UDim.new(0, 0) }, Enum.EasingStyle.Back)
+			Theme.Tween(row, 0.3, { BackgroundTransparency = 0.3 })
+		end)
+		return value
+	end
+	local timeValue = stat(1, "TIME", C.Text)
+	timeValue.Text = string.format("%d:%05.2f", math.floor((r.time or 0) / 60), (r.time or 0) % 60)
+	countUp(stat(2, "CASH", C.Green), r.cash or 0, "$", "", 0.6, 1.2)
+	countUp(stat(3, "REP", C.Purple), r.rep or 0, "+", "", 0.8, 1.0)
+	local heatValue = stat(4, "HEAT", C.Red)
+	heatValue.Text = string.rep("★", r.heat or 0) .. string.rep("☆", 5 - (r.heat or 0))
+
+	-- final order
+	local standings = r.standings or {}
+	if #standings > 0 then
+		local list = new("Frame", { Position = UDim2.fromOffset(28, 268), Size = UDim2.new(1, -56, 0, 120), BackgroundTransparency = 1 }, body)
+		new("UIGridLayout", { CellSize = UDim2.new(0.5, -6, 0, 26), CellPadding = UDim2.fromOffset(12, 6), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+		for k, name in standings do
+			local mine = name == "YOU"
+			local cell = new("Frame", { BackgroundColor3 = if mine then Color3.fromRGB(16, 50, 70) else C.PanelLight, BackgroundTransparency = 0.25, LayoutOrder = k }, list)
+			new("UICorner", { CornerRadius = UDim.new(0, 6) }, cell)
+			label({ Position = UDim2.fromOffset(10, 4), Size = UDim2.new(1, -20, 1, -8), Text = k .. ".  " .. string.upper(tostring(name)), FontFace = if mine then F.Heading else F.Body, TextColor3 = if mine then C.Cyan else C.Text }, cell)
+			cell.BackgroundTransparency = 1
+			task.delay(0.9 + k * 0.08, function()
+				Theme.Tween(cell, 0.25, { BackgroundTransparency = 0.25 })
+				Theme.Pop(cell, 0.7)
+			end)
+		end
+	end
+	open(accent, 12)
+	if win then
+		confetti(70)
+		Sounds.Play("rbxasset://sounds/action_jump.mp3", 0.5, 1.4)
+	end
+end
+
+---------------------------------------------------------------------------
+-- Daily reward
+---------------------------------------------------------------------------
+local function showDaily(d: any)
+	clearBody()
+	local title = label({ Position = UDim2.fromOffset(28, 24), Size = UDim2.new(1, -56, 0, 34), Text = "DAILY REWARD", FontFace = F.Display, TextXAlignment = Enum.TextXAlignment.Center }, body)
+	new("UIGradient", { Color = ColorSequence.new(C.Cyan, C.Pink) }, title)
+	label({ Position = UDim2.fromOffset(28, 62), Size = UDim2.new(1, -56, 0, 18), Text = "Come back every day - the streak pays more", FontFace = F.Light, TextColor3 = C.Dim, TextXAlignment = Enum.TextXAlignment.Center }, body)
+	local rewards = d.rewards or {}
+	local day = math.min(d.day or 1, #rewards)
+	local track = new("Frame", { Position = UDim2.fromOffset(24, 104), Size = UDim2.new(1, -48, 0, 120), BackgroundTransparency = 1 }, body)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), HorizontalAlignment = Enum.HorizontalAlignment.Center }, track)
+	for k, amount in rewards do
+		local past = k < day
+		local today = k == day
+		local tile = new("Frame", { Size = UDim2.new(1 / #rewards, -6, 1, 0), BackgroundColor3 = if today then C.Gold elseif past then Color3.fromRGB(30, 70, 50) else C.PanelLight, BackgroundTransparency = if today then 0 else 0.25, LayoutOrder = k }, track)
+		new("UICorner", { CornerRadius = UDim.new(0, 10) }, tile)
+		local dark = today
+		label({ Position = UDim2.fromOffset(0, 10), Size = UDim2.new(1, 0, 0, 16), Text = "DAY " .. k, FontFace = F.Heading, TextColor3 = if dark then Color3.fromRGB(30, 20, 5) else C.Dim, TextXAlignment = Enum.TextXAlignment.Center }, tile)
+		label({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.52), Size = UDim2.new(1, -8, 0, 22), Text = if past then "✓" else "$" .. HUD.Commas(amount), FontFace = F.Display, TextColor3 = if dark then Color3.fromRGB(30, 20, 5) elseif past then C.Green else C.Text, TextXAlignment = Enum.TextXAlignment.Center }, tile)
+		if today then
+			new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = 2 }, tile)
+			task.delay(0.5, function()
+				Theme.Pop(tile, 1.35)
+			end)
+		end
+	end
+	local big = label({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 250), Size = UDim2.fromOffset(360, 60), Text = "", FontFace = F.Display, TextColor3 = C.Green, TextXAlignment = Enum.TextXAlignment.Center }, body)
+	countUp(big, d.amount or 0, "+$", "", 0.7, 1.3)
+	label({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 316), Size = UDim2.fromOffset(360, 22), Text = "+" .. tostring(d.rep or 0) .. " REP   ·   DAY " .. tostring(d.day or 1) .. " STREAK", FontFace = F.Heading, TextColor3 = C.Purple, TextXAlignment = Enum.TextXAlignment.Center }, body)
+	open(C.Cyan, 10)
+	confetti(40)
+end
+
+local raceResultEvent = Remotes:WaitForChild("RaceResult") :: RemoteEvent
+raceResultEvent.OnClientEvent:Connect(function(r: any)
+	if type(r) ~= "table" then
+		return
+	end
+	-- let the big banner play first
+	task.delay(1.6, function()
+		present(function()
+			showResult(r)
+		end)
+	end)
+end)
+
+local dailyEvent = Remotes:WaitForChild("DailyReward") :: RemoteEvent
+dailyEvent.OnClientEvent:Connect(function(d: any)
+	if type(d) == "table" then
+		present(function()
+			showDaily(d)
+		end)
+	end
+end)
+
+ContextActionService:BindActionAtPriority("WU_RewardsClose", function(_, state)
+	if state ~= Enum.UserInputState.Begin or not isOpen then
+		return Enum.ContextActionResult.Pass
+	end
+	close()
+	return Enum.ContextActionResult.Sink
+end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Return, Enum.KeyCode.ButtonB)
+
+return Rewards
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000026"><Properties><string name="Name">Scale</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Scales fixed-size UI panels down on small screens (phones) and slightly up on big ones.
 -- Attach it to panels that are anchored to a screen edge; they shrink around their anchor.
 
@@ -12956,7 +13645,7 @@ camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
 end)
 
 return Scale
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000025"><Properties><string name="Name">Settings</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000027"><Properties><string name="Name">Settings</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Player settings, saved in the player's profile on the server.
 
 local Lighting = game:GetService("Lighting")
@@ -13053,7 +13742,7 @@ Lighting.ChildAdded:Connect(function()
 end)
 
 return Settings
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000026"><Properties><string name="Name">Sounds</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000028"><Properties><string name="Name">Sounds</string><ProtectedString name="Source"><![CDATA[--!strict
 -- All game audio. Roblox only ships a handful of built-in sounds, so the engine and tyre sounds
 -- are synthesized from its wind-noise loop: pitched down, bass boosted, distorted and pulsed by a
 -- tremolo at the engine's firing rate (it follows the simulated RPM and gear shifts). If you put
@@ -13424,7 +14113,7 @@ RunService.RenderStepped:Connect(function(dt: number)
 end)
 
 return Sounds
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000027"><Properties><string name="Name">Theme</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000029"><Properties><string name="Name">Theme</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Shared UI look: fonts, colours and small helpers for glassy panels, so every screen matches.
 
 local Lighting = game:GetService("Lighting")
@@ -13658,7 +14347,7 @@ function Theme.Pop(obj: GuiObject, from: number?)
 end
 
 return Theme
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000028"><Properties><string name="Name">TouchControls</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000002A"><Properties><string name="Name">TouchControls</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Mobile driving controls: an analog steering pad on the left, GAS / BRAKE pedals on the right,
 -- and NOS, DRIFT, FIRE and RESET buttons. Shown only on touch devices while driving; the
 -- default thumbstick is switched off meanwhile.
@@ -13852,7 +14541,7 @@ RunService.RenderStepped:Connect(function()
 end)
 
 return TouchControls
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000029"><Properties><string name="Name">Weather</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000002B"><Properties><string name="Name">Weather</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Rain showers (the server decides when it rains; see workspace attribute "Raining").
 -- Rain streaks follow the camera, the picture goes greyer, and you hear the rain.
 
@@ -13912,6 +14601,39 @@ sound.Parent = SoundService
 sound:Play()
 
 local raining = false
+
+-- wet asphalt: roads get a glossy sheen while it rains (local only, streamed parts included)
+local WET = 0.22
+local dryValues: { [BasePart]: number } = {}
+local roadConn: RBXScriptConnection? = nil
+local function wet(p: Instance)
+	if p:IsA("BasePart") and dryValues[p] == nil then
+		dryValues[p] = p.Reflectance
+		p.Reflectance = math.max(p.Reflectance, WET)
+	end
+end
+local function setWet(on: boolean)
+	local map = workspace:FindFirstChild("Map")
+	local roads = map and map:FindFirstChild("Roads")
+	if roadConn then
+		roadConn:Disconnect()
+		roadConn = nil
+	end
+	if on and roads then
+		for _, p in roads:GetDescendants() do
+			wet(p)
+		end
+		roadConn = roads.DescendantAdded:Connect(wet)
+	elseif not on then
+		for p, value in dryValues do
+			if p.Parent then
+				p.Reflectance = value
+			end
+		end
+		dryValues = {}
+	end
+end
+
 local function update()
 	local now = workspace:GetAttribute("Raining") == true
 	if now == raining then
@@ -13921,6 +14643,7 @@ local function update()
 	local info = TweenInfo.new(4)
 	TweenService:Create(grade, info, { Saturation = if now then -0.25 else 0, Brightness = if now then -0.04 else 0, Contrast = if now then -0.05 else 0 }):Play()
 	TweenService:Create(sound, info, { Volume = if now then 0.35 else 0 }):Play()
+	task.spawn(setWet, now)
 end
 workspace:GetAttributeChangedSignal("Raining"):Connect(update)
 update()

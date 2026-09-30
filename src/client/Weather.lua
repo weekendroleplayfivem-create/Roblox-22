@@ -58,6 +58,39 @@ sound.Parent = SoundService
 sound:Play()
 
 local raining = false
+
+-- wet asphalt: roads get a glossy sheen while it rains (local only, streamed parts included)
+local WET = 0.22
+local dryValues: { [BasePart]: number } = {}
+local roadConn: RBXScriptConnection? = nil
+local function wet(p: Instance)
+	if p:IsA("BasePart") and dryValues[p] == nil then
+		dryValues[p] = p.Reflectance
+		p.Reflectance = math.max(p.Reflectance, WET)
+	end
+end
+local function setWet(on: boolean)
+	local map = workspace:FindFirstChild("Map")
+	local roads = map and map:FindFirstChild("Roads")
+	if roadConn then
+		roadConn:Disconnect()
+		roadConn = nil
+	end
+	if on and roads then
+		for _, p in roads:GetDescendants() do
+			wet(p)
+		end
+		roadConn = roads.DescendantAdded:Connect(wet)
+	elseif not on then
+		for p, value in dryValues do
+			if p.Parent then
+				p.Reflectance = value
+			end
+		end
+		dryValues = {}
+	end
+end
+
 local function update()
 	local now = workspace:GetAttribute("Raining") == true
 	if now == raining then
@@ -67,6 +100,7 @@ local function update()
 	local info = TweenInfo.new(4)
 	TweenService:Create(grade, info, { Saturation = if now then -0.25 else 0, Brightness = if now then -0.04 else 0, Contrast = if now then -0.05 else 0 }):Play()
 	TweenService:Create(sound, info, { Volume = if now then 0.35 else 0 }):Play()
+	task.spawn(setWet, now)
 end
 workspace:GetAttributeChangedSignal("Raining"):Connect(update)
 update()

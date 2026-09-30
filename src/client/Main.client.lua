@@ -27,6 +27,7 @@ require(script.Parent.TouchControls)
 require(script.Parent.Collectibles)
 require(script.Parent.Weather)
 require(script.Parent.Menu)
+require(script.Parent.Rewards)
 
 local player = Players.LocalPlayer
 

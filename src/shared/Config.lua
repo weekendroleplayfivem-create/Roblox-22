@@ -1055,6 +1055,10 @@ function Config.GetWeapon(id: string): WeaponDef?
 end
 
 ---------------------------------------------------------------------------
+-- Daily login reward: grows with the streak (day 1..7, then stays at day 7)
+Config.DailyRewards = { 1000, 1500, 2000, 3000, 4000, 5500, 8000 }
+Config.DailyRep = 150
+
 -- REP levels (Unbound): earned from races, escapes, style and takeovers
 ---------------------------------------------------------------------------
 Config.Rep = {

@@ -5,11 +5,11 @@
 -- physics and network ownership of the real car are never touched.
 
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 
 local Drive = require(script.Parent.DriveController)
 local Sounds = require(script.Parent.Sounds)
 local Theme = require(script.Parent.Theme)
+local HUD = require(script.Parent.HUD)
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -544,13 +544,7 @@ function GarageCinematic.Exit(fire: () -> ())
 		end
 	end
 	finish()
+	HUD.Intro()
 end
-
--- safety net: never leave the screen black or the controls locked
-RunService.Heartbeat:Connect(function()
-	if not GarageCinematic.Busy and Drive.Cinematic then
-		Drive.Cinematic = false
-	end
-end)
 
 return GarageCinematic
