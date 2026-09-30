@@ -121,7 +121,12 @@ local function think(ai: AIDriver.AI, dt: number)
 	-- stop at red lights (and at yellow when there's room to stop) before the stop line
 	local redLight = false
 	local toI, toJ = d.to[1], d.to[2]
-	if toI > 0 and toI < Grid.Size and toJ > 0 and toJ < Grid.Size then
+	local mode = Config.IntersectionMode(toI, toJ)
+	if mode == "stop" and d.segLen - t < 60 then
+		-- stop sign: slow right down before rolling through
+		ai.state.speedMult = math.min(mult, 0.35)
+	end
+	if mode == "signals" then
 		local toGo = d.segLen - t
 		local speed = math.max(ai.state.speed, 0)
 		local stopAt = 41
@@ -174,6 +179,7 @@ local function spawnOne()
 			local p = Vector3.new(pos.X, Grid.RoadY + root.Size.Y / 2 + 0.4, pos.Z)
 			model:PivotTo(CFrame.lookAt(p, p + dir))
 			model:SetAttribute("Civilian", true)
+			model.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
 			model.Parent = folder
 			local cruise = math.random(T.Speed[1], T.Speed[2])
 			local ai = AIDriver.Add(model, {

@@ -90,14 +90,59 @@ local function markings(mid: Vector3, alongX: boolean, segLen: number, folder: F
 	line(ROAD / 2 - 2.5, 0.5, white)
 end
 
+-- The outer ring road is the Neon Bay Beltway: extra lane lines, guard rails and sign gantries.
+local EXITS = { "DOWNTOWN", "HARBOR / DOCKS", "SUBURBS", "AIRPORT", "BEACH", "MIDTOWN" }
+local function freeway(mid: Vector3, alongX: boolean, segLen: number, outward: number, index: number, folder: Folder)
+	local function offset(o: number): Vector3
+		return if alongX then Vector3.new(0, 0, o) else Vector3.new(o, 0, 0)
+	end
+	local function size(len: number, h: number, w: number): Vector3
+		return if alongX then Vector3.new(len, h, w) else Vector3.new(w, h, len)
+	end
+	for _, o in { -15, 15 } do
+		local p = mid + offset(o)
+		anchored({ Name = "LaneLine", Size = size(segLen - 6, 0.04, 0.45), CFrame = CFrame.new(p.X, SURFACE + 0.02, p.Z), Color = Color3.fromRGB(225, 225, 225), Material = Enum.Material.SmoothPlastic, CanCollide = false, CanQuery = false }, folder)
+	end
+	local railPos = mid + offset(outward * (ROAD / 2 - 1))
+	for _, h in { 1.6, 2.6 } do
+		anchored({ Name = "GuardRail", Size = size(segLen, 0.45, 0.3), CFrame = CFrame.new(railPos.X, SURFACE + h, railPos.Z), Color = Color3.fromRGB(190, 192, 196), Material = Enum.Material.Metal, CanCollide = false, CanQuery = false }, folder)
+	end
+	if index % 3 == 1 then
+		local metal = Color3.fromRGB(120, 124, 130)
+		for _, o in { -ROAD / 2 + 1, ROAD / 2 - 1 } do
+			local p = mid + offset(o)
+			anchored({ Name = "GantryPost", Size = Vector3.new(1.2, 26, 1.2), CFrame = CFrame.new(p.X, SURFACE + 13, p.Z), Color = metal, Material = Enum.Material.Metal, CanCollide = false, CanQuery = false }, folder)
+		end
+		anchored({ Name = "GantryBeam", Size = size(1.2, 1.4, ROAD), CFrame = CFrame.new(mid.X, SURFACE + 25, mid.Z), Color = metal, Material = Enum.Material.Metal, CanCollide = false, CanQuery = false }, folder)
+		for _, facing in { 1, -1 } do
+			local dir = if alongX then Vector3.new(facing, 0, 0) else Vector3.new(0, 0, facing)
+			local signPos = Vector3.new(mid.X, SURFACE + 21, mid.Z) - dir * 0.8
+			local sign = anchored({ Name = "HighwaySign", Size = Vector3.new(22, 7, 0.4), CFrame = CFrame.lookAt(signPos, signPos - dir), Color = Color3.fromRGB(20, 110, 55), Material = Enum.Material.SmoothPlastic, CanCollide = false, CanQuery = false }, folder)
+			local gui = Instance.new("SurfaceGui")
+			gui.Face = Enum.NormalId.Front
+			gui.LightInfluence = 0.4
+			local t = Instance.new("TextLabel")
+			t.BackgroundTransparency = 1
+			t.Size = UDim2.fromScale(1, 1)
+			t.Text = "BELTWAY  -  EXIT " .. (index + 1) .. "\n" .. EXITS[(index % #EXITS) + 1]
+			t.TextScaled = true
+			t.Font = Enum.Font.GothamBold
+			t.TextColor3 = Color3.fromRGB(245, 245, 245)
+			t.Parent = gui
+			gui.Parent = sign
+		end
+	end
+end
+
 local function buildRoads(folder: Folder)
 	local N = Grid.Size
 	local asphalt = Color3.fromRGB(58, 58, 61)
 	local segLen = Grid.Cell - ROAD
 	for i = 0, N do
+		task.wait()
 		for j = 0, N do
 			local c = Grid.Intersection(i, j)
-			Architecture.Intersection(c, ROAD, i > 0 and i < N and j > 0 and j < N)
+			Architecture.Intersection(c, ROAD, Config.IntersectionMode(i, j))
 			anchored({
 				Name = "Intersection",
 				Size = Vector3.new(ROAD, 1, ROAD),
@@ -115,6 +160,9 @@ local function buildRoads(folder: Folder)
 					Material = Enum.Material.Asphalt,
 				}, folder)
 				markings(mid, true, segLen, folder)
+				if j == 0 or j == N then
+					freeway(mid, true, segLen, if j == 0 then -1 else 1, i, folder)
+				end
 			end
 			if j < N then
 				local mid = Grid.SegmentMid(i, j, "z")
@@ -126,6 +174,9 @@ local function buildRoads(folder: Folder)
 					Material = Enum.Material.Asphalt,
 				}, folder)
 				markings(mid, false, segLen, folder)
+				if i == 0 or i == N then
+					freeway(mid, false, segLen, if i == 0 then -1 else 1, j, folder)
+				end
 			end
 		end
 	end
@@ -176,28 +227,95 @@ local function streetLight(pos: Vector3, toRoad: Vector3, props: Folder)
 	table.insert(nightNeon, lamp)
 end
 
+local DISTRICT_FLOOR = {
+	downtown = { color = Color3.fromRGB(118, 116, 112), material = Enum.Material.Concrete },
+	midtown = { color = Color3.fromRGB(118, 116, 112), material = Enum.Material.Concrete },
+	suburb = { color = Color3.fromRGB(78, 118, 62), material = Enum.Material.Grass },
+	industrial = { color = Color3.fromRGB(96, 96, 98), material = Enum.Material.Concrete },
+}
+
 local function cityBlock(bx: number, bz: number, ground: Folder, props: Folder)
 	local c = Grid.BlockCenter(bx, bz)
+	local district = Config.District(bx, bz)
+	local floor = DISTRICT_FLOOR[district]
 	anchored({
 		Name = "Block",
 		Size = Vector3.new(BLOCK, 1, BLOCK),
 		CFrame = CFrame.new(c.X, SURFACE - 0.5, c.Z),
-		Color = Color3.fromRGB(118, 116, 112),
-		Material = Enum.Material.Concrete,
+		Color = floor.color,
+		Material = floor.material,
 	}, ground)
-	-- buildings get taller towards downtown
-	local downtown = 1 - math.clamp(Vector3.new(c.X, 0, c.Z).Magnitude / Grid.Half, 0, 1)
+	local edge = BLOCK / 2 - 3
+	if district == "suburb" then
+		Architecture.Suburb(c, BLOCK)
+		Architecture.Sidewalks(c, BLOCK, false, "suburb")
+		streetLight(c + Vector3.new(0, 0, -edge), -Vector3.zAxis, props)
+		streetLight(c + Vector3.new(0, 0, edge), Vector3.zAxis, props)
+		return
+	elseif district == "industrial" then
+		Architecture.Industrial(c, BLOCK, bx == Grid.Size - 1)
+		Architecture.Sidewalks(c, BLOCK, false, "industrial")
+		streetLight(c + Vector3.new(-edge, 0, 0), -Vector3.xAxis, props)
+		streetLight(c + Vector3.new(edge, 0, 0), Vector3.xAxis, props)
+		return
+	end
+	-- downtown gets towers (taller towards the centre), midtown mostly brick, offices and shops
+	local d = Vector3.new(c.X, 0, c.Z).Magnitude / Grid.Half
+	local downtown = if district == "downtown" then 0.6 + (1 - math.clamp(d / 0.3, 0, 1)) * 0.4 else 0.3
 	for _, ox in { -1, 1 } do
 		for _, oz in { -1, 1 } do
 			Architecture.Lot(c + Vector3.new(ox * 57, 0, oz * 57), { Vector3.new(ox, 0, 0), Vector3.new(0, 0, oz) }, downtown)
 		end
 	end
 	Architecture.Sidewalks(c, BLOCK, rng:NextNumber() < 0.3)
-	local edge = BLOCK / 2 - 3
 	streetLight(c + Vector3.new(0, 0, -edge), -Vector3.zAxis, props)
 	streetLight(c + Vector3.new(0, 0, edge), Vector3.zAxis, props)
 	streetLight(c + Vector3.new(-edge, 0, 0), -Vector3.xAxis, props)
 	streetLight(c + Vector3.new(edge, 0, 0), Vector3.xAxis, props)
+end
+
+-- Terrain around the city: ocean and beaches to the east and south, hills and mountains to the
+-- north and west.
+local function buildTerrain()
+	local terrain = workspace.Terrain
+	local H = Grid.Half
+	local wall = H + ROAD / 2 + 8
+	local far = 1400
+	terrain.WaterColor = Color3.fromRGB(18, 70, 90)
+	terrain.WaterTransparency = 0.25
+	terrain.WaterReflectance = 0.6
+	terrain.WaterWaveSize = 0.35
+	terrain.WaterWaveSpeed = 8
+	local function fill(minV: Vector3, maxV: Vector3, material: Enum.Material)
+		local size = maxV - minV
+		terrain:FillBlock(CFrame.new((minV + maxV) / 2), size, material)
+	end
+	-- land ring (north + west) with grass
+	fill(Vector3.new(-wall - far, -12, -wall - far), Vector3.new(wall + 170, 0, -wall), Enum.Material.Grass)
+	fill(Vector3.new(-wall - far, -12, -wall), Vector3.new(-wall, 0, wall + 170), Enum.Material.Grass)
+	-- beaches
+	fill(Vector3.new(wall, -12, -wall - far), Vector3.new(wall + 170, 0, wall + 170), Enum.Material.Sand)
+	fill(Vector3.new(-wall - far, -12, wall), Vector3.new(wall + 170, 0, wall + 170), Enum.Material.Sand)
+	-- sea bed and water
+	fill(Vector3.new(wall + 170, -44, -wall - far), Vector3.new(wall + far + 400, -30, wall + far + 400), Enum.Material.Sand)
+	fill(Vector3.new(-wall - far, -44, wall + 170), Vector3.new(wall + 170, -30, wall + far + 400), Enum.Material.Sand)
+	fill(Vector3.new(wall + 170, -30, -wall - far), Vector3.new(wall + far + 400, -2, wall + far + 400), Enum.Material.Water)
+	fill(Vector3.new(-wall - far, -30, wall + 170), Vector3.new(wall + 170, -2, wall + far + 400), Enum.Material.Water)
+	-- hills close by, mountains further out
+	local trng = Random.new(5)
+	for _ = 1, 26 do
+		local side = trng:NextNumber()
+		local along = trng:NextNumber(-wall - far, wall)
+		local dist = trng:NextNumber(260, far - 200)
+		local pos = if side < 0.5 then Vector3.new(along, 0, -wall - dist) else Vector3.new(-wall - dist, 0, along)
+		local mountain = dist > 700
+		local r = if mountain then trng:NextNumber(260, 480) else trng:NextNumber(90, 200)
+		local y = if mountain then -r * 0.35 else -r * 0.6
+		terrain:FillBall(pos + Vector3.new(0, y, 0), r, if mountain then Enum.Material.Rock else Enum.Material.Grass)
+		if mountain then
+			terrain:FillBall(pos + Vector3.new(0, y + r * 0.55, 0), r * 0.45, Enum.Material.Snow)
+		end
+	end
 end
 
 local function safehouse(bx: number, bz: number, buildings: Folder, props: Folder, ground: Folder): (Vector3, { CFrame })
@@ -479,7 +597,7 @@ function MapBuilder.Build(): MapInfo
 	local H = Grid.Half
 	anchored({
 		Name = "Base",
-		Size = Vector3.new(H * 2 + 600, 2, H * 2 + 600),
+		Size = Vector3.new(H * 2 + 120, 2, H * 2 + 120),
 		CFrame = CFrame.new(0, SURFACE - 1.1, 0),
 		Color = Color3.fromRGB(30, 45, 35),
 		Material = Enum.Material.Grass,
@@ -534,7 +652,9 @@ function MapBuilder.Build(): MapInfo
 		return nil
 	end
 
+	buildTerrain()
 	for bx = 0, Grid.Size - 1 do
+		task.wait() -- building ~50k parts: yield between rows so the server never times out
 		for bz = 0, Grid.Size - 1 do
 			local kind = isSpecial(bx, bz)
 			if kind == "safehouse" then

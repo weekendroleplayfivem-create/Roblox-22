@@ -241,6 +241,7 @@ local function spawnCop(pos: Vector3, look: Vector3, heavy: boolean, mode: strin
 	end
 	local p = Vector3.new(pos.X, Grid.RoadY + root.Size.Y / 2 + 0.5, pos.Z)
 	model:PivotTo(CFrame.lookAt(p, p + flat.Unit))
+	model.ModelStreamingMode = Enum.ModelStreamingMode.Persistent -- visible on the radar city-wide
 	model.Parent = policeFolder
 	local ai = AIDriver.Add(model, copStats(heavy), "cop", copThink)
 	ai.data.mode = mode
@@ -499,6 +500,7 @@ local function spawnRoadblock(s: Session.Session)
 		local pos = center + across * off + Vector3.new(0, croot.Size.Y / 2 + 0.5, 0)
 		cop:PivotTo(CFrame.lookAt(pos, pos + across))
 		croot.Anchored = true
+		cop.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
 		cop.Parent = model
 		local smashed = false
 		croot.Touched:Connect(function(hit)
@@ -585,6 +587,7 @@ local function spawnHeli(s: Session.Session)
 	model.PrimaryPart = body
 	body.CFrame = CFrame.new(pos + Vector3.new(200, 130, 200))
 	model:SetAttribute("Owner", s.player.UserId)
+	model.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
 	model.Parent = policeFolder
 	helis[s.player] = model
 	s.heli = model

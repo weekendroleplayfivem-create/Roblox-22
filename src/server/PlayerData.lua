@@ -22,6 +22,7 @@ export type Profile = {
 	blacklistBeaten: number, -- how many rivals beaten (rank 5 first)
 	stats: { [string]: number }, -- milestone stats
 	milestones: { [string]: boolean }, -- completed milestone ids
+	settings: { [string]: any }, -- client settings (camera shake, units, volume...)
 }
 
 local STORE_NAME = "WantedUnbound_v1"
@@ -53,6 +54,7 @@ local function default(): Profile
 		blacklistBeaten = 0,
 		stats = {},
 		milestones = {},
+		settings = {},
 	}
 end
 

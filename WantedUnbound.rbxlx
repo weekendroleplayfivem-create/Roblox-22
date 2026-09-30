@@ -1,4 +1,4 @@
-<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4"><Item class="Workspace" referent="RBX0000000000000000000000000000001E"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">false</bool></Properties></Item><Item class="Lighting" referent="RBX0000000000000000000000000000001F"><Properties><string name="Name">Lighting</string><token name="Technology">4</token></Properties></Item><Item class="ReplicatedStorage" referent="RBX00000000000000000000000000000020"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">Shared</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">CarPhysics</string><ProtectedString name="Source"><![CDATA[--!strict
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4"><Item class="Workspace" referent="RBX00000000000000000000000000000021"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">true</bool><int name="StreamingTargetRadius">1500</int><int name="StreamingMinRadius">400</int></Properties></Item><Item class="Lighting" referent="RBX00000000000000000000000000000022"><Properties><string name="Name">Lighting</string><token name="Technology">4</token></Properties></Item><Item class="ReplicatedStorage" referent="RBX00000000000000000000000000000023"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">Shared</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">CarPhysics</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Arcade driving model shared by the player's car (simulated on the client that owns it)
 -- and AI cars (police and rivals, simulated on the server).
 --
@@ -37,6 +37,9 @@ export type State = {
 	lateral: number, -- signed sideways speed
 	airTime: number,
 	speedMult: number, -- extra multiplier (AI rubber banding, heat)
+	weight: number, -- -1 (on the rear) .. 1 (on the nose): weight transfer
+	brakeTap: number, -- os.clock() of the last brake, for brake-to-drift
+	lowSlip: number, -- time spent nearly straight while drifting
 }
 
 function CarPhysics.NewState(model: Model): State
@@ -56,6 +59,9 @@ function CarPhysics.NewState(model: Model): State
 		lateral = 0,
 		airTime = 0,
 		speedMult = 1,
+		weight = 0,
+		brakeTap = 0,
+		lowSlip = 0,
 	}
 end
 
@@ -108,6 +114,7 @@ function CarPhysics.Step(state: State, input: Input, stats: Stats, dt: number)
 	local vert = vel:Dot(up)
 
 	if state.grounded then
+		local landed = state.airTime > 0.35
 		state.airTime = 0
 		local mult = state.speedMult
 		local maxSpeed = stats.maxSpeed * mult
@@ -116,77 +123,114 @@ function CarPhysics.Step(state: State, input: Input, stats: Stats, dt: number)
 			maxSpeed *= stats.nitroMult
 			accel *= 1.7
 		end
-
+		local absFwd = math.abs(fwd)
 		local throttle = input.throttle
+		local now = os.clock()
+
+		-- Longitudinal: torque falls off towards top speed, tyres limit the launch.
 		if throttle > 0.05 then
 			if fwd < -2 then
 				fwd = math.min(fwd + stats.brake * throttle * dt, 0)
 			elseif fwd < maxSpeed then
-				local taper = 1 - 0.55 * (math.max(fwd, 0) / maxSpeed) ^ 2
-				fwd = math.min(fwd + accel * throttle * taper * dt, maxSpeed)
+				local ratio = math.max(fwd, 0) / maxSpeed
+				local torque = 1 - 0.62 * ratio ^ 1.6
+				local launch = if fwd < 25 then 0.75 + 0.25 * (fwd / 25) else 1 -- traction limit off the line
+				fwd = math.min(fwd + accel * throttle * torque * launch * dt, maxSpeed)
 			else
 				fwd -= (fwd - maxSpeed) * math.min(dt * 1.2, 1)
 			end
+			state.weight += (-0.5 - state.weight) * math.min(1, dt * 4) -- weight moves back
 		elseif throttle < -0.05 then
 			if fwd > 2 then
 				fwd = math.max(fwd - stats.brake * -throttle * dt, 0)
+				state.weight += (1 - state.weight) * math.min(1, dt * 5) -- weight moves forward
+				state.brakeTap = now
 			else
 				fwd = math.max(fwd - accel * 0.7 * -throttle * dt, -stats.maxSpeed * 0.35)
 			end
 		else
-			-- coasting drag
-			fwd -= fwd * math.min(dt * 0.35, 1)
-			if math.abs(fwd) < 1 then
-				fwd = 0
-			end
+			-- engine braking + rolling resistance
+			fwd -= fwd * math.min(dt * 0.3, 1) + math.sign(fwd) * math.min(math.abs(fwd), 1.5 * dt)
+			state.weight += (0 - state.weight) * math.min(1, dt * 3)
 		end
 
-		-- Drift logic: brake-to-drift / handbrake starts it, low lateral speed ends it.
-		local absFwd = math.abs(fwd)
+		-- Drifting: handbrake, or Unbound-style brake-tap then back on the gas while steering.
+		local steerAbs = math.abs(input.steer)
 		if input.handbrake then
-			fwd -= fwd * math.min(dt * 0.6, 1)
-			if absFwd > 35 and math.abs(input.steer) > 0.2 then
+			fwd -= fwd * math.min(dt * 0.55, 1)
+			if absFwd > 35 and steerAbs > 0.2 then
 				state.drifting = true
 			end
+		elseif throttle > 0.5 and steerAbs > 0.5 and absFwd > 60 and now - state.brakeTap < 0.45 then
+			state.drifting = true
 		end
-		if state.drifting and (math.abs(lat) < 5 or absFwd < 20) and not input.handbrake then
-			state.drifting = false
+		local slip = math.deg(math.atan2(math.abs(lat), math.max(absFwd, 1)))
+		if state.drifting and not input.handbrake then
+			if slip < 8 or absFwd < 20 then
+				state.lowSlip += dt
+			else
+				state.lowSlip = 0
+			end
+			if state.lowSlip > 0.25 or (throttle <= 0.05 and steerAbs < 0.1 and slip < 15) then
+				state.drifting = false
+				state.lowSlip = 0
+			end
 		end
 
+		-- Lateral grip: downforce adds grip at speed, weight on the nose sharpens turn-in.
 		local grip = stats.grip * (1 + (stats.downforce or 0) * 0.6 * math.clamp(absFwd / stats.maxSpeed, 0, 1))
 		if input.handbrake then
 			grip *= 0.18
 		elseif state.drifting then
 			grip *= stats.driftGrip or 0.4
+			-- drift assist: throttle holds the slide instead of scrubbing all the speed
+			if throttle > 0.3 then
+				fwd = math.min(fwd + accel * 0.35 * dt, maxSpeed)
+			end
+		end
+		if landed then
+			grip *= 0.5 -- a moment of looseness after landing a jump
 		end
 		local oldLat = math.abs(lat)
 		lat *= math.max(0, 1 - grip * dt)
-		-- Convert part of the scrubbed sideways speed back into forward speed so corners
-		-- keep momentum, the arcade way.
+		-- carry part of the scrubbed sideways speed into forward speed so corners keep momentum
 		if fwd > 5 then
-			fwd = math.min(fwd + (oldLat - math.abs(lat)) * 0.55, maxSpeed * 1.05)
+			local carry = if state.drifting then 0.6 else 0.45
+			fwd = math.min(fwd + (oldLat - math.abs(lat)) * carry, maxSpeed * 1.05)
 		end
 
-		-- Steering: needs speed, softens at the top end, stronger in a drift.
-		local speedFactor = math.clamp(absFwd / 22, 0, 1)
-		local highSpeedDamp = 1 - 0.4 * math.clamp(absFwd / (stats.maxSpeed * 1.2), 0, 1)
-		local yaw = -input.steer * stats.turn * speedFactor * highSpeedDamp
+		-- Steering: needs speed, less lock at the top end, sharper with weight on the nose.
+		local speedFactor = math.clamp(absFwd / 20, 0, 1)
+		local highSpeedDamp = 1 - 0.5 * math.clamp(absFwd / (stats.maxSpeed * 1.15), 0, 1) ^ 1.2
+		local turnIn = 1 + 0.18 * math.max(state.weight, 0) - 0.08 * math.max(-state.weight, 0)
+		local targetYaw = -input.steer * stats.turn * speedFactor * highSpeedDamp * turnIn
 		if fwd < 0 then
-			yaw = -yaw
+			targetYaw = -targetYaw
 		end
 		if state.drifting then
-			yaw *= 1.35
+			targetYaw *= 1.45
+			-- stop the car spinning out: past ~60 degrees of slip, yaw back towards the slide
+			if slip > 60 then
+				local slideSide = math.sign(lat)
+				targetYaw -= slideSide * (slip - 60) * 0.05 -- turn the nose back towards the direction of travel
+			end
 		end
+		-- yaw has inertia: the car rotates into the turn instead of snapping
+		local av = root.AssemblyAngularVelocity
+		local currentYaw = av:Dot(up)
+		local response = if state.drifting then 5 else (6 + stats.grip * 0.5)
+		local yaw = currentYaw + (targetYaw - currentYaw) * (1 - math.exp(-dt * response))
 
 		root.AssemblyLinearVelocity = forward * fwd + right * lat + up * math.min(vert, 60)
-		local av = root.AssemblyAngularVelocity
-		root.AssemblyAngularVelocity = av - up * av:Dot(up) + up * yaw
+		root.AssemblyAngularVelocity = av - up * currentYaw + up * yaw
 	else
 		state.airTime += dt
-		-- slight air control
+		-- slight air control, rotation keeps its momentum
 		local av = root.AssemblyAngularVelocity
-		local yaw = -input.steer * stats.turn * 0.35
-		root.AssemblyAngularVelocity = av - UP * av:Dot(UP) + UP * yaw
+		local currentYaw = av:Dot(UP)
+		local targetYaw = -input.steer * stats.turn * 0.35
+		local yaw = currentYaw + (targetYaw - currentYaw) * (1 - math.exp(-dt * 2))
+		root.AssemblyAngularVelocity = av - UP * currentYaw + UP * yaw
 	end
 
 	state.speed = fwd
@@ -220,7 +264,7 @@ Config.MphPerStud = 0.75
 -- City grid
 ---------------------------------------------------------------------------
 Config.Grid = {
-	Blocks = 8, -- 8x8 city blocks -> 9x9 intersections
+	Blocks = 16, -- 16x16 city blocks -> 17x17 intersections (4.8 km of city per side)
 	BlockSize = 240,
 	RoadWidth = 60,
 	GroundY = 0,
@@ -676,8 +720,8 @@ Config.Police = {
 	Accel = 50,
 	Turn = 2.4,
 	Grip = 6.5,
-	PatrolCount = 4, -- roaming patrols across the whole city (daytime)
-	NightExtraPatrols = 5, -- extra patrol cars out at night
+	PatrolCount = 10, -- roaming patrols across the whole city (daytime)
+	NightExtraPatrols = 8, -- extra patrol cars out at night
 	NightExtraCops = 2, -- extra units per pursuit at night
 	NightSpawnMult = 0.65, -- pursuit reinforcements arrive faster at night
 	SpeedLimit = 95, -- studs/s (~71 mph). Faster than this in front of a cop starts a pursuit.
@@ -945,7 +989,7 @@ Config.Ramps = {
 -- City traffic + near misses (Unbound)
 ---------------------------------------------------------------------------
 Config.Traffic = {
-	Count = 16, -- civilian cars driving around the city
+	Count = 42, -- civilian cars driving around the city
 	Speed = { 38, 55 }, -- studs/s cruising speed range
 	LaneOffset = 8, -- distance from the centre line (drive on the right)
 	NearMissMin = 6.8, -- closer than this (centre to centre) counts as a crash, not a near miss
@@ -1030,6 +1074,126 @@ Config.Sounds = {
 }
 
 Config.StartingCash = 5000
+
+---------------------------------------------------------------------------
+-- Map scale. Everything above was laid out on the original 8x8 grid; the city is now 16x16,
+-- so grid coordinates are doubled (routes stay on real roads, just twice as long).
+---------------------------------------------------------------------------
+local MAP_SCALE = 2
+local function scaleIJ(p: { number })
+	p[1] *= MAP_SCALE
+	p[2] *= MAP_SCALE
+end
+scaleIJ(Config.Blocks.Safehouse)
+scaleIJ(Config.Blocks.Park)
+for _, h in Config.Blocks.HidingSpots do
+	scaleIJ(h)
+end
+for _, list in { Config.SpeedCameras, Config.Ramps } do
+	for _, c in list :: { any } do
+		c.i *= MAP_SCALE
+		c.j *= MAP_SCALE
+	end
+end
+for _, b in Config.PursuitBreakers do
+	scaleIJ(b)
+end
+for _, r in Config.Races do
+	for _, p in r.route do
+		scaleIJ(p)
+	end
+	r.reward = math.floor(r.reward * 1.6)
+end
+for _, r in Config.Blacklist do
+	for _, p in r.route do
+		scaleIJ(p)
+	end
+end
+
+-- extra spots for the bigger city
+for _, h in { { 13, 3 }, { 3, 13 }, { 9, 14 }, { 14, 9 } } do
+	table.insert(Config.Blocks.HidingSpots, h)
+end
+for _, c in { { i = 9, j = 12, axis = "x" }, { i = 13, j = 5, axis = "z" }, { i = 2, j = 10, axis = "x" }, { i = 15, j = 13, axis = "z" } } do
+	table.insert(Config.SpeedCameras, c)
+end
+for _, b in { { 11, 13 }, { 13, 7 }, { 3, 11 }, { 9, 3 }, { 15, 11 }, { 5, 15 } } do
+	table.insert(Config.PursuitBreakers, b)
+end
+for _, r in { { i = 11, j = 16, axis = "x" }, { i = 16, j = 9, axis = "z" }, { i = 3, j = 7, axis = "x" }, { i = 13, j = 11, axis = "z" } } do
+	table.insert(Config.Ramps, r)
+end
+
+table.insert(Config.Races, {
+	id = "beltway_blitz",
+	name = "Beltway Blitz",
+	kind = "circuit",
+	route = { { 0, 0 }, { 8, 0 }, { 16, 0 }, { 16, 8 }, { 16, 16 }, { 8, 16 }, { 0, 16 }, { 0, 8 } },
+	laps = 1,
+	buyIn = 10000,
+	reward = 60000,
+	heat = 1.4,
+	rivals = 3,
+	rivalSpeed = 185,
+})
+table.insert(Config.Races, {
+	id = "suburb_scramble",
+	name = "Suburb Scramble",
+	kind = "sprint",
+	route = { { 2, 14 }, { 2, 10 }, { 5, 10 }, { 5, 13 }, { 8, 13 }, { 8, 11 }, { 11, 11 } },
+	laps = 1,
+	buyIn = 2000,
+	reward = 12000,
+	heat = 0.7,
+	rivals = 3,
+	rivalSpeed = 140,
+})
+table.insert(Config.Races, {
+	id = "dockyard_dash",
+	name = "Dockyard Dash",
+	kind = "sprint",
+	route = { { 12, 1 }, { 15, 1 }, { 15, 6 }, { 13, 6 }, { 13, 10 }, { 16, 10 } },
+	laps = 1,
+	buyIn = 4000,
+	reward = 20000,
+	heat = 0.9,
+	rivals = 3,
+	rivalSpeed = 160,
+})
+
+---------------------------------------------------------------------------
+-- Districts: what kind of buildings a block gets
+---------------------------------------------------------------------------
+function Config.District(bx: number, bz: number): string
+	local n = Config.Grid.Blocks
+	local cx = (bx + 0.5) / n * 2 - 1 -- -1..1
+	local cz = (bz + 0.5) / n * 2 - 1
+	local d = math.sqrt(cx * cx + cz * cz)
+	if bx >= n - 4 and d > 0.5 then
+		return "industrial" -- docks on the east side, by the ocean
+	elseif d < 0.3 then
+		return "downtown"
+	elseif d < 0.6 then
+		return "midtown"
+	end
+	return "suburb"
+end
+
+-- "signals" (traffic lights + crosswalks) in the dense districts, "stop" signs elsewhere,
+-- "plain" on the Beltway ring.
+function Config.IntersectionMode(i: number, j: number): string
+	local n = Config.Grid.Blocks
+	if i == 0 or j == 0 or i == n or j == n then
+		return "plain"
+	end
+	for _, b in { { i - 1, j - 1 }, { i, j - 1 }, { i - 1, j }, { i, j } } do
+		local d = Config.District(b[1], b[2])
+		if d == "downtown" or d == "midtown" then
+			return "signals"
+		end
+	end
+	return "stop"
+end
 
 return Config
 ]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000003"><Properties><string name="Name">Grid</string><ProtectedString name="Source"><![CDATA[--!strict
@@ -1142,7 +1306,7 @@ function Signals.Now(): number
 end
 
 return Signals
-]]></ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX00000000000000000000000000000021"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000013"><Properties><string name="Name">Server</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000006"><Properties><string name="Name">AIDriver</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX00000000000000000000000000000024"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000013"><Properties><string name="Name">Server</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000006"><Properties><string name="Name">AIDriver</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Server-side driver for AI cars (police and race rivals). Each AI has a `think` callback
 -- that picks a goal; AIDriver handles road-grid navigation, steering, unsticking and
 -- runs the shared arcade physics.
@@ -1814,9 +1978,10 @@ local function busStop(pos: Vector3, facing: Vector3)
 end
 
 -- Sidewalk ring, curb, trees and furniture around one city block.
-function Architecture.Sidewalks(c: Vector3, block: number, hasBusStop: boolean)
-	local walk = 14
-	local paving = rgb(168, 165, 158)
+function Architecture.Sidewalks(c: Vector3, block: number, hasBusStop: boolean, style: string?)
+	local kind = style or "city"
+	local walk = if kind == "suburb" then 8 elseif kind == "industrial" then 6 else 14
+	local paving = if kind == "industrial" then rgb(130, 128, 124) else rgb(168, 165, 158)
 	for _, s in { -1, 1 } do
 		deco({ Name = "Sidewalk", Size = Vector3.new(block, 0.04, walk), CFrame = CFrame.new(c.X, SURFACE + 0.02, c.Z + s * (block / 2 - walk / 2)), Color = paving, Material = Enum.Material.Pavement })
 		deco({ Name = "Sidewalk", Size = Vector3.new(walk, 0.04, block - walk * 2), CFrame = CFrame.new(c.X + s * (block / 2 - walk / 2), SURFACE + 0.02, c.Z), Color = paving, Material = Enum.Material.Pavement })
@@ -1825,7 +1990,10 @@ function Architecture.Sidewalks(c: Vector3, block: number, hasBusStop: boolean)
 	end
 	-- trees along each side (the street lamps sit in the middle of each side)
 	local inset = block / 2 - 6
-	for _, along in { -60, 60 } do
+	if kind == "industrial" then
+		return
+	end
+	for _, along in (if kind == "suburb" then { -85 } else { -60, 60 }) :: { number } do
 		tree(c + Vector3.new(along, 0, -inset))
 		tree(c + Vector3.new(along, 0, inset))
 		tree(c + Vector3.new(-inset, 0, along))
@@ -1835,6 +2003,9 @@ function Architecture.Sidewalks(c: Vector3, block: number, hasBusStop: boolean)
 	local corner = c + Vector3.new(inset - 4, 0, inset - 14)
 	deco({ Name = "Hydrant", Shape = Enum.PartType.Cylinder, Size = Vector3.new(2.4, 1, 1), CFrame = CFrame.new(corner.X, SURFACE + 1.2, corner.Z) * CFrame.Angles(0, 0, math.rad(90)), Color = rgb(190, 30, 30), Material = Enum.Material.Metal })
 	deco({ Name = "HydrantCap", Shape = Enum.PartType.Ball, Size = Vector3.new(1.1, 1.1, 1.1), CFrame = CFrame.new(corner.X, SURFACE + 2.5, corner.Z), Color = rgb(190, 30, 30), Material = Enum.Material.Metal })
+	if kind == "suburb" then
+		return
+	end
 	local bin = c + Vector3.new(-inset + 3, 0, inset - 30)
 	deco({ Name = "Bin", Size = Vector3.new(2, 3.2, 2), CFrame = CFrame.new(bin.X, SURFACE + 1.6, bin.Z), Color = rgb(40, 70, 50), Material = Enum.Material.Metal })
 	if hasBusStop then
@@ -1874,15 +2045,30 @@ local function trafficLight(corner: Vector3, armDir: Vector3, facing: Vector3, a
 	end
 end
 
-function Architecture.Intersection(c: Vector3, road: number, interior: boolean)
+local function stopSign(corner: Vector3, facing: Vector3)
+	local pos = Vector3.new(corner.X, SURFACE, corner.Z)
+	deco({ Name = "SignPost", Size = Vector3.new(0.3, 8, 0.3), CFrame = CFrame.new(pos + Vector3.new(0, 4, 0)), Color = rgb(150, 150, 155), Material = Enum.Material.Metal })
+	local cf = CFrame.lookAt(pos + Vector3.new(0, 8.5, 0), pos + Vector3.new(0, 8.5, 0) + facing)
+	-- two overlapping squares make an octagon
+	local a = deco({ Name = "StopSign", Size = Vector3.new(2.6, 2.6, 0.1), CFrame = cf, Color = rgb(190, 20, 25) })
+	deco({ Name = "StopSign", Size = Vector3.new(2.6, 2.6, 0.1), CFrame = cf * CFrame.Angles(0, 0, math.rad(45)), Color = rgb(190, 20, 25) })
+	local label = deco({ Name = "StopText", Size = Vector3.new(2.2, 0.9, 0.02), CFrame = cf * CFrame.new(0, 0, -0.07), Color = rgb(190, 20, 25), Transparency = 1 })
+	surfaceText(label, "STOP", rgb(255, 255, 255), false)
+	local _ = a
+end
+
+-- mode: "signals" (city: crosswalks + traffic lights), "stop" (stop signs) or "plain"
+function Architecture.Intersection(c: Vector3, road: number, mode: string)
 	local white = rgb(232, 232, 228)
 	for _, dir in { Vector3.xAxis, -Vector3.xAxis, Vector3.zAxis, -Vector3.zAxis } do
 		local across = dir:Cross(Vector3.yAxis)
 		local cw = c + dir * (road / 2 + 4)
-		for k = -2.5, 2.5 do
-			local p = cw + across * (k * 8.5)
-			local size = if dir.X ~= 0 then Vector3.new(6, 0.04, 3.2) else Vector3.new(3.2, 0.04, 6)
-			deco({ Name = "Crosswalk", Size = size, CFrame = CFrame.new(p.X, SURFACE + 0.03, p.Z), Color = white })
+		if mode == "signals" then
+			for k = -2.5, 2.5 do
+				local p = cw + across * (k * 8.5)
+				local size = if dir.X ~= 0 then Vector3.new(6, 0.04, 3.2) else Vector3.new(3.2, 0.04, 6)
+				deco({ Name = "Crosswalk", Size = size, CFrame = CFrame.new(p.X, SURFACE + 0.03, p.Z), Color = white })
+			end
 		end
 		-- stop line on the lanes approaching the intersection from this side
 		local travel = -dir
@@ -1891,7 +2077,13 @@ function Architecture.Intersection(c: Vector3, road: number, interior: boolean)
 		local size = if dir.X ~= 0 then Vector3.new(1.2, 0.04, road / 2 - 3) else Vector3.new(road / 2 - 3, 0.04, 1.2)
 		deco({ Name = "StopLine", Size = size, CFrame = CFrame.new(sl.X, SURFACE + 0.03, sl.Z), Color = white })
 	end
-	if interior then
+	if mode == "stop" then
+		local o = road / 2 + 3
+		stopSign(c + Vector3.new(o, 0, o), Vector3.zAxis)
+		stopSign(c + Vector3.new(-o, 0, -o), -Vector3.zAxis)
+		stopSign(c + Vector3.new(-o, 0, o), -Vector3.xAxis)
+		stopSign(c + Vector3.new(o, 0, -o), Vector3.xAxis)
+	elseif mode == "signals" then
 		local o = road / 2 + 3
 		-- traffic heading -Z (from +Z) drives on the +X side: pole on the (+X, +Z) corner
 		trafficLight(c + Vector3.new(o, 0, o), -Vector3.xAxis, Vector3.zAxis, "z")
@@ -1901,6 +2093,183 @@ function Architecture.Intersection(c: Vector3, road: number, interior: boolean)
 		trafficLight(c + Vector3.new(-o, 0, o), -Vector3.zAxis, -Vector3.xAxis, "x")
 		-- traffic heading -X (from +X) drives on the -Z side
 		trafficLight(c + Vector3.new(o, 0, -o), Vector3.zAxis, Vector3.xAxis, "x")
+	end
+end
+
+---------------------------------------------------------------------------
+-- Suburbs: detached houses with gable roofs, driveways and garages
+---------------------------------------------------------------------------
+local SIDING = { rgb(232, 226, 210), rgb(200, 214, 222), rgb(214, 200, 176), rgb(186, 204, 180), rgb(240, 236, 228), rgb(222, 190, 170), rgb(170, 180, 196) }
+local ROOFS = { rgb(70, 62, 60), rgb(110, 60, 45), rgb(60, 66, 76), rgb(90, 80, 70), rgb(140, 72, 50) }
+
+local function house(front: Vector3, n: Vector3)
+	-- `front` is the middle of the plot on the street side, `n` points at the street
+	local w = rng:NextNumber(30, 38)
+	local d = rng:NextNumber(24, 30)
+	local wallH = if rng:NextNumber() < 0.45 then 20 else 11
+	local center = front - n * (22 + d / 2)
+	local hcf = CFrame.lookAt(Vector3.new(center.X, SURFACE, center.Z), Vector3.new(center.X, SURFACE, center.Z) + n)
+	local siding = pick(SIDING)
+	local roofColor = pick(ROOFS)
+	local body = Instance.new("Part")
+	body.Name = "House"
+	body.Anchored = true
+	body.Size = Vector3.new(w, wallH, d)
+	body.CFrame = hcf * CFrame.new(0, wallH / 2, 0)
+	body.Color = siding
+	body.Material = if rng:NextNumber() < 0.5 then Enum.Material.WoodPlanks else Enum.Material.Plaster
+	body.TopSurface = Enum.SurfaceType.Smooth
+	body.Parent = buildings
+	-- gable roof: two wedges meeting at the ridge
+	local rh = rng:NextNumber(6, 9)
+	local roofMat = if rng:NextNumber() < 0.5 then Enum.Material.RoofShingles else Enum.Material.ClayRoofTiles
+	deco({ ClassName = nil, Name = "Roof", Size = Vector3.new(w + 2, rh, d / 2 + 1), CFrame = hcf * CFrame.new(0, wallH + rh / 2, -d / 4 - 0.5), Color = roofColor, Material = roofMat }, nil, "WedgePart")
+	deco({ Name = "Roof", Size = Vector3.new(w + 2, rh, d / 2 + 1), CFrame = hcf * CFrame.new(0, wallH + rh / 2, d / 4 + 0.5) * CFrame.Angles(0, math.pi, 0), Color = roofColor, Material = roofMat }, nil, "WedgePart")
+	-- chimney
+	if rng:NextNumber() < 0.5 then
+		deco({ Name = "Chimney", Size = Vector3.new(2.5, rh + 3, 2.5), CFrame = hcf * CFrame.new(w / 2 - 4, wallH + (rh + 3) / 2, 2), Color = rgb(130, 70, 55), Material = Enum.Material.Brick })
+	end
+	-- front: door, windows, garage
+	local faceZ = -d / 2 - 0.05
+	deco({ Name = "Door", Size = Vector3.new(3.4, 7, 0.2), CFrame = hcf * CFrame.new(-2, 3.5, faceZ), Color = pick({ rgb(120, 30, 30), rgb(40, 60, 90), rgb(60, 45, 35), rgb(30, 30, 32) }), Material = Enum.Material.Wood })
+	local lit = rng:NextNumber() < 0.6
+	for _, x in { -w / 2 + 5, 5 } do
+		local win = deco({ Name = "Window", Size = Vector3.new(4.5, 4, 0.2), CFrame = hcf * CFrame.new(x - 2, 5.5, faceZ), Color = rgb(60, 80, 96), Material = Enum.Material.Glass, Reflectance = 0.2 })
+		lightAtNight(win, lit, rgb(150, 120, 80))
+		deco({ Name = "Sill", Size = Vector3.new(5.2, 0.4, 0.5), CFrame = hcf * CFrame.new(x - 2, 3.3, faceZ - 0.2), Color = rgb(240, 240, 235) })
+		if wallH > 15 then
+			local up = deco({ Name = "Window", Size = Vector3.new(4.5, 4, 0.2), CFrame = hcf * CFrame.new(x - 2, 15, faceZ), Color = rgb(60, 80, 96), Material = Enum.Material.Glass, Reflectance = 0.2 })
+			lightAtNight(up, lit and rng:NextNumber() < 0.6, rgb(150, 120, 80))
+		end
+	end
+	local garageX = w / 2 - 6.5
+	deco({ Name = "GarageDoor", Size = Vector3.new(10, 8, 0.2), CFrame = hcf * CFrame.new(garageX, 4, faceZ), Color = rgb(235, 235, 230), Material = Enum.Material.SmoothPlastic })
+	-- driveway to the street and a porch step
+	local driveLen = 22 + 1
+	deco({ Name = "Driveway", Size = Vector3.new(11, 0.05, driveLen), CFrame = hcf * CFrame.new(garageX, 0.04, -d / 2 - driveLen / 2), Color = rgb(150, 148, 142), Material = Enum.Material.Concrete })
+	deco({ Name = "Path", Size = Vector3.new(3, 0.05, driveLen), CFrame = hcf * CFrame.new(-2, 0.04, -d / 2 - driveLen / 2), Color = rgb(170, 165, 155), Material = Enum.Material.Pavement })
+	-- a parked car-shaped block in some driveways would be heavy; a mailbox is cheap
+	deco({ Name = "Mailbox", Size = Vector3.new(0.9, 0.9, 1.6), CFrame = hcf * CFrame.new(-6, 3.6, -d / 2 - driveLen + 1.5), Color = rgb(50, 50, 55), Material = Enum.Material.Metal })
+	deco({ Name = "MailPost", Size = Vector3.new(0.25, 3.2, 0.25), CFrame = hcf * CFrame.new(-6, 1.6, -d / 2 - driveLen + 1.5), Color = rgb(110, 85, 60), Material = Enum.Material.Wood })
+	-- back yard tree
+	if rng:NextNumber() < 0.6 then
+		local t = hcf * CFrame.new(rng:NextNumber(-w / 2, w / 2), 0, d / 2 + 10)
+		local h = rng:NextNumber(8, 12)
+		deco({ Name = "Trunk", Shape = Enum.PartType.Cylinder, Size = Vector3.new(h, 1, 1), CFrame = CFrame.new(t.Position + Vector3.new(0, h / 2, 0)) * CFrame.Angles(0, 0, math.rad(90)), Color = rgb(88, 64, 46), Material = Enum.Material.Wood })
+		deco({ Name = "Canopy", Shape = Enum.PartType.Ball, Size = Vector3.new(11, 11, 11), CFrame = CFrame.new(t.Position + Vector3.new(0, h + 2, 0)), Color = pick({ rgb(52, 110, 50), rgb(66, 125, 58), rgb(80, 130, 60) }), Material = Enum.Material.LeafyGrass })
+	end
+end
+
+function Architecture.Suburb(c: Vector3, block: number)
+	local half = block / 2
+	for _, n in { Vector3.xAxis, -Vector3.xAxis, Vector3.zAxis, -Vector3.zAxis } do
+		local across = n:Cross(Vector3.yAxis)
+		for _, along in { -50, 50 } do
+			if rng:NextNumber() < 0.92 then
+				house(c + n * half + across * along, n)
+			end
+		end
+	end
+	-- back-yard fences dividing the lots
+	for _, s in { -1, 1 } do
+		deco({ Name = "Fence", Size = Vector3.new(0.4, 4, block - 90), CFrame = CFrame.new(c.X + s * 6, SURFACE + 2, c.Z), Color = rgb(150, 115, 80), Material = Enum.Material.WoodPlanks })
+	end
+end
+
+---------------------------------------------------------------------------
+-- Industrial port: warehouses, shipping containers, cranes and fuel tanks
+---------------------------------------------------------------------------
+local CONTAINER_COLORS = { rgb(170, 50, 40), rgb(40, 90, 150), rgb(60, 120, 70), rgb(200, 140, 40), rgb(120, 120, 125), rgb(150, 70, 30), rgb(30, 60, 90) }
+
+local function container(pos: Vector3, rotY: number)
+	local p = Instance.new("Part")
+	p.Name = "Container"
+	p.Anchored = true
+	p.Size = Vector3.new(8, 8.5, 20)
+	p.CFrame = CFrame.new(pos + Vector3.new(0, 4.25, 0)) * CFrame.Angles(0, rotY, 0)
+	p.Color = pick(CONTAINER_COLORS)
+	p.Material = Enum.Material.CorrodedMetal
+	p.Parent = buildings
+	-- ribbing
+	deco({ Name = "Rib", Size = Vector3.new(8.2, 0.3, 20.2), CFrame = p.CFrame * CFrame.new(0, 3, 0), Color = p.Color:Lerp(rgb(0, 0, 0), 0.25) })
+	deco({ Name = "Rib", Size = Vector3.new(8.2, 0.3, 20.2), CFrame = p.CFrame * CFrame.new(0, -3, 0), Color = p.Color:Lerp(rgb(0, 0, 0), 0.25) })
+end
+
+local function warehouse(center: Vector3, sx: number, sz: number, outward: Vector3)
+	local h = rng:NextNumber(24, 36)
+	local body = core(center.X, center.Z, sx, sz, SURFACE, SURFACE + h, pick({ rgb(150, 155, 160), rgb(120, 130, 140), rgb(170, 160, 140), rgb(90, 100, 110) }), Enum.Material.CorrodedMetal)
+	local _ = body
+	-- corrugated look: vertical ribs
+	facade(center.X, center.Z, sx, sz, SURFACE, SURFACE + h, { floorH = 999, bandH = 0, bay = 4, pierW = 0.4, depth = 0.25, color = rgb(110, 115, 120), material = Enum.Material.Metal, noBands = true })
+	-- shallow pitched roof
+	local ridgeAxisX = sx >= sz
+	local rw = if ridgeAxisX then sx else sz
+	local rd = if ridgeAxisX then sz else sx
+	local rot = if ridgeAxisX then 0 else math.rad(90)
+	local base = CFrame.new(center.X, SURFACE + h, center.Z) * CFrame.Angles(0, rot, 0)
+	deco({ Name = "Roof", Size = Vector3.new(rw + 1, 4, rd / 2 + 0.5), CFrame = base * CFrame.new(0, 2, -rd / 4), Color = rgb(95, 100, 105), Material = Enum.Material.Metal }, nil, "WedgePart")
+	deco({ Name = "Roof", Size = Vector3.new(rw + 1, 4, rd / 2 + 0.5), CFrame = base * CFrame.new(0, 2, rd / 4) * CFrame.Angles(0, math.pi, 0), Color = rgb(95, 100, 105), Material = Enum.Material.Metal }, nil, "WedgePart")
+	-- loading bays facing the street
+	local half = if outward.X ~= 0 then sx / 2 else sz / 2
+	local width = if outward.X ~= 0 then sz else sx
+	for k = -1, 1 do
+		local lateral = if outward.X ~= 0 then Vector3.new(0, 0, k * width / 3.5) else Vector3.new(k * width / 3.5, 0, 0)
+		deco({ Name = "LoadingDoor", Size = Vector3.new(12, 14, 0.3), CFrame = onFace(center + lateral, outward, half, SURFACE + 7, 0.1), Color = rgb(200, 170, 40), Material = Enum.Material.Metal })
+	end
+	local sign = deco({ Name = "WarehouseSign", Size = Vector3.new(math.min(width * 0.6, 40), 4, 0.3), CFrame = onFace(center, outward, half, SURFACE + h - 4, 0.2), Color = rgb(30, 40, 60) })
+	surfaceText(sign, pick({ "NEON BAY LOGISTICS", "HARBOR FREIGHT CO.", "PACIFIC SHIPPING", "DOCK 7", "COLD STORAGE" }), rgb(240, 240, 240), false)
+end
+
+local function crane(pos: Vector3)
+	local yellow = rgb(230, 175, 30)
+	for _, o in { Vector3.new(-12, 0, -8), Vector3.new(12, 0, -8), Vector3.new(-12, 0, 8), Vector3.new(12, 0, 8) } do
+		deco({ Name = "CraneLeg", Size = Vector3.new(2, 60, 2), CFrame = CFrame.new(pos + o + Vector3.new(0, 30, 0)), Color = yellow, Material = Enum.Material.Metal })
+	end
+	deco({ Name = "CraneBeam", Size = Vector3.new(4, 4, 90), CFrame = CFrame.new(pos + Vector3.new(0, 62, 20)), Color = yellow, Material = Enum.Material.Metal })
+	deco({ Name = "CraneCab", Size = Vector3.new(6, 5, 6), CFrame = CFrame.new(pos + Vector3.new(0, 57, 30)), Color = rgb(60, 60, 64), Material = Enum.Material.Metal })
+	local beacon = deco({ Name = "Beacon", Shape = Enum.PartType.Ball, Size = Vector3.new(1.2, 1.2, 1.2), CFrame = CFrame.new(pos + Vector3.new(0, 65, 64)), Color = rgb(255, 40, 30), Material = Enum.Material.Neon })
+	local _ = beacon
+end
+
+local function fuelTank(pos: Vector3)
+	deco({ Name = "FuelTank", Shape = Enum.PartType.Cylinder, Size = Vector3.new(18, 30, 30), CFrame = CFrame.new(pos + Vector3.new(0, 9, 0)) * CFrame.Angles(0, 0, math.rad(90)), Color = rgb(220, 222, 225), Material = Enum.Material.Metal })
+	local p = Instance.new("Part")
+	p.Name = "FuelTankCore"
+	p.Anchored = true
+	p.Transparency = 1
+	p.Size = Vector3.new(22, 18, 22)
+	p.CFrame = CFrame.new(pos + Vector3.new(0, 9, 0))
+	p.Parent = buildings
+end
+
+function Architecture.Industrial(c: Vector3, block: number, docks: boolean)
+	local roll = rng:NextNumber()
+	if roll < 0.55 then
+		-- two warehouses facing the east-west streets
+		warehouse(c + Vector3.new(0, 0, -50), block - 50, 80, -Vector3.zAxis)
+		warehouse(c + Vector3.new(0, 0, 55), block - 60, 70, Vector3.zAxis)
+	elseif roll < 0.8 then
+		-- container yard
+		for row = -2, 2 do
+			for col = -1, 1 do
+				if rng:NextNumber() < 0.8 then
+					local p = c + Vector3.new(col * 30, 0, row * 36)
+					container(p, 0)
+					if rng:NextNumber() < 0.45 then
+						container(p + Vector3.new(0, 8.5, 0), 0)
+					end
+				end
+			end
+		end
+	else
+		-- tank farm
+		for _, o in { Vector3.new(-45, 0, -45), Vector3.new(45, 0, -45), Vector3.new(-45, 0, 45), Vector3.new(45, 0, 45) } do
+			fuelTank(c + o)
+		end
+		warehouse(c, 60, 40, Vector3.xAxis)
+	end
+	if docks then
+		crane(c + Vector3.new(block / 2 - 30, 0, rng:NextNumber(-60, 60)))
 	end
 end
 
@@ -2745,6 +3114,7 @@ local raceEvent = remote("RemoteEvent", "RequestRace") :: RemoteEvent
 local respawnEvent = remote("RemoteEvent", "RespawnCar") :: RemoteEvent
 local rivalEvent = remote("RemoteEvent", "ChallengeRival") :: RemoteEvent
 local garageEvent = remote("RemoteEvent", "Garage") :: RemoteEvent
+local settingsEvent = remote("RemoteEvent", "SaveSettings") :: RemoteEvent
 local exitGarage: (s: Session.Session, respawn: boolean) -> ()
 local quitEvent = remote("RemoteEvent", "QuitRace") :: RemoteEvent
 local shopFunction = remote("RemoteFunction", "Shop") :: RemoteFunction
@@ -2948,6 +3318,27 @@ exitGarage = function(s: Session.Session, respawn: boolean)
 	end
 end
 
+local SETTING_TYPES: { [string]: string } = { shake = "boolean", speedLines = "boolean", blur = "boolean", units = "string", volume = "number", performance = "boolean" }
+settingsEvent.OnServerEvent:Connect(function(player, values)
+	local s = Session.Get(player)
+	if not s or type(values) ~= "table" then
+		return
+	end
+	local clean: { [string]: any } = {}
+	for k, t in SETTING_TYPES do
+		local v = values[k]
+		if type(v) == t then
+			if k == "volume" then
+				v = math.clamp(v, 0, 1)
+			elseif k == "units" and v ~= "mph" and v ~= "kmh" then
+				v = "mph"
+			end
+			clean[k] = v
+		end
+	end
+	s.profile.settings = clean
+end)
+
 garageEvent.OnServerEvent:Connect(function(player, action)
 	local s = Session.Get(player)
 	if not s then
@@ -3035,6 +3426,7 @@ local function snapshot(s: Session.Session)
 		blacklistBeaten = p.blacklistBeaten,
 		stats = p.stats,
 		milestones = p.milestones,
+		settings = p.settings,
 	}
 end
 
@@ -3338,14 +3730,59 @@ local function markings(mid: Vector3, alongX: boolean, segLen: number, folder: F
 	line(ROAD / 2 - 2.5, 0.5, white)
 end
 
+-- The outer ring road is the Neon Bay Beltway: extra lane lines, guard rails and sign gantries.
+local EXITS = { "DOWNTOWN", "HARBOR / DOCKS", "SUBURBS", "AIRPORT", "BEACH", "MIDTOWN" }
+local function freeway(mid: Vector3, alongX: boolean, segLen: number, outward: number, index: number, folder: Folder)
+	local function offset(o: number): Vector3
+		return if alongX then Vector3.new(0, 0, o) else Vector3.new(o, 0, 0)
+	end
+	local function size(len: number, h: number, w: number): Vector3
+		return if alongX then Vector3.new(len, h, w) else Vector3.new(w, h, len)
+	end
+	for _, o in { -15, 15 } do
+		local p = mid + offset(o)
+		anchored({ Name = "LaneLine", Size = size(segLen - 6, 0.04, 0.45), CFrame = CFrame.new(p.X, SURFACE + 0.02, p.Z), Color = Color3.fromRGB(225, 225, 225), Material = Enum.Material.SmoothPlastic, CanCollide = false, CanQuery = false }, folder)
+	end
+	local railPos = mid + offset(outward * (ROAD / 2 - 1))
+	for _, h in { 1.6, 2.6 } do
+		anchored({ Name = "GuardRail", Size = size(segLen, 0.45, 0.3), CFrame = CFrame.new(railPos.X, SURFACE + h, railPos.Z), Color = Color3.fromRGB(190, 192, 196), Material = Enum.Material.Metal, CanCollide = false, CanQuery = false }, folder)
+	end
+	if index % 3 == 1 then
+		local metal = Color3.fromRGB(120, 124, 130)
+		for _, o in { -ROAD / 2 + 1, ROAD / 2 - 1 } do
+			local p = mid + offset(o)
+			anchored({ Name = "GantryPost", Size = Vector3.new(1.2, 26, 1.2), CFrame = CFrame.new(p.X, SURFACE + 13, p.Z), Color = metal, Material = Enum.Material.Metal, CanCollide = false, CanQuery = false }, folder)
+		end
+		anchored({ Name = "GantryBeam", Size = size(1.2, 1.4, ROAD), CFrame = CFrame.new(mid.X, SURFACE + 25, mid.Z), Color = metal, Material = Enum.Material.Metal, CanCollide = false, CanQuery = false }, folder)
+		for _, facing in { 1, -1 } do
+			local dir = if alongX then Vector3.new(facing, 0, 0) else Vector3.new(0, 0, facing)
+			local signPos = Vector3.new(mid.X, SURFACE + 21, mid.Z) - dir * 0.8
+			local sign = anchored({ Name = "HighwaySign", Size = Vector3.new(22, 7, 0.4), CFrame = CFrame.lookAt(signPos, signPos - dir), Color = Color3.fromRGB(20, 110, 55), Material = Enum.Material.SmoothPlastic, CanCollide = false, CanQuery = false }, folder)
+			local gui = Instance.new("SurfaceGui")
+			gui.Face = Enum.NormalId.Front
+			gui.LightInfluence = 0.4
+			local t = Instance.new("TextLabel")
+			t.BackgroundTransparency = 1
+			t.Size = UDim2.fromScale(1, 1)
+			t.Text = "BELTWAY  -  EXIT " .. (index + 1) .. "\n" .. EXITS[(index % #EXITS) + 1]
+			t.TextScaled = true
+			t.Font = Enum.Font.GothamBold
+			t.TextColor3 = Color3.fromRGB(245, 245, 245)
+			t.Parent = gui
+			gui.Parent = sign
+		end
+	end
+end
+
 local function buildRoads(folder: Folder)
 	local N = Grid.Size
 	local asphalt = Color3.fromRGB(58, 58, 61)
 	local segLen = Grid.Cell - ROAD
 	for i = 0, N do
+		task.wait()
 		for j = 0, N do
 			local c = Grid.Intersection(i, j)
-			Architecture.Intersection(c, ROAD, i > 0 and i < N and j > 0 and j < N)
+			Architecture.Intersection(c, ROAD, Config.IntersectionMode(i, j))
 			anchored({
 				Name = "Intersection",
 				Size = Vector3.new(ROAD, 1, ROAD),
@@ -3363,6 +3800,9 @@ local function buildRoads(folder: Folder)
 					Material = Enum.Material.Asphalt,
 				}, folder)
 				markings(mid, true, segLen, folder)
+				if j == 0 or j == N then
+					freeway(mid, true, segLen, if j == 0 then -1 else 1, i, folder)
+				end
 			end
 			if j < N then
 				local mid = Grid.SegmentMid(i, j, "z")
@@ -3374,6 +3814,9 @@ local function buildRoads(folder: Folder)
 					Material = Enum.Material.Asphalt,
 				}, folder)
 				markings(mid, false, segLen, folder)
+				if i == 0 or i == N then
+					freeway(mid, false, segLen, if i == 0 then -1 else 1, j, folder)
+				end
 			end
 		end
 	end
@@ -3424,28 +3867,95 @@ local function streetLight(pos: Vector3, toRoad: Vector3, props: Folder)
 	table.insert(nightNeon, lamp)
 end
 
+local DISTRICT_FLOOR = {
+	downtown = { color = Color3.fromRGB(118, 116, 112), material = Enum.Material.Concrete },
+	midtown = { color = Color3.fromRGB(118, 116, 112), material = Enum.Material.Concrete },
+	suburb = { color = Color3.fromRGB(78, 118, 62), material = Enum.Material.Grass },
+	industrial = { color = Color3.fromRGB(96, 96, 98), material = Enum.Material.Concrete },
+}
+
 local function cityBlock(bx: number, bz: number, ground: Folder, props: Folder)
 	local c = Grid.BlockCenter(bx, bz)
+	local district = Config.District(bx, bz)
+	local floor = DISTRICT_FLOOR[district]
 	anchored({
 		Name = "Block",
 		Size = Vector3.new(BLOCK, 1, BLOCK),
 		CFrame = CFrame.new(c.X, SURFACE - 0.5, c.Z),
-		Color = Color3.fromRGB(118, 116, 112),
-		Material = Enum.Material.Concrete,
+		Color = floor.color,
+		Material = floor.material,
 	}, ground)
-	-- buildings get taller towards downtown
-	local downtown = 1 - math.clamp(Vector3.new(c.X, 0, c.Z).Magnitude / Grid.Half, 0, 1)
+	local edge = BLOCK / 2 - 3
+	if district == "suburb" then
+		Architecture.Suburb(c, BLOCK)
+		Architecture.Sidewalks(c, BLOCK, false, "suburb")
+		streetLight(c + Vector3.new(0, 0, -edge), -Vector3.zAxis, props)
+		streetLight(c + Vector3.new(0, 0, edge), Vector3.zAxis, props)
+		return
+	elseif district == "industrial" then
+		Architecture.Industrial(c, BLOCK, bx == Grid.Size - 1)
+		Architecture.Sidewalks(c, BLOCK, false, "industrial")
+		streetLight(c + Vector3.new(-edge, 0, 0), -Vector3.xAxis, props)
+		streetLight(c + Vector3.new(edge, 0, 0), Vector3.xAxis, props)
+		return
+	end
+	-- downtown gets towers (taller towards the centre), midtown mostly brick, offices and shops
+	local d = Vector3.new(c.X, 0, c.Z).Magnitude / Grid.Half
+	local downtown = if district == "downtown" then 0.6 + (1 - math.clamp(d / 0.3, 0, 1)) * 0.4 else 0.3
 	for _, ox in { -1, 1 } do
 		for _, oz in { -1, 1 } do
 			Architecture.Lot(c + Vector3.new(ox * 57, 0, oz * 57), { Vector3.new(ox, 0, 0), Vector3.new(0, 0, oz) }, downtown)
 		end
 	end
 	Architecture.Sidewalks(c, BLOCK, rng:NextNumber() < 0.3)
-	local edge = BLOCK / 2 - 3
 	streetLight(c + Vector3.new(0, 0, -edge), -Vector3.zAxis, props)
 	streetLight(c + Vector3.new(0, 0, edge), Vector3.zAxis, props)
 	streetLight(c + Vector3.new(-edge, 0, 0), -Vector3.xAxis, props)
 	streetLight(c + Vector3.new(edge, 0, 0), Vector3.xAxis, props)
+end
+
+-- Terrain around the city: ocean and beaches to the east and south, hills and mountains to the
+-- north and west.
+local function buildTerrain()
+	local terrain = workspace.Terrain
+	local H = Grid.Half
+	local wall = H + ROAD / 2 + 8
+	local far = 1400
+	terrain.WaterColor = Color3.fromRGB(18, 70, 90)
+	terrain.WaterTransparency = 0.25
+	terrain.WaterReflectance = 0.6
+	terrain.WaterWaveSize = 0.35
+	terrain.WaterWaveSpeed = 8
+	local function fill(minV: Vector3, maxV: Vector3, material: Enum.Material)
+		local size = maxV - minV
+		terrain:FillBlock(CFrame.new((minV + maxV) / 2), size, material)
+	end
+	-- land ring (north + west) with grass
+	fill(Vector3.new(-wall - far, -12, -wall - far), Vector3.new(wall + 170, 0, -wall), Enum.Material.Grass)
+	fill(Vector3.new(-wall - far, -12, -wall), Vector3.new(-wall, 0, wall + 170), Enum.Material.Grass)
+	-- beaches
+	fill(Vector3.new(wall, -12, -wall - far), Vector3.new(wall + 170, 0, wall + 170), Enum.Material.Sand)
+	fill(Vector3.new(-wall - far, -12, wall), Vector3.new(wall + 170, 0, wall + 170), Enum.Material.Sand)
+	-- sea bed and water
+	fill(Vector3.new(wall + 170, -44, -wall - far), Vector3.new(wall + far + 400, -30, wall + far + 400), Enum.Material.Sand)
+	fill(Vector3.new(-wall - far, -44, wall + 170), Vector3.new(wall + 170, -30, wall + far + 400), Enum.Material.Sand)
+	fill(Vector3.new(wall + 170, -30, -wall - far), Vector3.new(wall + far + 400, -2, wall + far + 400), Enum.Material.Water)
+	fill(Vector3.new(-wall - far, -30, wall + 170), Vector3.new(wall + 170, -2, wall + far + 400), Enum.Material.Water)
+	-- hills close by, mountains further out
+	local trng = Random.new(5)
+	for _ = 1, 26 do
+		local side = trng:NextNumber()
+		local along = trng:NextNumber(-wall - far, wall)
+		local dist = trng:NextNumber(260, far - 200)
+		local pos = if side < 0.5 then Vector3.new(along, 0, -wall - dist) else Vector3.new(-wall - dist, 0, along)
+		local mountain = dist > 700
+		local r = if mountain then trng:NextNumber(260, 480) else trng:NextNumber(90, 200)
+		local y = if mountain then -r * 0.35 else -r * 0.6
+		terrain:FillBall(pos + Vector3.new(0, y, 0), r, if mountain then Enum.Material.Rock else Enum.Material.Grass)
+		if mountain then
+			terrain:FillBall(pos + Vector3.new(0, y + r * 0.55, 0), r * 0.45, Enum.Material.Snow)
+		end
+	end
 end
 
 local function safehouse(bx: number, bz: number, buildings: Folder, props: Folder, ground: Folder): (Vector3, { CFrame })
@@ -3727,7 +4237,7 @@ function MapBuilder.Build(): MapInfo
 	local H = Grid.Half
 	anchored({
 		Name = "Base",
-		Size = Vector3.new(H * 2 + 600, 2, H * 2 + 600),
+		Size = Vector3.new(H * 2 + 120, 2, H * 2 + 120),
 		CFrame = CFrame.new(0, SURFACE - 1.1, 0),
 		Color = Color3.fromRGB(30, 45, 35),
 		Material = Enum.Material.Grass,
@@ -3782,7 +4292,9 @@ function MapBuilder.Build(): MapInfo
 		return nil
 	end
 
+	buildTerrain()
 	for bx = 0, Grid.Size - 1 do
+		task.wait() -- building ~50k parts: yield between rows so the server never times out
 		for bz = 0, Grid.Size - 1 do
 			local kind = isSpecial(bx, bz)
 			if kind == "safehouse" then
@@ -3900,6 +4412,7 @@ export type Profile = {
 	blacklistBeaten: number, -- how many rivals beaten (rank 5 first)
 	stats: { [string]: number }, -- milestone stats
 	milestones: { [string]: boolean }, -- completed milestone ids
+	settings: { [string]: any }, -- client settings (camera shake, units, volume...)
 }
 
 local STORE_NAME = "WantedUnbound_v1"
@@ -3931,6 +4444,7 @@ local function default(): Profile
 		blacklistBeaten = 0,
 		stats = {},
 		milestones = {},
+		settings = {},
 	}
 end
 
@@ -4278,6 +4792,7 @@ local function spawnCop(pos: Vector3, look: Vector3, heavy: boolean, mode: strin
 	end
 	local p = Vector3.new(pos.X, Grid.RoadY + root.Size.Y / 2 + 0.5, pos.Z)
 	model:PivotTo(CFrame.lookAt(p, p + flat.Unit))
+	model.ModelStreamingMode = Enum.ModelStreamingMode.Persistent -- visible on the radar city-wide
 	model.Parent = policeFolder
 	local ai = AIDriver.Add(model, copStats(heavy), "cop", copThink)
 	ai.data.mode = mode
@@ -4536,6 +5051,7 @@ local function spawnRoadblock(s: Session.Session)
 		local pos = center + across * off + Vector3.new(0, croot.Size.Y / 2 + 0.5, 0)
 		cop:PivotTo(CFrame.lookAt(pos, pos + across))
 		croot.Anchored = true
+		cop.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
 		cop.Parent = model
 		local smashed = false
 		croot.Touched:Connect(function(hit)
@@ -4622,6 +5138,7 @@ local function spawnHeli(s: Session.Session)
 	model.PrimaryPart = body
 	body.CFrame = CFrame.new(pos + Vector3.new(200, 130, 200))
 	model:SetAttribute("Owner", s.player.UserId)
+	model.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
 	model.Parent = policeFolder
 	helis[s.player] = model
 	s.heli = model
@@ -5219,6 +5736,7 @@ function Races.Start(s: Session.Session, def: Config.RaceDef, rival: Config.Riva
 		})
 		local cf = slot(slotOrder[k])
 		model:PivotTo(Vehicles.GroundCFrame(cf, model))
+		model.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
 		model.Parent = folder
 		local root = model.PrimaryPart :: BasePart
 		root.Anchored = true
@@ -5875,7 +6393,12 @@ local function think(ai: AIDriver.AI, dt: number)
 	-- stop at red lights (and at yellow when there's room to stop) before the stop line
 	local redLight = false
 	local toI, toJ = d.to[1], d.to[2]
-	if toI > 0 and toI < Grid.Size and toJ > 0 and toJ < Grid.Size then
+	local mode = Config.IntersectionMode(toI, toJ)
+	if mode == "stop" and d.segLen - t < 60 then
+		-- stop sign: slow right down before rolling through
+		ai.state.speedMult = math.min(mult, 0.35)
+	end
+	if mode == "signals" then
 		local toGo = d.segLen - t
 		local speed = math.max(ai.state.speed, 0)
 		local stopAt = 41
@@ -5928,6 +6451,7 @@ local function spawnOne()
 			local p = Vector3.new(pos.X, Grid.RoadY + root.Size.Y / 2 + 0.4, pos.Z)
 			model:PivotTo(CFrame.lookAt(p, p + dir))
 			model:SetAttribute("Civilian", true)
+			model.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
 			model.Parent = folder
 			local cruise = math.random(T.Speed[1], T.Speed[2])
 			local ai = AIDriver.Add(model, {
@@ -6108,6 +6632,12 @@ function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 	car:SetAttribute("CarName", def.name)
 	Vehicles.WriteStats(car, stats)
 	local root = car.PrimaryPart :: BasePart
+	-- streaming: the owner must always have their car, and the ground where it lands
+	car.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
+	local target = if s.inGarage then Showroom.CarCFrame.Position else (ground :: CFrame).Position
+	pcall(function()
+		s.player:RequestStreamAroundAsync(target, 4)
+	end)
 	if s.inGarage then
 		-- parked on the showroom turntable while the garage menu is open
 		car:PivotTo(Showroom.CarCFrame + Vector3.new(0, root.Size.Y / 2, 0))
@@ -6175,7 +6705,7 @@ function Vehicles.Freeze(s: Session.Session, seconds: number)
 end
 
 return Vehicles
-]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX00000000000000000000000000000022"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX0000000000000000000000000000001D"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="Folder" referent="RBX0000000000000000000000000000001C"><Properties><string name="Name">Client</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000014"><Properties><string name="Name">CarVisuals</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX00000000000000000000000000000025"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX00000000000000000000000000000020"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="Folder" referent="RBX0000000000000000000000000000001F"><Properties><string name="Name">Client</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000014"><Properties><string name="Name">CarVisuals</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Local visual effects for every car near the camera: spinning wheels, front wheels steering,
 -- headlights at night, and brake / reverse lights on your own car.
 
@@ -6424,6 +6954,7 @@ local UserInputService = game:GetService("UserInputService")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local CarPhysics = require(Shared:WaitForChild("CarPhysics"))
 local Config = require(Shared:WaitForChild("Config"))
+local Settings = require(script.Parent.Settings)
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local NitroState = Remotes:WaitForChild("NitroState") :: RemoteEvent
 local RespawnCar = Remotes:WaitForChild("RespawnCar") :: RemoteEvent
@@ -6466,6 +6997,8 @@ local sentNitro = false
 local camPos: Vector3? = nil
 local lastSpeed = 0
 local lastThrottle = 0
+local smoothSteer = 0
+local smoothThrottle = 0
 local nearTrack: { [Model]: { min: number, rel: number, speed: number } } = setmetatable({}, { __mode = "k" }) :: any
 local lastNearMiss = 0
 local camLook: Vector3? = nil
@@ -6600,6 +7133,12 @@ RunService.PreSimulation:Connect(function(dt: number)
 	if math.abs(keySteer) > math.abs(steer) then
 		steer = keySteer
 	end
+	-- smooth the inputs: keyboard steering ramps in and recentres quickly, like a real rack
+	local steerRate = if math.abs(steer) < math.abs(smoothSteer) or steer * smoothSteer < 0 then 9 else 5.5
+	smoothSteer += (steer - smoothSteer) * math.min(1, dt * steerRate)
+	steer = smoothSteer
+	smoothThrottle += (throttle - smoothThrottle) * math.min(1, dt * 10)
+	throttle = smoothThrottle
 
 	local capacity = stat(car, "nitroCapacity", 1)
 	Drive.NitroCapacity = capacity
@@ -6810,6 +7349,9 @@ RunService:BindToRenderStep("WU_ChaseCam", Enum.RenderPriority.Camera.Value + 1,
 	-- camera shake: crashes, top speed and nitro
 	Drive.Shake = math.max(0, Drive.Shake - dt * 2.5)
 	local shake = Drive.Shake * 1.2 + math.clamp((speed - 120) / 400, 0, 0.18) + (if Drive.NitroOn then 0.15 else 0)
+	if not Settings.Values.shake then
+		shake = 0
+	end
 	if shake > 0.001 then
 		local t = os.clock() * 18
 		finalPos += Vector3.new(math.noise(t, 0.3) * shake, math.noise(0.7, t) * shake, math.noise(t, 1.9) * shake * 0.5)
@@ -6839,6 +7381,7 @@ local BannerEvent = Remotes:WaitForChild("Banner") :: RemoteEvent
 local Drive = require(script.Parent.DriveController)
 local HUD = require(script.Parent.HUD)
 local Sounds = require(script.Parent.Sounds)
+local Settings = require(script.Parent.Settings)
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -7113,7 +7656,7 @@ RunService.RenderStepped:Connect(function(dt: number)
 	if nitro then
 		intensity = math.max(intensity, 0.8)
 	end
-	if Drive.MenuOpen then
+	if Drive.MenuOpen or not Settings.Values.speedLines or Settings.Values.performance then
 		intensity = 0
 	end
 
@@ -7137,7 +7680,7 @@ RunService.RenderStepped:Connect(function(dt: number)
 	end
 
 	-- nitro blur + grading
-	local blurTarget = if nitro then 5 else intensity * 2
+	local blurTarget = if not Settings.Values.blur then 0 elseif nitro then 5 else intensity * 2
 	blur.Size += (blurTarget - blur.Size) * math.min(1, dt * 6)
 	local satTarget = if nitro then 0.3 else 0
 	grade.Saturation += (satTarget - grade.Saturation) * math.min(1, dt * 5)
@@ -7148,7 +7691,146 @@ RunService.RenderStepped:Connect(function(dt: number)
 end)
 
 return Effects
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000017"><Properties><string name="Name">Garage</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000017"><Properties><string name="Name">FullMap</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Full-screen city map (press M): districts, roads, races with names, hiding spots, the
+-- safehouse, police and your car.
+
+local ContextActionService = game:GetService("ContextActionService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local MapDraw = require(script.Parent.MapDraw)
+local Drive = require(script.Parent.DriveController)
+local Sounds = require(script.Parent.Sounds)
+
+local player = Players.LocalPlayer
+local FullMap = {}
+FullMap.Open = false
+
+local function new(className: string, props: { [string]: any }, parent: Instance?): any
+	local inst = Instance.new(className)
+	for k, v in props do
+		(inst :: any)[k] = v
+	end
+	if parent then
+		inst.Parent = parent
+	end
+	return inst
+end
+
+local gui = new("ScreenGui", { Name = "WantedUnboundMap", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 15, Enabled = false }, player:WaitForChild("PlayerGui"))
+new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.35, BorderSizePixel = 0 }, gui)
+
+local PANEL = 640
+local panel = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(PANEL, PANEL),
+	BackgroundColor3 = Color3.fromRGB(10, 10, 16),
+	ClipsDescendants = true,
+}, gui)
+new("UICorner", { CornerRadius = UDim.new(0, 14) }, panel)
+new("UIStroke", { Color = Color3.fromRGB(255, 40, 160), Thickness = 3 }, panel)
+new("UIAspectRatioConstraint", { AspectRatio = 1 }, panel)
+new("UISizeConstraint", { MaxSize = Vector2.new(PANEL, PANEL) }, panel)
+
+local canvas: Frame = new("Frame", { Name = "Canvas", BackgroundTransparency = 1 }, panel)
+local total = MapDraw.WorldSize + MapDraw.Margin * 2
+local px = MapDraw.Draw(canvas, PANEL / total, true)
+
+new("TextLabel", {
+	Position = UDim2.fromOffset(16, 10),
+	Size = UDim2.fromOffset(360, 30),
+	BackgroundTransparency = 1,
+	Text = "NEON BAY",
+	TextScaled = true,
+	Font = Enum.Font.GothamBlack,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = Color3.fromRGB(0, 240, 255),
+	TextStrokeTransparency = 0.3,
+	ZIndex = 10,
+}, panel)
+new("TextLabel", {
+	AnchorPoint = Vector2.new(0, 1),
+	Position = UDim2.new(0, 16, 1, -10),
+	Size = UDim2.new(1, -32, 0, 18),
+	BackgroundTransparency = 1,
+	Text = "S safehouse    H hiding spot    R race    red dot = pursuit breaker    gold = Beltway    [M] close",
+	TextScaled = true,
+	Font = Enum.Font.GothamBold,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = Color3.fromRGB(220, 220, 230),
+	TextStrokeTransparency = 0.3,
+	ZIndex = 10,
+}, panel)
+
+local me = new("TextLabel", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Size = UDim2.fromOffset(22, 22),
+	BackgroundTransparency = 1,
+	Text = "▲",
+	TextScaled = true,
+	Font = Enum.Font.GothamBlack,
+	TextColor3 = Color3.fromRGB(0, 240, 255),
+	TextStrokeTransparency = 0,
+	ZIndex = 12,
+}, canvas)
+local copDots: { Frame } = {}
+
+function FullMap.Toggle(open: boolean?)
+	local want = if open == nil then not FullMap.Open else open
+	FullMap.Open = want
+	gui.Enabled = want
+	Sounds.Tick(if want then 1.1 else 0.9, 0.4)
+end
+
+ContextActionService:BindAction("WU_Map", function(_, state)
+	if state == Enum.UserInputState.Begin then
+		FullMap.Toggle()
+	end
+	return Enum.ContextActionResult.Sink
+end, false, Enum.KeyCode.M)
+
+RunService.RenderStepped:Connect(function()
+	if not FullMap.Open then
+		return
+	end
+	local car = Drive.Car
+	local root = car and car.PrimaryPart
+	if root then
+		local p = px(root.Position)
+		me.Position = UDim2.fromOffset(p.X, p.Y)
+		local look = root.CFrame.LookVector
+		me.Rotation = math.deg(math.atan2(look.X, -look.Z))
+	end
+	local used = 0
+	local police = workspace:FindFirstChild("Police")
+	if police then
+		for _, m in police:GetChildren() do
+			if m:IsA("Model") and m.PrimaryPart and m.Name ~= "Roadblock" then
+				used += 1
+				local d = copDots[used]
+				if not d then
+					d = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(7, 7), BorderSizePixel = 0, ZIndex = 11 }, canvas)
+					copDots[used] = d
+				end
+				local p = px(m.PrimaryPart.Position)
+				d.Position = UDim2.fromOffset(p.X, p.Y)
+				d.BackgroundColor3 = if math.floor(os.clock() * 5) % 2 == 0 then Color3.fromRGB(255, 60, 60) else Color3.fromRGB(70, 140, 255)
+				d.Visible = true
+			end
+		end
+	end
+	for k = used + 1, #copDots do
+		copDots[k].Visible = false
+	end
+end)
+
+local _ = Config
+return FullMap
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000018"><Properties><string name="Name">Garage</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Safehouse garage: buy / select cars, Unbound-style tuning (performance parts, handling,
 -- visuals), driving effects and the Blacklist.
 
@@ -7698,7 +8380,7 @@ function Garage.Toggle(open: boolean?)
 end
 
 return Garage
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000018"><Properties><string name="Name">HUD</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000019"><Properties><string name="Name">HUD</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Heads-up display: speedometer + nitro, heat stars and pursuit meters, cash, race panel,
 -- drift combo, minimap, notifications and context prompts.
 
@@ -7708,7 +8390,8 @@ local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
-local Grid = require(Shared:WaitForChild("Grid"))
+local MapDraw = require(script.Parent.MapDraw)
+local Settings = require(script.Parent.Settings)
 
 local player = Players.LocalPlayer
 
@@ -7781,7 +8464,7 @@ local speedo = new("Frame", {
 corner(speedo, 14)
 new("UIStroke", { Color = CYAN, Thickness = 2, Transparency = 0.3 }, speedo)
 local speedLabel = label({ Position = UDim2.fromOffset(10, 4), Size = UDim2.new(1, -80, 0, 70), Text = "0", TextXAlignment = Enum.TextXAlignment.Right }, speedo)
-label({ Position = UDim2.new(1, -68, 0, 34), Size = UDim2.fromOffset(60, 30), Text = "MPH", TextColor3 = CYAN, Font = FONT2 }, speedo)
+local unitLabel = label({ Position = UDim2.new(1, -68, 0, 34), Size = UDim2.fromOffset(60, 30), Text = "MPH", TextColor3 = CYAN, Font = FONT2 }, speedo)
 local carNameLabel = label({ Position = UDim2.fromOffset(12, 74), Size = UDim2.new(1, -24, 0, 16), Text = "", Font = FONT2, TextColor3 = Color3.fromRGB(190, 190, 210), TextXAlignment = Enum.TextXAlignment.Left }, speedo)
 -- tachometer + gear
 local gearLabel = label({ Position = UDim2.fromOffset(12, 10), Size = UDim2.fromOffset(44, 50), Text = "1", TextColor3 = Color3.fromRGB(255, 200, 60), TextXAlignment = Enum.TextXAlignment.Left }, speedo)
@@ -8015,71 +8698,28 @@ local _ = controlsLabel
 -- Minimap (bottom left)
 ---------------------------------------------------------------------------
 local MAP_PX = 210
-local worldSize = Grid.Half * 2 + Config.Grid.RoadWidth
-local scale = MAP_PX / worldSize
+local RADAR_RANGE = 1200 -- studs shown across the radar
+local scale = MAP_PX / RADAR_RANGE
 local minimap = new("Frame", {
 	AnchorPoint = Vector2.new(0, 1),
 	Position = UDim2.new(0, 16, 1, -20),
 	Size = UDim2.fromOffset(MAP_PX, MAP_PX),
 	BackgroundColor3 = Color3.fromRGB(12, 12, 20),
-	BackgroundTransparency = 0.2,
+	BackgroundTransparency = 0.1,
 	ClipsDescendants = true,
 }, gui)
-corner(minimap, 12)
-new("UIStroke", { Color = PINK, Thickness = 2, Transparency = 0.3 }, minimap)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, minimap)
+new("UIStroke", { Color = PINK, Thickness = 3, Transparency = 0.2 }, minimap)
+-- the radar canvas holds the whole city; it slides so your car stays in the middle
+local canvas: Frame = new("Frame", { Name = "Canvas", BackgroundTransparency = 1 }, minimap)
+local canvasPx = MapDraw.Draw(canvas, scale, false)
 
 local function toMap(pos: Vector3): UDim2
-	return UDim2.fromOffset((pos.X + worldSize / 2) * scale, (pos.Z + worldSize / 2) * scale)
+	local p = canvasPx(pos)
+	return UDim2.fromOffset(p.X, p.Y)
 end
+label({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 4), Size = UDim2.fromOffset(20, 14), Text = "N", Font = FONT2, TextColor3 = Color3.new(1, 1, 1), ZIndex = 8 }, minimap)
 
-local roadPx = math.max(2, Config.Grid.RoadWidth * scale)
-for i = 0, Grid.Size do
-	local p = Grid.Intersection(i, 0)
-	new("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.fromOffset((p.X + worldSize / 2) * scale, 0),
-		Size = UDim2.new(0, roadPx, 1, 0),
-		BackgroundColor3 = Color3.fromRGB(70, 70, 90),
-		BorderSizePixel = 0,
-	}, minimap)
-	local q = Grid.Intersection(0, i)
-	new("Frame", {
-		AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.fromOffset(0, (q.Z + worldSize / 2) * scale),
-		Size = UDim2.new(1, 0, 0, roadPx),
-		BackgroundColor3 = Color3.fromRGB(70, 70, 90),
-		BorderSizePixel = 0,
-	}, minimap)
-end
-
-local function staticDot(pos: Vector3, color: Color3, size: number, text: string?)
-	local d = new("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = toMap(pos),
-		Size = UDim2.fromOffset(size, size),
-		BackgroundColor3 = color,
-		ZIndex = 2,
-	}, minimap)
-	corner(d, size)
-	if text then
-		label({ Size = UDim2.fromScale(1, 1), Text = text, ZIndex = 3, TextStrokeTransparency = 1, TextColor3 = Color3.new(0, 0, 0) }, d)
-	end
-end
-
-local sh = Config.Blocks.Safehouse
-staticDot(Grid.BlockCenter(sh[1], sh[2]), Color3.fromRGB(0, 255, 200), 14, "S")
-for _, h in Config.Blocks.HidingSpots do
-	staticDot(Grid.BlockCenter(h[1], h[2]), Color3.fromRGB(80, 255, 120), 9, "H")
-end
-for _, b in Config.PursuitBreakers do
-	staticDot(Grid.Intersection(b[1], b[2]) + Vector3.new(36, 0, 36), Color3.fromRGB(255, 70, 70), 7)
-end
-for _, r in Config.Races do
-	local p = r.route[1]
-	staticDot(Grid.Intersection(p[1], p[2]), if r.kind == "drift" then Color3.fromRGB(255, 140, 0) else PINK, 10, "R")
-end
-
-local dynamic = new("Folder", { Name = "Dynamic" }, minimap)
 local dotPool: { Frame } = {}
 local dotsUsed = 0
 
@@ -8087,7 +8727,7 @@ local function dot(pos: Vector3, color: Color3, size: number)
 	dotsUsed += 1
 	local d = dotPool[dotsUsed]
 	if not d then
-		local nd: Frame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 4 }, dynamic)
+		local nd: Frame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 7 }, canvas)
 		corner(nd, 10)
 		dotPool[dotsUsed] = nd
 		d = nd
@@ -8103,7 +8743,7 @@ local arrow = label({
 	Size = UDim2.fromOffset(18, 18),
 	Text = "▲",
 	TextColor3 = CYAN,
-	ZIndex = 6,
+	ZIndex = 9,
 	TextStrokeTransparency = 0,
 }, minimap)
 
@@ -8118,7 +8758,9 @@ end
 local blink = 0
 function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, nitroOn: boolean, car: Model?)
 	blink += dt
-	speedLabel.Text = tostring(math.floor(speed * Config.MphPerStud))
+	local shown, unit = Settings.Speed(speed, Config.MphPerStud)
+	speedLabel.Text = tostring(math.floor(shown))
+	unitLabel.Text = unit
 	nitroFill.Size = UDim2.fromScale(math.clamp(nitro / math.max(capacity, 0.01), 0, 1), 1)
 	nitroFill.BackgroundColor3 = if nitroOn then Color3.fromRGB(255, 255, 255) else CYAN
 	if car then
@@ -8259,7 +8901,9 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	end
 	if car and car.PrimaryPart then
 		local cf = car.PrimaryPart.CFrame
-		arrow.Position = toMap(cf.Position)
+		local p = canvasPx(cf.Position)
+		canvas.Position = UDim2.fromOffset(MAP_PX / 2 - p.X, MAP_PX / 2 - p.Y)
+		arrow.Position = UDim2.fromScale(0.5, 0.5)
 		local look = cf.LookVector
 		arrow.Rotation = math.deg(math.atan2(look.X, -look.Z))
 		arrow.Visible = true
@@ -8269,7 +8913,7 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 end
 
 return HUD
-]]></ProtectedString></Properties></Item><Item class="LocalScript" referent="RBX00000000000000000000000000000019"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="LocalScript" referent="RBX0000000000000000000000000000001A"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
 -- WANTED: UNBOUND - client entry point.
 
 local ContextActionService = game:GetService("ContextActionService")
@@ -8489,21 +9133,27 @@ RunService.RenderStepped:Connect(function(dt)
 end)
 
 print("[" .. Config.GameName .. "] client ready")
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001A"><Properties><string name="Name">Menu</string><ProtectedString name="Source"><![CDATA[--!strict
--- Title screen: a slow camera flight over Neon Bay with the logo, PLAY and HOW TO PLAY.
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001B"><Properties><string name="Name">MapDraw</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Draws the city (districts, roads, coast and points of interest) into a GUI frame at any
+-- scale. Used by the radar minimap and the full-screen city map.
 
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 
-local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
-local Drive = require(script.Parent.DriveController)
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared:WaitForChild("Config"))
+local Grid = require(Shared:WaitForChild("Grid"))
 
-local player = Players.LocalPlayer
-local camera = workspace.CurrentCamera
+local MapDraw = {}
 
-local Menu = {}
+MapDraw.WorldSize = Grid.Half * 2 + Config.Grid.RoadWidth
+MapDraw.Margin = 260 -- studs of coast drawn around the city
+
+local DISTRICT_COLORS = {
+	downtown = Color3.fromRGB(58, 58, 74),
+	midtown = Color3.fromRGB(66, 66, 78),
+	suburb = Color3.fromRGB(48, 74, 50),
+	industrial = Color3.fromRGB(78, 72, 62),
+}
 
 local function new(className: string, props: { [string]: any }, parent: Instance?): any
 	local inst = Instance.new(className)
@@ -8516,186 +9166,682 @@ local function new(className: string, props: { [string]: any }, parent: Instance
 	return inst
 end
 
-local gui = new("ScreenGui", { Name = "WantedUnboundMenu", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 20 }, player:WaitForChild("PlayerGui"))
-local shade = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.35, BorderSizePixel = 0 }, gui)
-new("UIGradient", {
-	Rotation = 90,
-	Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.6),
-		NumberSequenceKeypoint.new(0.5, 0.9),
-		NumberSequenceKeypoint.new(1, 0.1),
-	}),
-}, shade)
+-- Returns a function mapping world positions to pixel offsets inside `canvas`.
+function MapDraw.Draw(canvas: Frame, scale: number, labels: boolean): (Vector3) -> Vector2
+	local margin = MapDraw.Margin
+	local total = MapDraw.WorldSize + margin * 2
+	canvas.Size = UDim2.fromOffset(total * scale, total * scale)
+	local origin = MapDraw.WorldSize / 2 + margin
+	local function px(pos: Vector3): Vector2
+		return Vector2.new((pos.X + origin) * scale, (pos.Z + origin) * scale)
+	end
+	local function rect(center: Vector3, sizeX: number, sizeZ: number, color: Color3, z: number, name: string?)
+		local p = px(center)
+		return new("Frame", {
+			Name = name or "Rect",
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromOffset(p.X, p.Y),
+			Size = UDim2.fromOffset(math.max(1, sizeX * scale), math.max(1, sizeZ * scale)),
+			BackgroundColor3 = color,
+			BorderSizePixel = 0,
+			ZIndex = z,
+		}, canvas)
+	end
 
-local logo = new("Frame", {
-	AnchorPoint = Vector2.new(0.5, 0.5),
-	Position = UDim2.fromScale(0.5, 0.3),
-	Size = UDim2.fromOffset(820, 220),
-	BackgroundTransparency = 1,
-}, gui)
-new("UISizeConstraint", { MaxSize = Vector2.new(820, 220) }, logo)
-new("UIAspectRatioConstraint", { AspectRatio = 820 / 220 }, logo)
-new("TextLabel", {
-	Size = UDim2.fromScale(1, 0.52),
-	BackgroundTransparency = 1,
-	Font = Enum.Font.GothamBlack,
-	TextScaled = true,
-	Text = "WANTED",
-	TextColor3 = Color3.fromRGB(255, 50, 60),
-	TextStrokeTransparency = 0,
-	TextStrokeColor3 = Color3.fromRGB(40, 0, 10),
-}, logo)
-new("TextLabel", {
-	Position = UDim2.fromScale(0, 0.48),
-	Size = UDim2.fromScale(1, 0.38),
-	BackgroundTransparency = 1,
-	Font = Enum.Font.GothamBlack,
-	TextScaled = true,
-	Text = "U N B O U N D",
-	TextColor3 = Color3.fromRGB(0, 240, 255),
-	TextStrokeTransparency = 0,
-	TextStrokeColor3 = Color3.fromRGB(0, 30, 50),
-}, logo)
-new("TextLabel", {
-	Position = UDim2.fromScale(0, 0.88),
-	Size = UDim2.fromScale(1, 0.12),
-	BackgroundTransparency = 1,
-	Font = Enum.Font.GothamBold,
-	TextScaled = true,
-	Text = "Race.  Raise your heat.  Escape the cops.  Climb the Blacklist.",
-	TextColor3 = Color3.fromRGB(230, 230, 240),
-}, logo)
+	-- land and sea
+	local half = MapDraw.WorldSize / 2
+	rect(Vector3.zero, total, total, Color3.fromRGB(40, 58, 40), 1, "Land")
+	local sea = Color3.fromRGB(22, 64, 92)
+	rect(Vector3.new(half + margin / 2 + 20, 0, 0), margin - 40, total, sea, 1, "Sea")
+	rect(Vector3.new(0, 0, half + margin / 2 + 20), total, margin - 40, sea, 1, "Sea")
+	rect(Vector3.new(half + 30, 0, 0), 60, MapDraw.WorldSize + 60, Color3.fromRGB(190, 170, 120), 1, "Beach")
+	rect(Vector3.new(0, 0, half + 30), MapDraw.WorldSize + 60, 60, Color3.fromRGB(190, 170, 120), 1, "Beach")
 
-local buttons = new("Frame", {
-	AnchorPoint = Vector2.new(0.5, 0),
-	Position = UDim2.fromScale(0.5, 0.56),
-	Size = UDim2.fromOffset(320, 130),
-	BackgroundTransparency = 1,
-}, gui)
-new("UIListLayout", { Padding = UDim.new(0, 12), HorizontalAlignment = Enum.HorizontalAlignment.Center }, buttons)
-
-local function button(text: string, color: Color3): TextButton
-	local b = new("TextButton", {
-		Size = UDim2.fromOffset(320, 58),
-		BackgroundColor3 = color,
-		Font = Enum.Font.GothamBlack,
-		TextScaled = true,
-		Text = text,
-		TextColor3 = Color3.new(1, 1, 1),
-		AutoButtonColor = true,
-	}, buttons)
-	new("UICorner", { CornerRadius = UDim.new(0, 12) }, b)
-	new("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10) }, b)
-	new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = 2, Transparency = 0.6, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, b)
-	return b
-end
-
-local playButton = button("PLAY", Color3.fromRGB(255, 40, 120))
-local helpButton = button("HOW TO PLAY", Color3.fromRGB(40, 40, 70))
-
-local help = new("Frame", {
-	AnchorPoint = Vector2.new(0.5, 0.5),
-	Position = UDim2.fromScale(0.5, 0.55),
-	Size = UDim2.fromOffset(640, 400),
-	BackgroundColor3 = Color3.fromRGB(12, 12, 22),
-	BackgroundTransparency = 0.05,
-	Visible = false,
-}, gui)
-new("UICorner", { CornerRadius = UDim.new(0, 14) }, help)
-new("UIStroke", { Color = Color3.fromRGB(0, 240, 255), Thickness = 2 }, help)
-new("UISizeConstraint", { MaxSize = Vector2.new(640, 400) }, help)
-new("TextLabel", {
-	Position = UDim2.fromOffset(24, 16),
-	Size = UDim2.new(1, -48, 1, -80),
-	BackgroundTransparency = 1,
-	Font = Enum.Font.Gotham,
-	TextSize = 17,
-	TextWrapped = true,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	TextYAlignment = Enum.TextYAlignment.Top,
-	TextColor3 = Color3.fromRGB(230, 230, 240),
-	RichText = true,
-	Text = table.concat({
-		"<b>CONTROLS</b>",
-		"WASD / arrows: drive     SPACE: drift     SHIFT: nitro",
-		"R: reset car     E: interact     G: garage",
-		"",
-		"<b>THE LOOP</b>",
-		"1. <b>Race</b> at the pink markers. Winnings grow with your heat and at night.",
-		"2. <b>Weave through traffic</b> for near misses: cash + nitro.",
-		"3. <b>Escape the cops</b>: break line of sight, then hide until cooldown ends. Hiding spots cool you down 3x faster. Watch out for roadblocks and spike strips.",
-		"4. <b>Bank your cash</b> at the safehouse. If you get busted you lose everything unbanked.",
-		"5. <b>Tune your car</b> in the garage and <b>climb the Blacklist</b> to win pink slips.",
-		"",
-		"Follow the floating arrow: it always points to what matters next.",
-	}, "\n"),
-}, help)
-local closeHelp = new("TextButton", {
-	AnchorPoint = Vector2.new(0.5, 1),
-	Position = UDim2.new(0.5, 0, 1, -14),
-	Size = UDim2.fromOffset(200, 44),
-	BackgroundColor3 = Color3.fromRGB(0, 180, 200),
-	Font = Enum.Font.GothamBlack,
-	TextScaled = true,
-	Text = "GOT IT",
-	TextColor3 = Color3.new(1, 1, 1),
-}, help)
-new("UICorner", { CornerRadius = UDim.new(0, 10) }, closeHelp)
-new("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8) }, closeHelp)
-
-helpButton.Activated:Connect(function()
-	help.Visible = true
-	buttons.Visible = false
-end)
-closeHelp.Activated:Connect(function()
-	help.Visible = false
-	buttons.Visible = true
-end)
-
-new("TextLabel", {
-	AnchorPoint = Vector2.new(0.5, 1),
-	Position = UDim2.new(0.5, 0, 1, -12),
-	Size = UDim2.fromOffset(500, 18),
-	BackgroundTransparency = 1,
-	Font = Enum.Font.Gotham,
-	TextScaled = true,
-	Text = Config.GameName .. "  -  a street racing fan game",
-	TextColor3 = Color3.fromRGB(160, 160, 180),
-}, gui)
-
--- camera flight
-Drive.MenuOpen = true
-local angle = math.random() * math.pi * 2
-local conn = RunService.RenderStepped:Connect(function(dt: number)
-	angle += dt * 0.05
-	camera.CameraType = Enum.CameraType.Scriptable
-	local radius = 900
-	local pos = Vector3.new(math.cos(angle) * radius, 320, math.sin(angle) * radius)
-	local look = Vector3.new(math.cos(angle + 0.9) * 250, 40, math.sin(angle + 0.9) * 250)
-	camera.CFrame = CFrame.lookAt(pos, look)
-	camera.FieldOfView = 60
-end)
-
-playButton.Activated:Connect(function()
-	conn:Disconnect()
-	Drive.MenuOpen = false
-	local fade = TweenInfo.new(0.5)
-	TweenService:Create(shade, fade, { BackgroundTransparency = 1 }):Play()
-	for _, d in gui:GetDescendants() do
-		if d:IsA("TextLabel") or d:IsA("TextButton") then
-			TweenService:Create(d, fade, { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
-		end
-		if d:IsA("TextButton") or (d:IsA("Frame") and d.BackgroundTransparency < 1) then
-			TweenService:Create(d, fade, { BackgroundTransparency = 1 }):Play()
+	-- districts
+	local B = Config.Blocks
+	for bx = 0, Grid.Size - 1 do
+		for bz = 0, Grid.Size - 1 do
+			local color = DISTRICT_COLORS[Config.District(bx, bz)]
+			if bx == B.Park[1] and bz == B.Park[2] then
+				color = Color3.fromRGB(60, 110, 60)
+			end
+			rect(Grid.BlockCenter(bx, bz), Config.Grid.BlockSize, Config.Grid.BlockSize, color, 2, "Block")
 		end
 	end
-	task.delay(0.55, function()
-		gui:Destroy()
+
+	-- roads (the Beltway ring is drawn brighter)
+	for i = 0, Grid.Size do
+		local ring = i == 0 or i == Grid.Size
+		local color = if ring then Color3.fromRGB(200, 170, 80) else Color3.fromRGB(125, 125, 140)
+		local w = Config.Grid.RoadWidth * (if ring then 1.4 else 1)
+		local a = Grid.Intersection(i, Grid.Size / 2)
+		rect(Vector3.new(a.X, 0, 0), w, MapDraw.WorldSize, color, 3, "Road")
+		local b = Grid.Intersection(Grid.Size / 2, i)
+		rect(Vector3.new(0, 0, b.Z), MapDraw.WorldSize, w, color, 3, "Road")
+	end
+
+	-- points of interest
+	local function marker(pos: Vector3, color: Color3, size: number, text: string?, caption: string?)
+		local p = px(pos)
+		local f = new("Frame", {
+			Name = "Marker",
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromOffset(p.X, p.Y),
+			Size = UDim2.fromOffset(size, size),
+			BackgroundColor3 = color,
+			ZIndex = 5,
+		}, canvas)
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, f)
+		new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1, Transparency = 0.4 }, f)
+		if text then
+			new("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = text, TextScaled = true, Font = Enum.Font.GothamBlack, TextColor3 = Color3.new(0, 0, 0), ZIndex = 6 }, f)
+		end
+		if caption and labels then
+			new("TextLabel", {
+				AnchorPoint = Vector2.new(0.5, 0),
+				Position = UDim2.new(0.5, 0, 1, 2),
+				Size = UDim2.fromOffset(160, 16),
+				BackgroundTransparency = 1,
+				Text = caption,
+				TextScaled = true,
+				Font = Enum.Font.GothamBold,
+				TextColor3 = Color3.new(1, 1, 1),
+				TextStrokeTransparency = 0.3,
+				ZIndex = 6,
+			}, f)
+		end
+	end
+	local big = if labels then 1.4 else 1
+	marker(Grid.BlockCenter(B.Safehouse[1], B.Safehouse[2]), Color3.fromRGB(0, 255, 200), 14 * big, "S", "SAFEHOUSE")
+	for _, h in B.HidingSpots do
+		marker(Grid.BlockCenter(h[1], h[2]), Color3.fromRGB(80, 255, 120), 9 * big, "H", "Hiding spot")
+	end
+	for _, b in Config.PursuitBreakers do
+		marker(Grid.Intersection(b[1], b[2]) + Vector3.new(36, 0, 36), Color3.fromRGB(255, 70, 70), 7 * big, nil, nil)
+	end
+	for _, r in Config.Races do
+		local p = r.route[1]
+		marker(Grid.Intersection(p[1], p[2]), if r.kind == "drift" then Color3.fromRGB(255, 140, 0) else Color3.fromRGB(255, 40, 160), 11 * big, "R", r.name .. "  $" .. r.buyIn)
+	end
+	return px
+end
+
+return MapDraw
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001C"><Properties><string name="Name">Menu</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Main menu and pause menu.
+-- Title screen: cinematic camera shots around the safehouse, animated menu buttons, a player card
+-- with your stats, settings, how to play, credits and a rotating tips bar.
+-- In game: press P (or the ☰ button) for the pause menu.
+
+local ContextActionService = game:GetService("ContextActionService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared:WaitForChild("Config"))
+local Grid = require(Shared:WaitForChild("Grid"))
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local Shop = Remotes:WaitForChild("Shop") :: RemoteFunction
+
+local Drive = require(script.Parent.DriveController)
+local Settings = require(script.Parent.Settings)
+local Sounds = require(script.Parent.Sounds)
+local Garage = require(script.Parent.Garage)
+local FullMap = require(script.Parent.FullMap)
+local HUD = require(script.Parent.HUD)
+
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+
+local Menu = {}
+Menu.Mode = "title" -- "title" | "pause" | "closed"
+
+local PINK = Color3.fromRGB(255, 40, 140)
+local CYAN = Color3.fromRGB(0, 230, 255)
+local RED = Color3.fromRGB(255, 50, 60)
+
+local function new(className: string, props: { [string]: any }, parent: Instance?): any
+	local inst = Instance.new(className)
+	for k, v in props do
+		(inst :: any)[k] = v
+	end
+	if parent then
+		inst.Parent = parent
+	end
+	return inst
+end
+
+local function text(parent: Instance, props: { [string]: any }): TextLabel
+	local base = { BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextColor3 = Color3.new(1, 1, 1), TextScaled = true, TextXAlignment = Enum.TextXAlignment.Left }
+	for k, v in props do
+		base[k] = v
+	end
+	return new("TextLabel", base, parent)
+end
+
+local gui = new("ScreenGui", { Name = "WantedUnboundMenu", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 20 }, player:WaitForChild("PlayerGui"))
+
+-- cinematic letterbox + gradient
+local shade = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.2, BorderSizePixel = 0 }, gui)
+new("UIGradient", {
+	Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.05),
+		NumberSequenceKeypoint.new(0.45, 0.65),
+		NumberSequenceKeypoint.new(1, 1),
+	}),
+}, shade)
+local barTop = new("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0 }, gui)
+local barBottom = new("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0 }, gui)
+local fade = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 50 }, gui)
+
+-- left column: logo + buttons
+local left = new("Frame", { Position = UDim2.new(0, 60, 0, 90), Size = UDim2.new(0, 460, 1, -160), BackgroundTransparency = 1 }, gui)
+local logo = new("Frame", { Size = UDim2.new(1, 0, 0, 170), BackgroundTransparency = 1 }, left)
+text(logo, { Size = UDim2.new(1, 0, 0, 92), Text = "WANTED", Font = Enum.Font.GothamBlack, TextColor3 = RED, TextStrokeTransparency = 0, TextStrokeColor3 = Color3.fromRGB(40, 0, 10) })
+text(logo, { Position = UDim2.fromOffset(4, 86), Size = UDim2.new(1, 0, 0, 50), Text = "U N B O U N D", Font = Enum.Font.GothamBlack, TextColor3 = CYAN, TextStrokeTransparency = 0 })
+local tagline = text(logo, { Position = UDim2.fromOffset(4, 142), Size = UDim2.new(1, 0, 0, 22), Text = "Race.  Raise your heat.  Escape the cops.  Climb the Blacklist.", Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(220, 220, 230) })
+
+local list = new("Frame", { Position = UDim2.fromOffset(0, 200), Size = UDim2.new(1, 0, 1, -200), BackgroundTransparency = 1 }, left)
+new("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+
+type Button = { frame: TextButton, setLabel: (string) -> () }
+local function menuButton(label: string, order: number, onClick: () -> ()): Button
+	local b = new("TextButton", {
+		Size = UDim2.new(0, 360, 0, 54),
+		BackgroundColor3 = Color3.fromRGB(12, 12, 20),
+		BackgroundTransparency = 0.25,
+		AutoButtonColor = false,
+		Text = "",
+		LayoutOrder = order,
+	}, list)
+	new("UICorner", { CornerRadius = UDim.new(0, 6) }, b)
+	local accent = new("Frame", { Size = UDim2.new(0, 5, 1, 0), BackgroundColor3 = PINK, BorderSizePixel = 0 }, b)
+	local fill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = PINK, BackgroundTransparency = 0.15, BorderSizePixel = 0 }, b)
+	new("UICorner", { CornerRadius = UDim.new(0, 6) }, fill)
+	local t = text(b, { Position = UDim2.fromOffset(24, 10), Size = UDim2.new(1, -40, 1, -20), Text = label, Font = Enum.Font.GothamBlack, ZIndex = 2 })
+	local arrowLbl = text(b, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 14), Size = UDim2.fromOffset(24, 26), Text = "›", TextXAlignment = Enum.TextXAlignment.Right, TextTransparency = 1, ZIndex = 2 })
+	local quick = TweenInfo.new(0.16, Enum.EasingStyle.Quad)
+	b.MouseEnter:Connect(function()
+		Sounds.Tick(1.4, 0.25)
+		TweenService:Create(fill, quick, { Size = UDim2.new(1, 0, 1, 0) }):Play()
+		TweenService:Create(t, quick, { Position = UDim2.fromOffset(34, 10) }):Play()
+		TweenService:Create(arrowLbl, quick, { TextTransparency = 0 }):Play()
+	end)
+	b.MouseLeave:Connect(function()
+		TweenService:Create(fill, quick, { Size = UDim2.new(0, 0, 1, 0) }):Play()
+		TweenService:Create(t, quick, { Position = UDim2.fromOffset(24, 10) }):Play()
+		TweenService:Create(arrowLbl, quick, { TextTransparency = 1 }):Play()
+	end)
+	b.Activated:Connect(function()
+		Sounds.Tick(1, 0.5)
+		onClick()
+	end)
+	local _ = accent
+	return {
+		frame = b,
+		setLabel = function(s: string)
+			t.Text = s
+		end,
+	}
+end
+
+-- right column: player card
+local card = new("Frame", {
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -60, 0, 110),
+	Size = UDim2.fromOffset(340, 300),
+	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
+	BackgroundTransparency = 0.2,
+}, gui)
+new("UICorner", { CornerRadius = UDim.new(0, 12) }, card)
+new("UIStroke", { Color = CYAN, Thickness = 2, Transparency = 0.4 }, card)
+local avatar = new("ImageLabel", { Position = UDim2.fromOffset(16, 16), Size = UDim2.fromOffset(72, 72), BackgroundColor3 = Color3.fromRGB(30, 30, 40) }, card)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, avatar)
+task.spawn(function()
+	local ok, img = pcall(function()
+		return Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size150x150)
+	end)
+	if ok then
+		avatar.Image = img
+	end
+end)
+text(card, { Position = UDim2.fromOffset(100, 22), Size = UDim2.new(1, -116, 0, 28), Text = player.DisplayName, Font = Enum.Font.GothamBlack })
+local rankLabel = text(card, { Position = UDim2.fromOffset(100, 54), Size = UDim2.new(1, -116, 0, 20), Text = "", TextColor3 = RED })
+local statRows: { TextLabel } = {}
+for k = 1, 6 do
+	statRows[k] = text(card, { Position = UDim2.fromOffset(18, 100 + (k - 1) * 30), Size = UDim2.new(1, -36, 0, 22), Text = "", Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(225, 225, 235) })
+end
+
+local function commas(n: number): string
+	return HUD.Commas(n)
+end
+
+local function refreshCard()
+	local ok, _, snap = pcall(function()
+		return Shop:InvokeServer("Get")
+	end)
+	if not ok or type(snap) ~= "table" then
+		return
+	end
+	Settings.Load(snap.settings)
+	local beaten = snap.blacklistBeaten or 0
+	rankLabel.Text = if beaten >= 5 then "#1 MOST WANTED" else ("Chasing Blacklist #" .. (5 - beaten))
+	local car = Config.GetCar(snap.selected)
+	local owned = 0
+	for _ in snap.owned do
+		owned += 1
+	end
+	local done = 0
+	for _ in snap.milestones or {} do
+		done += 1
+	end
+	local rows = {
+		"Cash:  $" .. commas(snap.cash),
+		"Total bounty:  " .. commas(snap.totalBounty),
+		"Races won:  " .. snap.racesWon,
+		"Cars owned:  " .. owned,
+		"Driving:  " .. (if car then car.name else "?"),
+		"Milestones:  " .. done .. " / " .. #Config.Milestones,
+	}
+	for k, r in rows do
+		statRows[k].Text = r
+	end
+end
+
+-- panels (settings / how to play / credits) replace the player card
+local panel = new("Frame", {
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -60, 0, 110),
+	Size = UDim2.fromOffset(520, 440),
+	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
+	BackgroundTransparency = 0.1,
+	Visible = false,
+}, gui)
+new("UICorner", { CornerRadius = UDim.new(0, 12) }, panel)
+new("UIStroke", { Color = PINK, Thickness = 2 }, panel)
+local panelTitle = text(panel, { Position = UDim2.fromOffset(20, 14), Size = UDim2.new(1, -40, 0, 32), Text = "", Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
+local panelBody = new("Frame", { Position = UDim2.fromOffset(20, 60), Size = UDim2.new(1, -40, 1, -80), BackgroundTransparency = 1 }, panel)
+
+local function clearPanel()
+	for _, c in panelBody:GetChildren() do
+		c:Destroy()
+	end
+end
+
+local function settingRow(order: number, label: string, getValue: () -> string, onClick: () -> ())
+	local row = new("Frame", { Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = Color3.fromRGB(24, 24, 36), LayoutOrder = order }, panelBody)
+	new("UICorner", { CornerRadius = UDim.new(0, 8) }, row)
+	text(row, { Position = UDim2.fromOffset(14, 10), Size = UDim2.new(0.55, 0, 0, 24), Text = label })
+	local b = new("TextButton", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -10, 0.5, 0),
+		Size = UDim2.fromOffset(150, 32),
+		BackgroundColor3 = PINK,
+		Font = Enum.Font.GothamBlack,
+		TextScaled = true,
+		TextColor3 = Color3.new(1, 1, 1),
+		Text = getValue(),
+	}, row)
+	new("UICorner", { CornerRadius = UDim.new(0, 6) }, b)
+	new("UIPadding", { PaddingTop = UDim.new(0, 5), PaddingBottom = UDim.new(0, 5) }, b)
+	b.Activated:Connect(function()
+		Sounds.Tick(1.2, 0.4)
+		onClick()
+		b.Text = getValue()
+	end)
+end
+
+local function onOff(v: boolean): string
+	return if v then "ON" else "OFF"
+end
+
+local function showSettings()
+	clearPanel()
+	panelTitle.Text = "SETTINGS"
+	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, panelBody)
+	local v = Settings.Values
+	settingRow(1, "Camera shake", function()
+		return onOff(v.shake)
+	end, function()
+		Settings.Set("shake", not v.shake)
+	end)
+	settingRow(2, "Speed lines", function()
+		return onOff(v.speedLines)
+	end, function()
+		Settings.Set("speedLines", not v.speedLines)
+	end)
+	settingRow(3, "Motion blur", function()
+		return onOff(v.blur)
+	end, function()
+		Settings.Set("blur", not v.blur)
+	end)
+	settingRow(4, "Speed units", function()
+		return if v.units == "kmh" then "KM/H" else "MPH"
+	end, function()
+		Settings.Set("units", if v.units == "kmh" then "mph" else "kmh")
+	end)
+	settingRow(5, "Volume", function()
+		return math.floor(v.volume * 100 + 0.5) .. "%"
+	end, function()
+		local nextV = v.volume + 0.2
+		if nextV > 1.01 then
+			nextV = 0
+		end
+		Settings.Set("volume", nextV)
+	end)
+	settingRow(6, "Performance mode", function()
+		return onOff(v.performance)
+	end, function()
+		Settings.Set("performance", not v.performance)
+	end)
+	text(panelBody, { Size = UDim2.new(1, 0, 0, 40), LayoutOrder = 7, TextWrapped = true, Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(170, 170, 190), Text = "Performance mode turns off shadows, bloom, sun rays and depth of field on this device. Settings are saved to your profile." })
+end
+
+local function showHelp()
+	clearPanel()
+	panelTitle.Text = "HOW TO PLAY"
+	text(panelBody, {
+		Size = UDim2.fromScale(1, 1),
+		TextScaled = false,
+		TextSize = 16,
+		TextWrapped = true,
+		RichText = true,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		Font = Enum.Font.Gotham,
+		Text = table.concat({
+			"<b>CONTROLS</b>   WASD drive · SPACE drift · SHIFT nitro · R reset · E interact · G garage · M map · P pause",
+			"",
+			"<b>RACE</b>  at the pink R markers. Winnings grow with your heat and at night.",
+			"<b>DRIFT</b>  with the handbrake, or tap the brake and get back on the gas while steering. Hold the throttle to keep the slide going.",
+			"<b>TRAFFIC</b>  Pass cars close and fast for near misses: cash and nitro.",
+			"<b>COPS</b>  Break line of sight, then stay hidden until cooldown ends. Hiding spots (H) cool you down 3x faster. Watch for roadblocks and spike strips.",
+			"<b>BANK</b>  your cash at the safehouse (S). Get busted and you lose everything unbanked.",
+			"<b>GARAGE</b>  Press E at the safehouse to drive in: buy cars, tune parts, handling and looks.",
+			"<b>BLACKLIST</b>  Earn bounty and wins, then beat the five rivals to win their cars.",
+			"",
+			"Neon Bay is huge: downtown towers, midtown, suburbs, the docks and the Beltway ring road. Press M for the city map.",
+		}, "\n"),
+	})
+end
+
+local function showCredits()
+	clearPanel()
+	panelTitle.Text = "CREDITS"
+	text(panelBody, {
+		Size = UDim2.fromScale(1, 1),
+		TextScaled = false,
+		TextSize = 18,
+		TextWrapped = true,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		Font = Enum.Font.Gotham,
+		Text = Config.GameName .. "\n\nA fan-made street racing game inspired by classic cops-and-racers games.\n\nEverything (the city, cars, sound design and UI) is generated in code from Roblox parts and built-in sounds.\n\nThanks for playing!",
+	})
+end
+
+local activePanel = ""
+local function togglePanel(name: string, show: () -> ())
+	if activePanel == name and panel.Visible then
+		panel.Visible = false
+		card.Visible = true
+		activePanel = ""
+		return
+	end
+	activePanel = name
+	show()
+	panel.Visible = true
+	card.Visible = false
+end
+
+-- tips bar
+local tipLabel = text(barBottom, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0.9, 0, 0, 20), TextXAlignment = Enum.TextXAlignment.Center, Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(200, 200, 215), Text = "" })
+local TIPS = {
+	"TIP: Night doubles the danger - and pays x" .. Config.NightMultiplier .. ".",
+	"TIP: Drive through a pursuit breaker (red ring) to drop it on the cops behind you.",
+	"TIP: Near misses fill your nitro. Weave through traffic!",
+	"TIP: Tune the handling slider towards DRIFT for longer slides.",
+	"TIP: Traffic stops at red lights. Cops don't.",
+	"TIP: The Beltway ring road is the fastest way across the city.",
+	"TIP: The floating arrow always points to your next goal.",
+}
+
+-- camera shots near the safehouse (always inside the streamed area)
+local sh = Config.Blocks.Safehouse
+local SAFE = Grid.BlockCenter(sh[1], sh[2])
+type Shot = { from: CFrame, to: CFrame }
+local function shots(): { Shot }
+	local s = SAFE
+	local road = Vector3.new(s.X, 0, s.Z - Config.Grid.Cell / 2)
+	return {
+		{ from = CFrame.lookAt(s + Vector3.new(-260, 150, -200), s), to = CFrame.lookAt(s + Vector3.new(200, 120, -260), s) },
+		{ from = CFrame.lookAt(road + Vector3.new(-160, 5, 8), road + Vector3.new(0, 4, 0)), to = CFrame.lookAt(road + Vector3.new(60, 5, 8), road + Vector3.new(220, 6, 0)) },
+		{ from = CFrame.lookAt(s + Vector3.new(0, 420, 300), s + Vector3.new(0, 0, -300)), to = CFrame.lookAt(s + Vector3.new(0, 380, -100), s + Vector3.new(0, 0, -600)) },
+		{ from = CFrame.lookAt(s + Vector3.new(90, 12, 90), s + Vector3.new(0, 20, 0)), to = CFrame.lookAt(s + Vector3.new(-90, 22, 110), s + Vector3.new(0, 25, 0)) },
+	}
+end
+local SHOT_TIME = 7
+local shotClock = 0
+local shotIndex = 1
+local tipClock = 0
+local tipIndex = 1
+
+-- buttons
+local playButton: Button
+local function closeMenu()
+	if Menu.Mode == "closed" then
+		return
+	end
+	Menu.Mode = "closed"
+	Drive.MenuOpen = false
+	TweenService:Create(fade, TweenInfo.new(0.25), { BackgroundTransparency = 0 }):Play()
+	task.delay(0.28, function()
+		gui.Enabled = false
+		fade.BackgroundTransparency = 1
+	end)
+end
+
+local function openMenu(mode: string)
+	Menu.Mode = mode
+	gui.Enabled = true
+	panel.Visible = false
+	card.Visible = true
+	activePanel = ""
+	Drive.MenuOpen = mode == "title"
+	playButton.setLabel(if mode == "title" then "PLAY" else "RESUME")
+	barTop.Visible = mode == "title"
+	barBottom.Visible = true
+	tagline.Visible = mode == "title"
+	shade.BackgroundTransparency = if mode == "title" then 0.2 else 0.05
+	shotClock = 0
+	refreshCard()
+end
+Menu.Open = openMenu
+
+playButton = menuButton("PLAY", 1, closeMenu)
+menuButton("GARAGE", 2, function()
+	closeMenu()
+	task.delay(0.3, function()
+		if player:GetAttribute("AtSafehouse") then
+			Garage.Enter()
+		else
+			HUD.Notify("The garage is at the safehouse (S on the map)", Color3.fromRGB(0, 255, 200))
+		end
 	end)
 end)
+menuButton("CITY MAP", 3, function()
+	FullMap.Toggle(true)
+end)
+menuButton("SETTINGS", 4, function()
+	togglePanel("settings", showSettings)
+end)
+menuButton("HOW TO PLAY", 5, function()
+	togglePanel("help", showHelp)
+end)
+menuButton("CREDITS", 6, function()
+	togglePanel("credits", showCredits)
+end)
 
+-- pause: P key or the ☰ button on the HUD
+ContextActionService:BindAction("WU_Pause", function(_, state)
+	if state == Enum.UserInputState.Begin then
+		if Menu.Mode == "closed" then
+			openMenu("pause")
+		elseif Menu.Mode == "pause" then
+			closeMenu()
+		end
+	end
+	return Enum.ContextActionResult.Sink
+end, false, Enum.KeyCode.P)
+
+local pauseButton = new("TextButton", {
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -16, 0, 60),
+	Size = UDim2.fromOffset(44, 44),
+	BackgroundColor3 = Color3.fromRGB(12, 12, 20),
+	BackgroundTransparency = 0.25,
+	Text = "☰",
+	TextScaled = true,
+	Font = Enum.Font.GothamBlack,
+	TextColor3 = Color3.new(1, 1, 1),
+}, HUD.Gui)
+new("UICorner", { CornerRadius = UDim.new(0, 10) }, pauseButton)
+pauseButton.Activated:Connect(function()
+	Sounds.Tick(1, 0.4)
+	if Menu.Mode == "closed" then
+		openMenu("pause")
+	end
+end)
+
+RunService.RenderStepped:Connect(function(dt: number)
+	if Menu.Mode == "closed" then
+		return
+	end
+	tipClock += dt
+	if tipClock > 5 or tipLabel.Text == "" then
+		tipClock = 0
+		tipIndex = tipIndex % #TIPS + 1
+		tipLabel.Text = TIPS[tipIndex]
+	end
+	if Menu.Mode ~= "title" then
+		return
+	end
+	-- cinematic camera: slow moves between shots with a dip to black
+	shotClock += dt
+	local list_ = shots()
+	if shotClock > SHOT_TIME then
+		shotClock = 0
+		shotIndex = shotIndex % #list_ + 1
+	end
+	local shot = list_[shotIndex]
+	local t = shotClock / SHOT_TIME
+	t = t * t * (3 - 2 * t)
+	camera.CameraType = Enum.CameraType.Scriptable
+	camera.CFrame = shot.from:Lerp(shot.to, t)
+	camera.FieldOfView = 55
+	local edge = math.min(shotClock, SHOT_TIME - shotClock)
+	fade.BackgroundTransparency = math.clamp(edge / 0.5, 0, 1)
+end)
+
+openMenu("title")
 return Menu
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001B"><Properties><string name="Name">Sounds</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001D"><Properties><string name="Name">Settings</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Player settings, saved in the player's profile on the server.
+
+local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
+
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local SaveSettings = Remotes:WaitForChild("SaveSettings") :: RemoteEvent
+
+local Settings = {}
+
+export type Values = {
+	shake: boolean,
+	speedLines: boolean,
+	blur: boolean,
+	units: string, -- "mph" | "kmh"
+	volume: number, -- 0..1
+	performance: boolean,
+}
+
+Settings.Values = {
+	shake = true,
+	speedLines = true,
+	blur = true,
+	units = "mph",
+	volume = 0.8,
+	performance = false,
+} :: Values
+
+-- every sound in the game plays through this group so the volume setting affects all of it
+Settings.Master = Instance.new("SoundGroup")
+Settings.Master.Name = "WU_Master"
+Settings.Master.Parent = SoundService
+
+local listeners: { () -> () } = {}
+function Settings.OnChanged(fn: () -> ())
+	table.insert(listeners, fn)
+end
+
+local function apply()
+	local v = Settings.Values
+	Settings.Master.Volume = v.volume
+	-- performance mode: drop the expensive post effects and shadows on this device only
+	for _, e in Lighting:GetChildren() do
+		if e:IsA("DepthOfFieldEffect") or e:IsA("SunRaysEffect") then
+			e.Enabled = not v.performance
+		elseif e:IsA("BloomEffect") then
+			e.Enabled = not v.performance
+		end
+	end
+	Lighting.GlobalShadows = not v.performance
+	for _, fn in listeners do
+		task.spawn(fn)
+	end
+end
+
+local saveToken = 0
+function Settings.Set(key: string, value: any)
+	(Settings.Values :: any)[key] = value
+	apply()
+	saveToken += 1
+	local token = saveToken
+	task.delay(1, function()
+		if token == saveToken then
+			SaveSettings:FireServer(Settings.Values)
+		end
+	end)
+end
+
+function Settings.Load(saved: any)
+	if type(saved) == "table" then
+		for k, default in Settings.Values :: any do
+			if type(saved[k]) == type(default) then
+				(Settings.Values :: any)[k] = saved[k]
+			end
+		end
+	end
+	apply()
+end
+
+-- speed in the chosen units
+function Settings.Speed(studsPerSecond: number, mphPerStud: number): (number, string)
+	local mph = studsPerSecond * mphPerStud
+	if Settings.Values.units == "kmh" then
+		return mph * 1.609, "KM/H"
+	end
+	return mph, "MPH"
+end
+
+-- Lighting effects are created by the server a moment after joining; re-apply once they exist.
+Lighting.ChildAdded:Connect(function()
+	task.defer(apply)
+end)
+
+return Settings
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001E"><Properties><string name="Name">Sounds</string><ProtectedString name="Source"><![CDATA[--!strict
 -- All game audio. Roblox only ships a handful of built-in sounds, so the engine and tyre sounds
 -- are synthesized from its wind-noise loop: pitched down, bass boosted, distorted and pulsed by a
 -- tremolo at the engine's firing rate (it follows the simulated RPM and gear shifts). If you put
@@ -8710,6 +9856,7 @@ local TweenService = game:GetService("TweenService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local Drive = require(script.Parent.DriveController)
+local Settings = require(script.Parent.Settings)
 
 local player = Players.LocalPlayer
 local Sounds = {}
@@ -8718,6 +9865,9 @@ local B = S.Builtin
 
 local function new(className: string, props: { [string]: any }, parent: Instance?): any
 	local inst = Instance.new(className)
+	if inst:IsA("Sound") then
+		inst.SoundGroup = Settings.Master
+	end
 	for k, v in props do
 		(inst :: any)[k] = v
 	end

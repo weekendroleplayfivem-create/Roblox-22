@@ -37,6 +37,9 @@ export type State = {
 	lateral: number, -- signed sideways speed
 	airTime: number,
 	speedMult: number, -- extra multiplier (AI rubber banding, heat)
+	weight: number, -- -1 (on the rear) .. 1 (on the nose): weight transfer
+	brakeTap: number, -- os.clock() of the last brake, for brake-to-drift
+	lowSlip: number, -- time spent nearly straight while drifting
 }
 
 function CarPhysics.NewState(model: Model): State
@@ -56,6 +59,9 @@ function CarPhysics.NewState(model: Model): State
 		lateral = 0,
 		airTime = 0,
 		speedMult = 1,
+		weight = 0,
+		brakeTap = 0,
+		lowSlip = 0,
 	}
 end
 
@@ -108,6 +114,7 @@ function CarPhysics.Step(state: State, input: Input, stats: Stats, dt: number)
 	local vert = vel:Dot(up)
 
 	if state.grounded then
+		local landed = state.airTime > 0.35
 		state.airTime = 0
 		local mult = state.speedMult
 		local maxSpeed = stats.maxSpeed * mult
@@ -116,77 +123,114 @@ function CarPhysics.Step(state: State, input: Input, stats: Stats, dt: number)
 			maxSpeed *= stats.nitroMult
 			accel *= 1.7
 		end
-
+		local absFwd = math.abs(fwd)
 		local throttle = input.throttle
+		local now = os.clock()
+
+		-- Longitudinal: torque falls off towards top speed, tyres limit the launch.
 		if throttle > 0.05 then
 			if fwd < -2 then
 				fwd = math.min(fwd + stats.brake * throttle * dt, 0)
 			elseif fwd < maxSpeed then
-				local taper = 1 - 0.55 * (math.max(fwd, 0) / maxSpeed) ^ 2
-				fwd = math.min(fwd + accel * throttle * taper * dt, maxSpeed)
+				local ratio = math.max(fwd, 0) / maxSpeed
+				local torque = 1 - 0.62 * ratio ^ 1.6
+				local launch = if fwd < 25 then 0.75 + 0.25 * (fwd / 25) else 1 -- traction limit off the line
+				fwd = math.min(fwd + accel * throttle * torque * launch * dt, maxSpeed)
 			else
 				fwd -= (fwd - maxSpeed) * math.min(dt * 1.2, 1)
 			end
+			state.weight += (-0.5 - state.weight) * math.min(1, dt * 4) -- weight moves back
 		elseif throttle < -0.05 then
 			if fwd > 2 then
 				fwd = math.max(fwd - stats.brake * -throttle * dt, 0)
+				state.weight += (1 - state.weight) * math.min(1, dt * 5) -- weight moves forward
+				state.brakeTap = now
 			else
 				fwd = math.max(fwd - accel * 0.7 * -throttle * dt, -stats.maxSpeed * 0.35)
 			end
 		else
-			-- coasting drag
-			fwd -= fwd * math.min(dt * 0.35, 1)
-			if math.abs(fwd) < 1 then
-				fwd = 0
-			end
+			-- engine braking + rolling resistance
+			fwd -= fwd * math.min(dt * 0.3, 1) + math.sign(fwd) * math.min(math.abs(fwd), 1.5 * dt)
+			state.weight += (0 - state.weight) * math.min(1, dt * 3)
 		end
 
-		-- Drift logic: brake-to-drift / handbrake starts it, low lateral speed ends it.
-		local absFwd = math.abs(fwd)
+		-- Drifting: handbrake, or Unbound-style brake-tap then back on the gas while steering.
+		local steerAbs = math.abs(input.steer)
 		if input.handbrake then
-			fwd -= fwd * math.min(dt * 0.6, 1)
-			if absFwd > 35 and math.abs(input.steer) > 0.2 then
+			fwd -= fwd * math.min(dt * 0.55, 1)
+			if absFwd > 35 and steerAbs > 0.2 then
 				state.drifting = true
 			end
+		elseif throttle > 0.5 and steerAbs > 0.5 and absFwd > 60 and now - state.brakeTap < 0.45 then
+			state.drifting = true
 		end
-		if state.drifting and (math.abs(lat) < 5 or absFwd < 20) and not input.handbrake then
-			state.drifting = false
+		local slip = math.deg(math.atan2(math.abs(lat), math.max(absFwd, 1)))
+		if state.drifting and not input.handbrake then
+			if slip < 8 or absFwd < 20 then
+				state.lowSlip += dt
+			else
+				state.lowSlip = 0
+			end
+			if state.lowSlip > 0.25 or (throttle <= 0.05 and steerAbs < 0.1 and slip < 15) then
+				state.drifting = false
+				state.lowSlip = 0
+			end
 		end
 
+		-- Lateral grip: downforce adds grip at speed, weight on the nose sharpens turn-in.
 		local grip = stats.grip * (1 + (stats.downforce or 0) * 0.6 * math.clamp(absFwd / stats.maxSpeed, 0, 1))
 		if input.handbrake then
 			grip *= 0.18
 		elseif state.drifting then
 			grip *= stats.driftGrip or 0.4
+			-- drift assist: throttle holds the slide instead of scrubbing all the speed
+			if throttle > 0.3 then
+				fwd = math.min(fwd + accel * 0.35 * dt, maxSpeed)
+			end
+		end
+		if landed then
+			grip *= 0.5 -- a moment of looseness after landing a jump
 		end
 		local oldLat = math.abs(lat)
 		lat *= math.max(0, 1 - grip * dt)
-		-- Convert part of the scrubbed sideways speed back into forward speed so corners
-		-- keep momentum, the arcade way.
+		-- carry part of the scrubbed sideways speed into forward speed so corners keep momentum
 		if fwd > 5 then
-			fwd = math.min(fwd + (oldLat - math.abs(lat)) * 0.55, maxSpeed * 1.05)
+			local carry = if state.drifting then 0.6 else 0.45
+			fwd = math.min(fwd + (oldLat - math.abs(lat)) * carry, maxSpeed * 1.05)
 		end
 
-		-- Steering: needs speed, softens at the top end, stronger in a drift.
-		local speedFactor = math.clamp(absFwd / 22, 0, 1)
-		local highSpeedDamp = 1 - 0.4 * math.clamp(absFwd / (stats.maxSpeed * 1.2), 0, 1)
-		local yaw = -input.steer * stats.turn * speedFactor * highSpeedDamp
+		-- Steering: needs speed, less lock at the top end, sharper with weight on the nose.
+		local speedFactor = math.clamp(absFwd / 20, 0, 1)
+		local highSpeedDamp = 1 - 0.5 * math.clamp(absFwd / (stats.maxSpeed * 1.15), 0, 1) ^ 1.2
+		local turnIn = 1 + 0.18 * math.max(state.weight, 0) - 0.08 * math.max(-state.weight, 0)
+		local targetYaw = -input.steer * stats.turn * speedFactor * highSpeedDamp * turnIn
 		if fwd < 0 then
-			yaw = -yaw
+			targetYaw = -targetYaw
 		end
 		if state.drifting then
-			yaw *= 1.35
+			targetYaw *= 1.45
+			-- stop the car spinning out: past ~60 degrees of slip, yaw back towards the slide
+			if slip > 60 then
+				local slideSide = math.sign(lat)
+				targetYaw -= slideSide * (slip - 60) * 0.05 -- turn the nose back towards the direction of travel
+			end
 		end
+		-- yaw has inertia: the car rotates into the turn instead of snapping
+		local av = root.AssemblyAngularVelocity
+		local currentYaw = av:Dot(up)
+		local response = if state.drifting then 5 else (6 + stats.grip * 0.5)
+		local yaw = currentYaw + (targetYaw - currentYaw) * (1 - math.exp(-dt * response))
 
 		root.AssemblyLinearVelocity = forward * fwd + right * lat + up * math.min(vert, 60)
-		local av = root.AssemblyAngularVelocity
-		root.AssemblyAngularVelocity = av - up * av:Dot(up) + up * yaw
+		root.AssemblyAngularVelocity = av - up * currentYaw + up * yaw
 	else
 		state.airTime += dt
-		-- slight air control
+		-- slight air control, rotation keeps its momentum
 		local av = root.AssemblyAngularVelocity
-		local yaw = -input.steer * stats.turn * 0.35
-		root.AssemblyAngularVelocity = av - UP * av:Dot(UP) + UP * yaw
+		local currentYaw = av:Dot(UP)
+		local targetYaw = -input.steer * stats.turn * 0.35
+		local yaw = currentYaw + (targetYaw - currentYaw) * (1 - math.exp(-dt * 2))
+		root.AssemblyAngularVelocity = av - UP * currentYaw + UP * yaw
 	end
 
 	state.speed = fwd

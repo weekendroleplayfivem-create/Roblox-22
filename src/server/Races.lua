@@ -295,6 +295,7 @@ function Races.Start(s: Session.Session, def: Config.RaceDef, rival: Config.Riva
 		})
 		local cf = slot(slotOrder[k])
 		model:PivotTo(Vehicles.GroundCFrame(cf, model))
+		model.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
 		model.Parent = folder
 		local root = model.PrimaryPart :: BasePart
 		root.Anchored = true

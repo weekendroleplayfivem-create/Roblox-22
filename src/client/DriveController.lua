@@ -11,6 +11,7 @@ local UserInputService = game:GetService("UserInputService")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local CarPhysics = require(Shared:WaitForChild("CarPhysics"))
 local Config = require(Shared:WaitForChild("Config"))
+local Settings = require(script.Parent.Settings)
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local NitroState = Remotes:WaitForChild("NitroState") :: RemoteEvent
 local RespawnCar = Remotes:WaitForChild("RespawnCar") :: RemoteEvent
@@ -53,6 +54,8 @@ local sentNitro = false
 local camPos: Vector3? = nil
 local lastSpeed = 0
 local lastThrottle = 0
+local smoothSteer = 0
+local smoothThrottle = 0
 local nearTrack: { [Model]: { min: number, rel: number, speed: number } } = setmetatable({}, { __mode = "k" }) :: any
 local lastNearMiss = 0
 local camLook: Vector3? = nil
@@ -187,6 +190,12 @@ RunService.PreSimulation:Connect(function(dt: number)
 	if math.abs(keySteer) > math.abs(steer) then
 		steer = keySteer
 	end
+	-- smooth the inputs: keyboard steering ramps in and recentres quickly, like a real rack
+	local steerRate = if math.abs(steer) < math.abs(smoothSteer) or steer * smoothSteer < 0 then 9 else 5.5
+	smoothSteer += (steer - smoothSteer) * math.min(1, dt * steerRate)
+	steer = smoothSteer
+	smoothThrottle += (throttle - smoothThrottle) * math.min(1, dt * 10)
+	throttle = smoothThrottle
 
 	local capacity = stat(car, "nitroCapacity", 1)
 	Drive.NitroCapacity = capacity
@@ -397,6 +406,9 @@ RunService:BindToRenderStep("WU_ChaseCam", Enum.RenderPriority.Camera.Value + 1,
 	-- camera shake: crashes, top speed and nitro
 	Drive.Shake = math.max(0, Drive.Shake - dt * 2.5)
 	local shake = Drive.Shake * 1.2 + math.clamp((speed - 120) / 400, 0, 0.18) + (if Drive.NitroOn then 0.15 else 0)
+	if not Settings.Values.shake then
+		shake = 0
+	end
 	if shake > 0.001 then
 		local t = os.clock() * 18
 		finalPos += Vector3.new(math.noise(t, 0.3) * shake, math.noise(0.7, t) * shake, math.noise(t, 1.9) * shake * 0.5)

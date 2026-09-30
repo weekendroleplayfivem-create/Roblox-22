@@ -38,6 +38,7 @@ local raceEvent = remote("RemoteEvent", "RequestRace") :: RemoteEvent
 local respawnEvent = remote("RemoteEvent", "RespawnCar") :: RemoteEvent
 local rivalEvent = remote("RemoteEvent", "ChallengeRival") :: RemoteEvent
 local garageEvent = remote("RemoteEvent", "Garage") :: RemoteEvent
+local settingsEvent = remote("RemoteEvent", "SaveSettings") :: RemoteEvent
 local exitGarage: (s: Session.Session, respawn: boolean) -> ()
 local quitEvent = remote("RemoteEvent", "QuitRace") :: RemoteEvent
 local shopFunction = remote("RemoteFunction", "Shop") :: RemoteFunction
@@ -241,6 +242,27 @@ exitGarage = function(s: Session.Session, respawn: boolean)
 	end
 end
 
+local SETTING_TYPES: { [string]: string } = { shake = "boolean", speedLines = "boolean", blur = "boolean", units = "string", volume = "number", performance = "boolean" }
+settingsEvent.OnServerEvent:Connect(function(player, values)
+	local s = Session.Get(player)
+	if not s or type(values) ~= "table" then
+		return
+	end
+	local clean: { [string]: any } = {}
+	for k, t in SETTING_TYPES do
+		local v = values[k]
+		if type(v) == t then
+			if k == "volume" then
+				v = math.clamp(v, 0, 1)
+			elseif k == "units" and v ~= "mph" and v ~= "kmh" then
+				v = "mph"
+			end
+			clean[k] = v
+		end
+	end
+	s.profile.settings = clean
+end)
+
 garageEvent.OnServerEvent:Connect(function(player, action)
 	local s = Session.Get(player)
 	if not s then
@@ -328,6 +350,7 @@ local function snapshot(s: Session.Session)
 		blacklistBeaten = p.blacklistBeaten,
 		stats = p.stats,
 		milestones = p.milestones,
+		settings = p.settings,
 	}
 end
 

@@ -66,8 +66,12 @@ def build_rbxlx():
             folder_xml = item(sub, sub, folder_xml)
         services.setdefault(service, []).append(folder_xml)
 
-    # StreamingEnabled off: the minimap and police AI expect the whole city to be loaded.
-    workspace_props = '<bool name="StreamingEnabled">false</bool>'
+    # The city is ~50k parts, so clients stream in only what's around them.
+    workspace_props = (
+        '<bool name="StreamingEnabled">true</bool>'
+        '<int name="StreamingTargetRadius">1500</int>'
+        '<int name="StreamingMinRadius">400</int>'
+    )
     lighting_props = '<token name="Technology">4</token>'  # Future lighting for the neon look
     body = item("Workspace", "Workspace", extra_props=workspace_props)
     body += item("Lighting", "Lighting", extra_props=lighting_props)

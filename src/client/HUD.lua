@@ -8,7 +8,8 @@ local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
-local Grid = require(Shared:WaitForChild("Grid"))
+local MapDraw = require(script.Parent.MapDraw)
+local Settings = require(script.Parent.Settings)
 
 local player = Players.LocalPlayer
 
@@ -81,7 +82,7 @@ local speedo = new("Frame", {
 corner(speedo, 14)
 new("UIStroke", { Color = CYAN, Thickness = 2, Transparency = 0.3 }, speedo)
 local speedLabel = label({ Position = UDim2.fromOffset(10, 4), Size = UDim2.new(1, -80, 0, 70), Text = "0", TextXAlignment = Enum.TextXAlignment.Right }, speedo)
-label({ Position = UDim2.new(1, -68, 0, 34), Size = UDim2.fromOffset(60, 30), Text = "MPH", TextColor3 = CYAN, Font = FONT2 }, speedo)
+local unitLabel = label({ Position = UDim2.new(1, -68, 0, 34), Size = UDim2.fromOffset(60, 30), Text = "MPH", TextColor3 = CYAN, Font = FONT2 }, speedo)
 local carNameLabel = label({ Position = UDim2.fromOffset(12, 74), Size = UDim2.new(1, -24, 0, 16), Text = "", Font = FONT2, TextColor3 = Color3.fromRGB(190, 190, 210), TextXAlignment = Enum.TextXAlignment.Left }, speedo)
 -- tachometer + gear
 local gearLabel = label({ Position = UDim2.fromOffset(12, 10), Size = UDim2.fromOffset(44, 50), Text = "1", TextColor3 = Color3.fromRGB(255, 200, 60), TextXAlignment = Enum.TextXAlignment.Left }, speedo)
@@ -315,71 +316,28 @@ local _ = controlsLabel
 -- Minimap (bottom left)
 ---------------------------------------------------------------------------
 local MAP_PX = 210
-local worldSize = Grid.Half * 2 + Config.Grid.RoadWidth
-local scale = MAP_PX / worldSize
+local RADAR_RANGE = 1200 -- studs shown across the radar
+local scale = MAP_PX / RADAR_RANGE
 local minimap = new("Frame", {
 	AnchorPoint = Vector2.new(0, 1),
 	Position = UDim2.new(0, 16, 1, -20),
 	Size = UDim2.fromOffset(MAP_PX, MAP_PX),
 	BackgroundColor3 = Color3.fromRGB(12, 12, 20),
-	BackgroundTransparency = 0.2,
+	BackgroundTransparency = 0.1,
 	ClipsDescendants = true,
 }, gui)
-corner(minimap, 12)
-new("UIStroke", { Color = PINK, Thickness = 2, Transparency = 0.3 }, minimap)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, minimap)
+new("UIStroke", { Color = PINK, Thickness = 3, Transparency = 0.2 }, minimap)
+-- the radar canvas holds the whole city; it slides so your car stays in the middle
+local canvas: Frame = new("Frame", { Name = "Canvas", BackgroundTransparency = 1 }, minimap)
+local canvasPx = MapDraw.Draw(canvas, scale, false)
 
 local function toMap(pos: Vector3): UDim2
-	return UDim2.fromOffset((pos.X + worldSize / 2) * scale, (pos.Z + worldSize / 2) * scale)
+	local p = canvasPx(pos)
+	return UDim2.fromOffset(p.X, p.Y)
 end
+label({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 4), Size = UDim2.fromOffset(20, 14), Text = "N", Font = FONT2, TextColor3 = Color3.new(1, 1, 1), ZIndex = 8 }, minimap)
 
-local roadPx = math.max(2, Config.Grid.RoadWidth * scale)
-for i = 0, Grid.Size do
-	local p = Grid.Intersection(i, 0)
-	new("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.fromOffset((p.X + worldSize / 2) * scale, 0),
-		Size = UDim2.new(0, roadPx, 1, 0),
-		BackgroundColor3 = Color3.fromRGB(70, 70, 90),
-		BorderSizePixel = 0,
-	}, minimap)
-	local q = Grid.Intersection(0, i)
-	new("Frame", {
-		AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.fromOffset(0, (q.Z + worldSize / 2) * scale),
-		Size = UDim2.new(1, 0, 0, roadPx),
-		BackgroundColor3 = Color3.fromRGB(70, 70, 90),
-		BorderSizePixel = 0,
-	}, minimap)
-end
-
-local function staticDot(pos: Vector3, color: Color3, size: number, text: string?)
-	local d = new("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = toMap(pos),
-		Size = UDim2.fromOffset(size, size),
-		BackgroundColor3 = color,
-		ZIndex = 2,
-	}, minimap)
-	corner(d, size)
-	if text then
-		label({ Size = UDim2.fromScale(1, 1), Text = text, ZIndex = 3, TextStrokeTransparency = 1, TextColor3 = Color3.new(0, 0, 0) }, d)
-	end
-end
-
-local sh = Config.Blocks.Safehouse
-staticDot(Grid.BlockCenter(sh[1], sh[2]), Color3.fromRGB(0, 255, 200), 14, "S")
-for _, h in Config.Blocks.HidingSpots do
-	staticDot(Grid.BlockCenter(h[1], h[2]), Color3.fromRGB(80, 255, 120), 9, "H")
-end
-for _, b in Config.PursuitBreakers do
-	staticDot(Grid.Intersection(b[1], b[2]) + Vector3.new(36, 0, 36), Color3.fromRGB(255, 70, 70), 7)
-end
-for _, r in Config.Races do
-	local p = r.route[1]
-	staticDot(Grid.Intersection(p[1], p[2]), if r.kind == "drift" then Color3.fromRGB(255, 140, 0) else PINK, 10, "R")
-end
-
-local dynamic = new("Folder", { Name = "Dynamic" }, minimap)
 local dotPool: { Frame } = {}
 local dotsUsed = 0
 
@@ -387,7 +345,7 @@ local function dot(pos: Vector3, color: Color3, size: number)
 	dotsUsed += 1
 	local d = dotPool[dotsUsed]
 	if not d then
-		local nd: Frame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 4 }, dynamic)
+		local nd: Frame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 7 }, canvas)
 		corner(nd, 10)
 		dotPool[dotsUsed] = nd
 		d = nd
@@ -403,7 +361,7 @@ local arrow = label({
 	Size = UDim2.fromOffset(18, 18),
 	Text = "▲",
 	TextColor3 = CYAN,
-	ZIndex = 6,
+	ZIndex = 9,
 	TextStrokeTransparency = 0,
 }, minimap)
 
@@ -418,7 +376,9 @@ end
 local blink = 0
 function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, nitroOn: boolean, car: Model?)
 	blink += dt
-	speedLabel.Text = tostring(math.floor(speed * Config.MphPerStud))
+	local shown, unit = Settings.Speed(speed, Config.MphPerStud)
+	speedLabel.Text = tostring(math.floor(shown))
+	unitLabel.Text = unit
 	nitroFill.Size = UDim2.fromScale(math.clamp(nitro / math.max(capacity, 0.01), 0, 1), 1)
 	nitroFill.BackgroundColor3 = if nitroOn then Color3.fromRGB(255, 255, 255) else CYAN
 	if car then
@@ -559,7 +519,9 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	end
 	if car and car.PrimaryPart then
 		local cf = car.PrimaryPart.CFrame
-		arrow.Position = toMap(cf.Position)
+		local p = canvasPx(cf.Position)
+		canvas.Position = UDim2.fromOffset(MAP_PX / 2 - p.X, MAP_PX / 2 - p.Y)
+		arrow.Position = UDim2.fromScale(0.5, 0.5)
 		local look = cf.LookVector
 		arrow.Rotation = math.deg(math.atan2(look.X, -look.Z))
 		arrow.Visible = true

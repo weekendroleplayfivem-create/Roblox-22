@@ -17,6 +17,7 @@ local BannerEvent = Remotes:WaitForChild("Banner") :: RemoteEvent
 local Drive = require(script.Parent.DriveController)
 local HUD = require(script.Parent.HUD)
 local Sounds = require(script.Parent.Sounds)
+local Settings = require(script.Parent.Settings)
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -291,7 +292,7 @@ RunService.RenderStepped:Connect(function(dt: number)
 	if nitro then
 		intensity = math.max(intensity, 0.8)
 	end
-	if Drive.MenuOpen then
+	if Drive.MenuOpen or not Settings.Values.speedLines or Settings.Values.performance then
 		intensity = 0
 	end
 
@@ -315,7 +316,7 @@ RunService.RenderStepped:Connect(function(dt: number)
 	end
 
 	-- nitro blur + grading
-	local blurTarget = if nitro then 5 else intensity * 2
+	local blurTarget = if not Settings.Values.blur then 0 elseif nitro then 5 else intensity * 2
 	blur.Size += (blurTarget - blur.Size) * math.min(1, dt * 6)
 	local satTarget = if nitro then 0.3 else 0
 	grade.Saturation += (satTarget - grade.Saturation) * math.min(1, dt * 5)

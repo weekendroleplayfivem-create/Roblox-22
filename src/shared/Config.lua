@@ -15,7 +15,7 @@ Config.MphPerStud = 0.75
 -- City grid
 ---------------------------------------------------------------------------
 Config.Grid = {
-	Blocks = 8, -- 8x8 city blocks -> 9x9 intersections
+	Blocks = 16, -- 16x16 city blocks -> 17x17 intersections (4.8 km of city per side)
 	BlockSize = 240,
 	RoadWidth = 60,
 	GroundY = 0,
@@ -471,8 +471,8 @@ Config.Police = {
 	Accel = 50,
 	Turn = 2.4,
 	Grip = 6.5,
-	PatrolCount = 4, -- roaming patrols across the whole city (daytime)
-	NightExtraPatrols = 5, -- extra patrol cars out at night
+	PatrolCount = 10, -- roaming patrols across the whole city (daytime)
+	NightExtraPatrols = 8, -- extra patrol cars out at night
 	NightExtraCops = 2, -- extra units per pursuit at night
 	NightSpawnMult = 0.65, -- pursuit reinforcements arrive faster at night
 	SpeedLimit = 95, -- studs/s (~71 mph). Faster than this in front of a cop starts a pursuit.
@@ -740,7 +740,7 @@ Config.Ramps = {
 -- City traffic + near misses (Unbound)
 ---------------------------------------------------------------------------
 Config.Traffic = {
-	Count = 16, -- civilian cars driving around the city
+	Count = 42, -- civilian cars driving around the city
 	Speed = { 38, 55 }, -- studs/s cruising speed range
 	LaneOffset = 8, -- distance from the centre line (drive on the right)
 	NearMissMin = 6.8, -- closer than this (centre to centre) counts as a crash, not a near miss
@@ -825,5 +825,125 @@ Config.Sounds = {
 }
 
 Config.StartingCash = 5000
+
+---------------------------------------------------------------------------
+-- Map scale. Everything above was laid out on the original 8x8 grid; the city is now 16x16,
+-- so grid coordinates are doubled (routes stay on real roads, just twice as long).
+---------------------------------------------------------------------------
+local MAP_SCALE = 2
+local function scaleIJ(p: { number })
+	p[1] *= MAP_SCALE
+	p[2] *= MAP_SCALE
+end
+scaleIJ(Config.Blocks.Safehouse)
+scaleIJ(Config.Blocks.Park)
+for _, h in Config.Blocks.HidingSpots do
+	scaleIJ(h)
+end
+for _, list in { Config.SpeedCameras, Config.Ramps } do
+	for _, c in list :: { any } do
+		c.i *= MAP_SCALE
+		c.j *= MAP_SCALE
+	end
+end
+for _, b in Config.PursuitBreakers do
+	scaleIJ(b)
+end
+for _, r in Config.Races do
+	for _, p in r.route do
+		scaleIJ(p)
+	end
+	r.reward = math.floor(r.reward * 1.6)
+end
+for _, r in Config.Blacklist do
+	for _, p in r.route do
+		scaleIJ(p)
+	end
+end
+
+-- extra spots for the bigger city
+for _, h in { { 13, 3 }, { 3, 13 }, { 9, 14 }, { 14, 9 } } do
+	table.insert(Config.Blocks.HidingSpots, h)
+end
+for _, c in { { i = 9, j = 12, axis = "x" }, { i = 13, j = 5, axis = "z" }, { i = 2, j = 10, axis = "x" }, { i = 15, j = 13, axis = "z" } } do
+	table.insert(Config.SpeedCameras, c)
+end
+for _, b in { { 11, 13 }, { 13, 7 }, { 3, 11 }, { 9, 3 }, { 15, 11 }, { 5, 15 } } do
+	table.insert(Config.PursuitBreakers, b)
+end
+for _, r in { { i = 11, j = 16, axis = "x" }, { i = 16, j = 9, axis = "z" }, { i = 3, j = 7, axis = "x" }, { i = 13, j = 11, axis = "z" } } do
+	table.insert(Config.Ramps, r)
+end
+
+table.insert(Config.Races, {
+	id = "beltway_blitz",
+	name = "Beltway Blitz",
+	kind = "circuit",
+	route = { { 0, 0 }, { 8, 0 }, { 16, 0 }, { 16, 8 }, { 16, 16 }, { 8, 16 }, { 0, 16 }, { 0, 8 } },
+	laps = 1,
+	buyIn = 10000,
+	reward = 60000,
+	heat = 1.4,
+	rivals = 3,
+	rivalSpeed = 185,
+})
+table.insert(Config.Races, {
+	id = "suburb_scramble",
+	name = "Suburb Scramble",
+	kind = "sprint",
+	route = { { 2, 14 }, { 2, 10 }, { 5, 10 }, { 5, 13 }, { 8, 13 }, { 8, 11 }, { 11, 11 } },
+	laps = 1,
+	buyIn = 2000,
+	reward = 12000,
+	heat = 0.7,
+	rivals = 3,
+	rivalSpeed = 140,
+})
+table.insert(Config.Races, {
+	id = "dockyard_dash",
+	name = "Dockyard Dash",
+	kind = "sprint",
+	route = { { 12, 1 }, { 15, 1 }, { 15, 6 }, { 13, 6 }, { 13, 10 }, { 16, 10 } },
+	laps = 1,
+	buyIn = 4000,
+	reward = 20000,
+	heat = 0.9,
+	rivals = 3,
+	rivalSpeed = 160,
+})
+
+---------------------------------------------------------------------------
+-- Districts: what kind of buildings a block gets
+---------------------------------------------------------------------------
+function Config.District(bx: number, bz: number): string
+	local n = Config.Grid.Blocks
+	local cx = (bx + 0.5) / n * 2 - 1 -- -1..1
+	local cz = (bz + 0.5) / n * 2 - 1
+	local d = math.sqrt(cx * cx + cz * cz)
+	if bx >= n - 4 and d > 0.5 then
+		return "industrial" -- docks on the east side, by the ocean
+	elseif d < 0.3 then
+		return "downtown"
+	elseif d < 0.6 then
+		return "midtown"
+	end
+	return "suburb"
+end
+
+-- "signals" (traffic lights + crosswalks) in the dense districts, "stop" signs elsewhere,
+-- "plain" on the Beltway ring.
+function Config.IntersectionMode(i: number, j: number): string
+	local n = Config.Grid.Blocks
+	if i == 0 or j == 0 or i == n or j == n then
+		return "plain"
+	end
+	for _, b in { { i - 1, j - 1 }, { i, j - 1 }, { i - 1, j }, { i, j } } do
+		local d = Config.District(b[1], b[2])
+		if d == "downtown" or d == "midtown" then
+			return "signals"
+		end
+	end
+	return "stop"
+end
 
 return Config

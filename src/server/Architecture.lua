@@ -416,9 +416,10 @@ local function busStop(pos: Vector3, facing: Vector3)
 end
 
 -- Sidewalk ring, curb, trees and furniture around one city block.
-function Architecture.Sidewalks(c: Vector3, block: number, hasBusStop: boolean)
-	local walk = 14
-	local paving = rgb(168, 165, 158)
+function Architecture.Sidewalks(c: Vector3, block: number, hasBusStop: boolean, style: string?)
+	local kind = style or "city"
+	local walk = if kind == "suburb" then 8 elseif kind == "industrial" then 6 else 14
+	local paving = if kind == "industrial" then rgb(130, 128, 124) else rgb(168, 165, 158)
 	for _, s in { -1, 1 } do
 		deco({ Name = "Sidewalk", Size = Vector3.new(block, 0.04, walk), CFrame = CFrame.new(c.X, SURFACE + 0.02, c.Z + s * (block / 2 - walk / 2)), Color = paving, Material = Enum.Material.Pavement })
 		deco({ Name = "Sidewalk", Size = Vector3.new(walk, 0.04, block - walk * 2), CFrame = CFrame.new(c.X + s * (block / 2 - walk / 2), SURFACE + 0.02, c.Z), Color = paving, Material = Enum.Material.Pavement })
@@ -427,7 +428,10 @@ function Architecture.Sidewalks(c: Vector3, block: number, hasBusStop: boolean)
 	end
 	-- trees along each side (the street lamps sit in the middle of each side)
 	local inset = block / 2 - 6
-	for _, along in { -60, 60 } do
+	if kind == "industrial" then
+		return
+	end
+	for _, along in (if kind == "suburb" then { -85 } else { -60, 60 }) :: { number } do
 		tree(c + Vector3.new(along, 0, -inset))
 		tree(c + Vector3.new(along, 0, inset))
 		tree(c + Vector3.new(-inset, 0, along))
@@ -437,6 +441,9 @@ function Architecture.Sidewalks(c: Vector3, block: number, hasBusStop: boolean)
 	local corner = c + Vector3.new(inset - 4, 0, inset - 14)
 	deco({ Name = "Hydrant", Shape = Enum.PartType.Cylinder, Size = Vector3.new(2.4, 1, 1), CFrame = CFrame.new(corner.X, SURFACE + 1.2, corner.Z) * CFrame.Angles(0, 0, math.rad(90)), Color = rgb(190, 30, 30), Material = Enum.Material.Metal })
 	deco({ Name = "HydrantCap", Shape = Enum.PartType.Ball, Size = Vector3.new(1.1, 1.1, 1.1), CFrame = CFrame.new(corner.X, SURFACE + 2.5, corner.Z), Color = rgb(190, 30, 30), Material = Enum.Material.Metal })
+	if kind == "suburb" then
+		return
+	end
 	local bin = c + Vector3.new(-inset + 3, 0, inset - 30)
 	deco({ Name = "Bin", Size = Vector3.new(2, 3.2, 2), CFrame = CFrame.new(bin.X, SURFACE + 1.6, bin.Z), Color = rgb(40, 70, 50), Material = Enum.Material.Metal })
 	if hasBusStop then
@@ -476,15 +483,30 @@ local function trafficLight(corner: Vector3, armDir: Vector3, facing: Vector3, a
 	end
 end
 
-function Architecture.Intersection(c: Vector3, road: number, interior: boolean)
+local function stopSign(corner: Vector3, facing: Vector3)
+	local pos = Vector3.new(corner.X, SURFACE, corner.Z)
+	deco({ Name = "SignPost", Size = Vector3.new(0.3, 8, 0.3), CFrame = CFrame.new(pos + Vector3.new(0, 4, 0)), Color = rgb(150, 150, 155), Material = Enum.Material.Metal })
+	local cf = CFrame.lookAt(pos + Vector3.new(0, 8.5, 0), pos + Vector3.new(0, 8.5, 0) + facing)
+	-- two overlapping squares make an octagon
+	local a = deco({ Name = "StopSign", Size = Vector3.new(2.6, 2.6, 0.1), CFrame = cf, Color = rgb(190, 20, 25) })
+	deco({ Name = "StopSign", Size = Vector3.new(2.6, 2.6, 0.1), CFrame = cf * CFrame.Angles(0, 0, math.rad(45)), Color = rgb(190, 20, 25) })
+	local label = deco({ Name = "StopText", Size = Vector3.new(2.2, 0.9, 0.02), CFrame = cf * CFrame.new(0, 0, -0.07), Color = rgb(190, 20, 25), Transparency = 1 })
+	surfaceText(label, "STOP", rgb(255, 255, 255), false)
+	local _ = a
+end
+
+-- mode: "signals" (city: crosswalks + traffic lights), "stop" (stop signs) or "plain"
+function Architecture.Intersection(c: Vector3, road: number, mode: string)
 	local white = rgb(232, 232, 228)
 	for _, dir in { Vector3.xAxis, -Vector3.xAxis, Vector3.zAxis, -Vector3.zAxis } do
 		local across = dir:Cross(Vector3.yAxis)
 		local cw = c + dir * (road / 2 + 4)
-		for k = -2.5, 2.5 do
-			local p = cw + across * (k * 8.5)
-			local size = if dir.X ~= 0 then Vector3.new(6, 0.04, 3.2) else Vector3.new(3.2, 0.04, 6)
-			deco({ Name = "Crosswalk", Size = size, CFrame = CFrame.new(p.X, SURFACE + 0.03, p.Z), Color = white })
+		if mode == "signals" then
+			for k = -2.5, 2.5 do
+				local p = cw + across * (k * 8.5)
+				local size = if dir.X ~= 0 then Vector3.new(6, 0.04, 3.2) else Vector3.new(3.2, 0.04, 6)
+				deco({ Name = "Crosswalk", Size = size, CFrame = CFrame.new(p.X, SURFACE + 0.03, p.Z), Color = white })
+			end
 		end
 		-- stop line on the lanes approaching the intersection from this side
 		local travel = -dir
@@ -493,7 +515,13 @@ function Architecture.Intersection(c: Vector3, road: number, interior: boolean)
 		local size = if dir.X ~= 0 then Vector3.new(1.2, 0.04, road / 2 - 3) else Vector3.new(road / 2 - 3, 0.04, 1.2)
 		deco({ Name = "StopLine", Size = size, CFrame = CFrame.new(sl.X, SURFACE + 0.03, sl.Z), Color = white })
 	end
-	if interior then
+	if mode == "stop" then
+		local o = road / 2 + 3
+		stopSign(c + Vector3.new(o, 0, o), Vector3.zAxis)
+		stopSign(c + Vector3.new(-o, 0, -o), -Vector3.zAxis)
+		stopSign(c + Vector3.new(-o, 0, o), -Vector3.xAxis)
+		stopSign(c + Vector3.new(o, 0, -o), Vector3.xAxis)
+	elseif mode == "signals" then
 		local o = road / 2 + 3
 		-- traffic heading -Z (from +Z) drives on the +X side: pole on the (+X, +Z) corner
 		trafficLight(c + Vector3.new(o, 0, o), -Vector3.xAxis, Vector3.zAxis, "z")
@@ -503,6 +531,183 @@ function Architecture.Intersection(c: Vector3, road: number, interior: boolean)
 		trafficLight(c + Vector3.new(-o, 0, o), -Vector3.zAxis, -Vector3.xAxis, "x")
 		-- traffic heading -X (from +X) drives on the -Z side
 		trafficLight(c + Vector3.new(o, 0, -o), Vector3.zAxis, Vector3.xAxis, "x")
+	end
+end
+
+---------------------------------------------------------------------------
+-- Suburbs: detached houses with gable roofs, driveways and garages
+---------------------------------------------------------------------------
+local SIDING = { rgb(232, 226, 210), rgb(200, 214, 222), rgb(214, 200, 176), rgb(186, 204, 180), rgb(240, 236, 228), rgb(222, 190, 170), rgb(170, 180, 196) }
+local ROOFS = { rgb(70, 62, 60), rgb(110, 60, 45), rgb(60, 66, 76), rgb(90, 80, 70), rgb(140, 72, 50) }
+
+local function house(front: Vector3, n: Vector3)
+	-- `front` is the middle of the plot on the street side, `n` points at the street
+	local w = rng:NextNumber(30, 38)
+	local d = rng:NextNumber(24, 30)
+	local wallH = if rng:NextNumber() < 0.45 then 20 else 11
+	local center = front - n * (22 + d / 2)
+	local hcf = CFrame.lookAt(Vector3.new(center.X, SURFACE, center.Z), Vector3.new(center.X, SURFACE, center.Z) + n)
+	local siding = pick(SIDING)
+	local roofColor = pick(ROOFS)
+	local body = Instance.new("Part")
+	body.Name = "House"
+	body.Anchored = true
+	body.Size = Vector3.new(w, wallH, d)
+	body.CFrame = hcf * CFrame.new(0, wallH / 2, 0)
+	body.Color = siding
+	body.Material = if rng:NextNumber() < 0.5 then Enum.Material.WoodPlanks else Enum.Material.Plaster
+	body.TopSurface = Enum.SurfaceType.Smooth
+	body.Parent = buildings
+	-- gable roof: two wedges meeting at the ridge
+	local rh = rng:NextNumber(6, 9)
+	local roofMat = if rng:NextNumber() < 0.5 then Enum.Material.RoofShingles else Enum.Material.ClayRoofTiles
+	deco({ ClassName = nil, Name = "Roof", Size = Vector3.new(w + 2, rh, d / 2 + 1), CFrame = hcf * CFrame.new(0, wallH + rh / 2, -d / 4 - 0.5), Color = roofColor, Material = roofMat }, nil, "WedgePart")
+	deco({ Name = "Roof", Size = Vector3.new(w + 2, rh, d / 2 + 1), CFrame = hcf * CFrame.new(0, wallH + rh / 2, d / 4 + 0.5) * CFrame.Angles(0, math.pi, 0), Color = roofColor, Material = roofMat }, nil, "WedgePart")
+	-- chimney
+	if rng:NextNumber() < 0.5 then
+		deco({ Name = "Chimney", Size = Vector3.new(2.5, rh + 3, 2.5), CFrame = hcf * CFrame.new(w / 2 - 4, wallH + (rh + 3) / 2, 2), Color = rgb(130, 70, 55), Material = Enum.Material.Brick })
+	end
+	-- front: door, windows, garage
+	local faceZ = -d / 2 - 0.05
+	deco({ Name = "Door", Size = Vector3.new(3.4, 7, 0.2), CFrame = hcf * CFrame.new(-2, 3.5, faceZ), Color = pick({ rgb(120, 30, 30), rgb(40, 60, 90), rgb(60, 45, 35), rgb(30, 30, 32) }), Material = Enum.Material.Wood })
+	local lit = rng:NextNumber() < 0.6
+	for _, x in { -w / 2 + 5, 5 } do
+		local win = deco({ Name = "Window", Size = Vector3.new(4.5, 4, 0.2), CFrame = hcf * CFrame.new(x - 2, 5.5, faceZ), Color = rgb(60, 80, 96), Material = Enum.Material.Glass, Reflectance = 0.2 })
+		lightAtNight(win, lit, rgb(150, 120, 80))
+		deco({ Name = "Sill", Size = Vector3.new(5.2, 0.4, 0.5), CFrame = hcf * CFrame.new(x - 2, 3.3, faceZ - 0.2), Color = rgb(240, 240, 235) })
+		if wallH > 15 then
+			local up = deco({ Name = "Window", Size = Vector3.new(4.5, 4, 0.2), CFrame = hcf * CFrame.new(x - 2, 15, faceZ), Color = rgb(60, 80, 96), Material = Enum.Material.Glass, Reflectance = 0.2 })
+			lightAtNight(up, lit and rng:NextNumber() < 0.6, rgb(150, 120, 80))
+		end
+	end
+	local garageX = w / 2 - 6.5
+	deco({ Name = "GarageDoor", Size = Vector3.new(10, 8, 0.2), CFrame = hcf * CFrame.new(garageX, 4, faceZ), Color = rgb(235, 235, 230), Material = Enum.Material.SmoothPlastic })
+	-- driveway to the street and a porch step
+	local driveLen = 22 + 1
+	deco({ Name = "Driveway", Size = Vector3.new(11, 0.05, driveLen), CFrame = hcf * CFrame.new(garageX, 0.04, -d / 2 - driveLen / 2), Color = rgb(150, 148, 142), Material = Enum.Material.Concrete })
+	deco({ Name = "Path", Size = Vector3.new(3, 0.05, driveLen), CFrame = hcf * CFrame.new(-2, 0.04, -d / 2 - driveLen / 2), Color = rgb(170, 165, 155), Material = Enum.Material.Pavement })
+	-- a parked car-shaped block in some driveways would be heavy; a mailbox is cheap
+	deco({ Name = "Mailbox", Size = Vector3.new(0.9, 0.9, 1.6), CFrame = hcf * CFrame.new(-6, 3.6, -d / 2 - driveLen + 1.5), Color = rgb(50, 50, 55), Material = Enum.Material.Metal })
+	deco({ Name = "MailPost", Size = Vector3.new(0.25, 3.2, 0.25), CFrame = hcf * CFrame.new(-6, 1.6, -d / 2 - driveLen + 1.5), Color = rgb(110, 85, 60), Material = Enum.Material.Wood })
+	-- back yard tree
+	if rng:NextNumber() < 0.6 then
+		local t = hcf * CFrame.new(rng:NextNumber(-w / 2, w / 2), 0, d / 2 + 10)
+		local h = rng:NextNumber(8, 12)
+		deco({ Name = "Trunk", Shape = Enum.PartType.Cylinder, Size = Vector3.new(h, 1, 1), CFrame = CFrame.new(t.Position + Vector3.new(0, h / 2, 0)) * CFrame.Angles(0, 0, math.rad(90)), Color = rgb(88, 64, 46), Material = Enum.Material.Wood })
+		deco({ Name = "Canopy", Shape = Enum.PartType.Ball, Size = Vector3.new(11, 11, 11), CFrame = CFrame.new(t.Position + Vector3.new(0, h + 2, 0)), Color = pick({ rgb(52, 110, 50), rgb(66, 125, 58), rgb(80, 130, 60) }), Material = Enum.Material.LeafyGrass })
+	end
+end
+
+function Architecture.Suburb(c: Vector3, block: number)
+	local half = block / 2
+	for _, n in { Vector3.xAxis, -Vector3.xAxis, Vector3.zAxis, -Vector3.zAxis } do
+		local across = n:Cross(Vector3.yAxis)
+		for _, along in { -50, 50 } do
+			if rng:NextNumber() < 0.92 then
+				house(c + n * half + across * along, n)
+			end
+		end
+	end
+	-- back-yard fences dividing the lots
+	for _, s in { -1, 1 } do
+		deco({ Name = "Fence", Size = Vector3.new(0.4, 4, block - 90), CFrame = CFrame.new(c.X + s * 6, SURFACE + 2, c.Z), Color = rgb(150, 115, 80), Material = Enum.Material.WoodPlanks })
+	end
+end
+
+---------------------------------------------------------------------------
+-- Industrial port: warehouses, shipping containers, cranes and fuel tanks
+---------------------------------------------------------------------------
+local CONTAINER_COLORS = { rgb(170, 50, 40), rgb(40, 90, 150), rgb(60, 120, 70), rgb(200, 140, 40), rgb(120, 120, 125), rgb(150, 70, 30), rgb(30, 60, 90) }
+
+local function container(pos: Vector3, rotY: number)
+	local p = Instance.new("Part")
+	p.Name = "Container"
+	p.Anchored = true
+	p.Size = Vector3.new(8, 8.5, 20)
+	p.CFrame = CFrame.new(pos + Vector3.new(0, 4.25, 0)) * CFrame.Angles(0, rotY, 0)
+	p.Color = pick(CONTAINER_COLORS)
+	p.Material = Enum.Material.CorrodedMetal
+	p.Parent = buildings
+	-- ribbing
+	deco({ Name = "Rib", Size = Vector3.new(8.2, 0.3, 20.2), CFrame = p.CFrame * CFrame.new(0, 3, 0), Color = p.Color:Lerp(rgb(0, 0, 0), 0.25) })
+	deco({ Name = "Rib", Size = Vector3.new(8.2, 0.3, 20.2), CFrame = p.CFrame * CFrame.new(0, -3, 0), Color = p.Color:Lerp(rgb(0, 0, 0), 0.25) })
+end
+
+local function warehouse(center: Vector3, sx: number, sz: number, outward: Vector3)
+	local h = rng:NextNumber(24, 36)
+	local body = core(center.X, center.Z, sx, sz, SURFACE, SURFACE + h, pick({ rgb(150, 155, 160), rgb(120, 130, 140), rgb(170, 160, 140), rgb(90, 100, 110) }), Enum.Material.CorrodedMetal)
+	local _ = body
+	-- corrugated look: vertical ribs
+	facade(center.X, center.Z, sx, sz, SURFACE, SURFACE + h, { floorH = 999, bandH = 0, bay = 4, pierW = 0.4, depth = 0.25, color = rgb(110, 115, 120), material = Enum.Material.Metal, noBands = true })
+	-- shallow pitched roof
+	local ridgeAxisX = sx >= sz
+	local rw = if ridgeAxisX then sx else sz
+	local rd = if ridgeAxisX then sz else sx
+	local rot = if ridgeAxisX then 0 else math.rad(90)
+	local base = CFrame.new(center.X, SURFACE + h, center.Z) * CFrame.Angles(0, rot, 0)
+	deco({ Name = "Roof", Size = Vector3.new(rw + 1, 4, rd / 2 + 0.5), CFrame = base * CFrame.new(0, 2, -rd / 4), Color = rgb(95, 100, 105), Material = Enum.Material.Metal }, nil, "WedgePart")
+	deco({ Name = "Roof", Size = Vector3.new(rw + 1, 4, rd / 2 + 0.5), CFrame = base * CFrame.new(0, 2, rd / 4) * CFrame.Angles(0, math.pi, 0), Color = rgb(95, 100, 105), Material = Enum.Material.Metal }, nil, "WedgePart")
+	-- loading bays facing the street
+	local half = if outward.X ~= 0 then sx / 2 else sz / 2
+	local width = if outward.X ~= 0 then sz else sx
+	for k = -1, 1 do
+		local lateral = if outward.X ~= 0 then Vector3.new(0, 0, k * width / 3.5) else Vector3.new(k * width / 3.5, 0, 0)
+		deco({ Name = "LoadingDoor", Size = Vector3.new(12, 14, 0.3), CFrame = onFace(center + lateral, outward, half, SURFACE + 7, 0.1), Color = rgb(200, 170, 40), Material = Enum.Material.Metal })
+	end
+	local sign = deco({ Name = "WarehouseSign", Size = Vector3.new(math.min(width * 0.6, 40), 4, 0.3), CFrame = onFace(center, outward, half, SURFACE + h - 4, 0.2), Color = rgb(30, 40, 60) })
+	surfaceText(sign, pick({ "NEON BAY LOGISTICS", "HARBOR FREIGHT CO.", "PACIFIC SHIPPING", "DOCK 7", "COLD STORAGE" }), rgb(240, 240, 240), false)
+end
+
+local function crane(pos: Vector3)
+	local yellow = rgb(230, 175, 30)
+	for _, o in { Vector3.new(-12, 0, -8), Vector3.new(12, 0, -8), Vector3.new(-12, 0, 8), Vector3.new(12, 0, 8) } do
+		deco({ Name = "CraneLeg", Size = Vector3.new(2, 60, 2), CFrame = CFrame.new(pos + o + Vector3.new(0, 30, 0)), Color = yellow, Material = Enum.Material.Metal })
+	end
+	deco({ Name = "CraneBeam", Size = Vector3.new(4, 4, 90), CFrame = CFrame.new(pos + Vector3.new(0, 62, 20)), Color = yellow, Material = Enum.Material.Metal })
+	deco({ Name = "CraneCab", Size = Vector3.new(6, 5, 6), CFrame = CFrame.new(pos + Vector3.new(0, 57, 30)), Color = rgb(60, 60, 64), Material = Enum.Material.Metal })
+	local beacon = deco({ Name = "Beacon", Shape = Enum.PartType.Ball, Size = Vector3.new(1.2, 1.2, 1.2), CFrame = CFrame.new(pos + Vector3.new(0, 65, 64)), Color = rgb(255, 40, 30), Material = Enum.Material.Neon })
+	local _ = beacon
+end
+
+local function fuelTank(pos: Vector3)
+	deco({ Name = "FuelTank", Shape = Enum.PartType.Cylinder, Size = Vector3.new(18, 30, 30), CFrame = CFrame.new(pos + Vector3.new(0, 9, 0)) * CFrame.Angles(0, 0, math.rad(90)), Color = rgb(220, 222, 225), Material = Enum.Material.Metal })
+	local p = Instance.new("Part")
+	p.Name = "FuelTankCore"
+	p.Anchored = true
+	p.Transparency = 1
+	p.Size = Vector3.new(22, 18, 22)
+	p.CFrame = CFrame.new(pos + Vector3.new(0, 9, 0))
+	p.Parent = buildings
+end
+
+function Architecture.Industrial(c: Vector3, block: number, docks: boolean)
+	local roll = rng:NextNumber()
+	if roll < 0.55 then
+		-- two warehouses facing the east-west streets
+		warehouse(c + Vector3.new(0, 0, -50), block - 50, 80, -Vector3.zAxis)
+		warehouse(c + Vector3.new(0, 0, 55), block - 60, 70, Vector3.zAxis)
+	elseif roll < 0.8 then
+		-- container yard
+		for row = -2, 2 do
+			for col = -1, 1 do
+				if rng:NextNumber() < 0.8 then
+					local p = c + Vector3.new(col * 30, 0, row * 36)
+					container(p, 0)
+					if rng:NextNumber() < 0.45 then
+						container(p + Vector3.new(0, 8.5, 0), 0)
+					end
+				end
+			end
+		end
+	else
+		-- tank farm
+		for _, o in { Vector3.new(-45, 0, -45), Vector3.new(45, 0, -45), Vector3.new(-45, 0, 45), Vector3.new(45, 0, 45) } do
+			fuelTank(c + o)
+		end
+		warehouse(c, 60, 40, Vector3.xAxis)
+	end
+	if docks then
+		crane(c + Vector3.new(block / 2 - 30, 0, rng:NextNumber(-60, 60)))
 	end
 end
 

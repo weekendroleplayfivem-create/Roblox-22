@@ -13,6 +13,7 @@ local TweenService = game:GetService("TweenService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local Drive = require(script.Parent.DriveController)
+local Settings = require(script.Parent.Settings)
 
 local player = Players.LocalPlayer
 local Sounds = {}
@@ -21,6 +22,9 @@ local B = S.Builtin
 
 local function new(className: string, props: { [string]: any }, parent: Instance?): any
 	local inst = Instance.new(className)
+	if inst:IsA("Sound") then
+		inst.SoundGroup = Settings.Master
+	end
 	for k, v in props do
 		(inst :: any)[k] = v
 	end

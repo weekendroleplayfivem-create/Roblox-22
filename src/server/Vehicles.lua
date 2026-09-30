@@ -141,6 +141,12 @@ function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 	car:SetAttribute("CarName", def.name)
 	Vehicles.WriteStats(car, stats)
 	local root = car.PrimaryPart :: BasePart
+	-- streaming: the owner must always have their car, and the ground where it lands
+	car.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
+	local target = if s.inGarage then Showroom.CarCFrame.Position else (ground :: CFrame).Position
+	pcall(function()
+		s.player:RequestStreamAroundAsync(target, 4)
+	end)
 	if s.inGarage then
 		-- parked on the showroom turntable while the garage menu is open
 		car:PivotTo(Showroom.CarCFrame + Vector3.new(0, root.Size.Y / 2, 0))

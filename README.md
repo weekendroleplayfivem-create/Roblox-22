@@ -14,6 +14,8 @@ in code, so you don't need any models, meshes or assets.
 | Reset car to road | R | Y | RESET button |
 | Interact (start race / garage / quit race) | E | B | on-screen prompt |
 | Garage (at the safehouse) | G | — | on-screen prompt |
+| City map | M | — | menu → CITY MAP |
+| Pause menu | P | — | ☰ button |
 
 ### The loop
 1. **Race.** Drive into a pink race marker (**R** on the minimap) and press **E**. You pay a buy-in
@@ -27,6 +29,42 @@ in code, so you don't need any models, meshes or assets.
    (**S**). If you get busted, you lose all of it. Banking at the safehouse also clears your heat.
 5. **Climb the Blacklist.** Earn total bounty and race wins, then challenge Blacklist rivals #5 → #1
    from the garage. Beat one and you win their car's **pink slip**.
+
+### Big city update
+- **Better driving:**
+  - Smooth steering input that ramps in and recentres quickly.
+  - The car has yaw inertia: it rotates into turns instead of snapping.
+  - Weight transfer: braking sharpens turn-in, and throttle settles the car.
+  - A traction limit off the line and engine braking.
+  - **Unbound-style brake-to-drift:** tap the brake, then get back on the gas while steering.
+  - **Drift assist:** holding the throttle keeps the slide going, and the car won't spin out past
+    about 60 degrees.
+  - A moment of looseness after landing a jump.
+- **A WAY bigger map:** 16×16 blocks (4.8 km a side, 4× the area).
+  - **Downtown:** glass skyscrapers.
+  - **Midtown:** brick apartments, offices and shops.
+  - **Suburbs:** detached houses with gable roofs, chimneys, driveways, garages, mailboxes, back
+    yards and fences.
+  - **Industrial docks** on the east side: warehouses with loading bays, stacked shipping
+    containers, tank farms and harbour cranes.
+  - **The Beltway:** a freeway ring road with lane lines, guard rails and green exit-sign gantries.
+  - **Terrain:** an ocean with beaches to the east and south, and hills and snowy mountains to the
+    north and west.
+  - Traffic lights and crosswalks in the dense districts, stop signs in the suburbs and docks.
+  - 42 traffic cars, more police (10 patrols by day, +8 at night) and 3 new races: Beltway Blitz,
+    Suburb Scramble and Dockyard Dash. Four new hiding spots, more speed cameras, pursuit
+    breakers and ramps.
+  - **StreamingEnabled** is on, so each player only loads the area around them. Cop cars and
+    player cars stay visible city-wide.
+- **Better menus:**
+  - A new **main menu**: cinematic camera shots, animated buttons, a player card with your stats,
+    **Settings**, How to play, Credits and a rotating tips bar.
+  - **Settings** (saved to your profile): camera shake, speed lines, motion blur, MPH or KM/H,
+    volume and a performance mode (turns off shadows and heavy post effects).
+  - **Pause menu:** press P or the ☰ button.
+  - **Radar minimap** that follows your car, with district colours.
+  - **Full city map:** press M. It shows every race with its name, the safehouse, hiding spots
+    and live police.
 
 ### Sound, better cars and the garage interior
 - **Sound:**
@@ -148,8 +186,8 @@ After you change anything under `src/`, rebuild the place file without Rojo:
 python3 tools/build.py
 ```
 
-> Keep **Workspace.StreamingEnabled** off (the place file and Rojo project already do this).
-> The minimap and police AI expect the whole city to be loaded.
+> **Workspace.StreamingEnabled** is on (the place file and Rojo project set it, with a 1500-stud
+> target radius). The city is too big to send to every player at once.
 
 ## Project layout
 ```
@@ -180,7 +218,10 @@ src/client/   (StarterPlayerScripts.Client)
   CarVisuals.lua    spinning / steering wheels, headlights at night, brake lights
   Effects.lua       banners, speed lines, blur, near-miss popups, GPS arrow
   Sounds.lua        engine synth, wind, tyres, backfires, crashes, explosions, UI sounds
-  Menu.lua          title screen
+  Menu.lua          main menu + pause menu (settings, how to play, credits, player card)
+  Settings.lua      player settings (saved in the profile)
+  MapDraw.lua       draws the city for the radar and the full map
+  FullMap.lua       full-screen city map (M)
 ```
 
 You can change almost everything in `src/shared/Config.lua`, including car stats, prices, heat
