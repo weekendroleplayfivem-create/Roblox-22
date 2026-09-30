@@ -20,6 +20,9 @@ local Garage = require(script.Parent.Garage)
 require(script.Parent.CarVisuals)
 require(script.Parent.Effects)
 require(script.Parent.Sounds)
+local BlackMarket = require(script.Parent.BlackMarket)
+require(script.Parent.Collectibles)
+require(script.Parent.Weather)
 require(script.Parent.Menu)
 
 local player = Players.LocalPlayer
@@ -58,6 +61,8 @@ local function doPrompt()
 		else
 			Garage.Enter()
 		end
+	elseif action.kind == "blackmarket" then
+		BlackMarket.Toggle()
 	elseif action.kind == "quit" then
 		QuitRace:FireServer()
 	end
@@ -99,6 +104,11 @@ local function updatePrompt(pos: Vector3?)
 	end
 	if mode ~= "idle" and mode ~= nil then
 		HUD.SetPrompt(nil)
+		return
+	end
+	if player:GetAttribute("AtBlackMarket") then
+		promptAction = { kind = "blackmarket" }
+		HUD.SetPrompt(if BlackMarket.Open then "[E] Close the Black Market" else "[E] Black Market  (roof weapons)")
 		return
 	end
 	if player:GetAttribute("AtSafehouse") then
@@ -200,6 +210,7 @@ RunService.RenderStepped:Connect(function(dt)
 	HUD.Update(dt, Drive.Speed, Drive.Nitro, Drive.NitroCapacity, Drive.NitroOn, car)
 	local st = Drive.State
 	HUD.SetEngine(Drive.Gear, Drive.Rpm, st ~= nil and st.speed < -1)
+	HUD.SetBurst(Drive.BurstMode)
 	promptTimer += dt
 	if promptTimer > 0.2 then
 		promptTimer = 0
@@ -207,6 +218,9 @@ RunService.RenderStepped:Connect(function(dt)
 		updatePrompt(pos)
 		if Garage.Open and not player:GetAttribute("AtSafehouse") and not Garage.InGarage() then
 			Garage.Toggle(false)
+		end
+		if BlackMarket.Open and not player:GetAttribute("AtBlackMarket") then
+			BlackMarket.Toggle(false)
 		end
 	end
 	sirenTimer += dt

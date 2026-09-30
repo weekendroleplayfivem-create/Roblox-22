@@ -168,6 +168,7 @@ local function escaped(s: Session.Session)
 	Session.MaxStat(s, "maxHeatEvaded", Session.HeatLevel(s))
 	Session.MaxStat(s, "bestBounty", reward)
 	Session.AddUnbanked(s, reward, "Bounty cash (take it to the safehouse)")
+	Session.AddRep(s, 250 * math.max(1, Session.HeatLevel(s)), "Escape")
 	endPursuit(s)
 end
 
@@ -201,7 +202,17 @@ local function copThink(ai: AIDriver.AI, _dt: number)
 			end
 			state.speedMult = mult
 			local lead = math.clamp(dist / 200, 0.1, 0.6)
-			AIDriver.DriveTo(ai, target + vel * lead, dist < 60)
+			local aim = target + vel * lead
+			if dist < 45 then
+				-- close behind: go for a PIT on the rear quarter instead of the bumper
+				local pcf = (car.PrimaryPart :: BasePart).CFrame
+				local rel = pcf:PointToObjectSpace(pos)
+				if rel.Z > 0 then
+					local side = if rel.X >= 0 then 1 else -1
+					aim = pcf:PointToWorldSpace(Vector3.new(side * 3.5, 0, 3)) + vel * 0.15
+				end
+			end
+			AIDriver.DriveTo(ai, aim, dist < 60)
 			-- hit the nitro to catch up on long straights
 			ai.input.nitro = dist > 180 and math.abs(ai.input.steer) < 0.3
 		else
@@ -339,6 +350,7 @@ wreck = function(ai: AIDriver.AI, by: Session.Session?)
 	if by and by.mode ~= "idle" then
 		by.copsWrecked += 1
 		Session.AddStat(by, "copsWrecked", 1)
+		Session.AddRep(by, 50)
 		by.bounty += Config.Bounty.CopWrecked * Session.NightMult()
 		by.heat = math.min(5, by.heat + 0.12)
 		Session.Notify(by.player, "COP WRECKED  +" .. Config.Bounty.CopWrecked .. " bounty", Color3.fromRGB(255, 160, 60))
@@ -877,6 +889,28 @@ function Police.Init(info: MapBuilder.MapInfo)
 			maintainPatrols()
 		end
 	end)
+end
+
+-- Weapons: damage / stun a police car. `by` gets the bounty and heat.
+function Police.DamageCop(ai: AIDriver.AI, amount: number, by: Session.Session?)
+	if not ai.alive or ai.data.wrecked or ai.kind ~= "cop" then
+		return
+	end
+	ai.data.health = (ai.data.health or P.CopHealth) - amount
+	if by then
+		if by.mode == "idle" and not by.race then
+			startPursuit(by, "Attacking the police!")
+		end
+		by.heat = math.min(5, by.heat + 0.08)
+		by.bounty += 200 * Session.NightMult()
+	end
+	if ai.data.health <= 0 then
+		wreck(ai, by)
+	end
+end
+
+function Police.IsCop(ai: AIDriver.AI): boolean
+	return ai.kind == "cop" and not ai.data.wrecked
 end
 
 function Police.SetBustedCallback(fn: (s: Session.Session) -> ())

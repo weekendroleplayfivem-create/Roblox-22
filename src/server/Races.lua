@@ -33,9 +33,17 @@ type Race = {
 	startTime: number,
 	finishedCount: number,
 	rival: Config.Rival?,
-	driftScore: number,
+	driftScore: number, -- drift and takeover score
 	folder: Folder,
+	sideBet: { racer: Racer, stake: number }?,
+	center: Vector3, -- takeover zone centre
 }
+
+local spawnTakeoverProps: (race: Race) -> ()
+
+local function scored(kind: string): boolean
+	return kind == "drift" or kind == "takeover"
+end
 
 local racesFolder = Instance.new("Folder")
 racesFolder.Name = "Races"
@@ -130,7 +138,17 @@ local function finishPlayer(race: Race, place: number?)
 	race.state = "done"
 	local night = Session.NightMult()
 	local heatMult = Session.HeatPayoutMult(s)
-	if def.kind == "drift" then
+	-- side bet against a named rival
+	local bet = race.sideBet
+	if bet then
+		local beat = place ~= nil and (not bet.racer.finished or (bet.racer.place or 99) > place)
+		if beat then
+			Session.AddUnbanked(s, bet.stake * 2, "SIDE BET WON vs " .. bet.racer.name)
+		else
+			Session.Notify(s.player, "Side bet lost to " .. bet.racer.name .. " (-$" .. bet.stake .. ")", Color3.fromRGB(255, 90, 90))
+		end
+	end
+	if scored(def.kind) then
 		local target = def.driftTarget or 1
 		if race.driftScore >= target then
 			local ratio = math.min(race.driftScore / target, 2)
@@ -138,6 +156,10 @@ local function finishPlayer(race: Race, place: number?)
 			s.profile.racesWon += 1
 			Session.Banner(s.player, "DRIFT EVENT COMPLETE", "Score " .. math.floor(race.driftScore), GOLD)
 			Session.AddUnbanked(s, payout, def.name .. " winnings")
+			Session.AddRep(s, if def.kind == "takeover" then 500 else 400, "Event complete")
+			if def.kind == "takeover" then
+				Session.AddStat(s, "takeovers", 1)
+			end
 		else
 			Session.Banner(s.player, "TARGET MISSED", math.floor(race.driftScore) .. " / " .. target, Color3.fromRGB(255, 90, 90))
 		end
@@ -153,6 +175,7 @@ local function finishPlayer(race: Race, place: number?)
 				Session.Banner(s.player, "BLACKLIST #" .. rival.rank .. " DEFEATED", string.upper(rival.name) .. " is off the list", GOLD)
 				Session.Notify(s.player, "PINK SLIP: " .. (if carDef then carDef.name else rival.carId) .. " is now in your garage", GOLD)
 				Session.AddUnbanked(s, rival.reward, "Blacklist reward")
+				Session.AddRep(s, 2000, "Blacklist win")
 			else
 				Session.Banner(s.player, "YOU LOST", string.upper(rival.name) .. " beat you. Try again!", Color3.fromRGB(255, 90, 90))
 			end
@@ -166,11 +189,13 @@ local function finishPlayer(race: Race, place: number?)
 			if frac > 0 then
 				Session.AddUnbanked(s, (def.reward + def.buyIn) * frac * night * heatMult, def.name .. " winnings")
 			end
+			local repByPlace = { 500, 250, 150 }
+			Session.AddRep(s, repByPlace[place] or 50, "Race finish")
 		end
 	else
 		Session.Notify(s.player, "Race abandoned", Color3.fromRGB(255, 90, 90))
 	end
-	if place or def.kind == "drift" then
+	if place or scored(def.kind) then
 		local before = Session.HeatLevel(s)
 		s.heat = math.min(5, s.heat + def.heat * night)
 		if Session.HeatLevel(s) > before then
@@ -208,6 +233,66 @@ local function rivalThink(race: Race, racer: Racer)
 	end
 end
 
+-- Takeover props: cones, barrels and crates on the roads around the zone. Smashing one
+-- is worth points.
+spawnTakeoverProps = function(race: Race)
+	local c = race.center
+	local ci, cj = Grid.NearestIntersection(c)
+	local playerSession = race.session
+	for _ = 1, 45 do
+		local i = math.clamp(ci + math.random(-1, 1), 0, Grid.Size)
+		local j = math.clamp(cj + math.random(-1, 1), 0, Grid.Size)
+		local base = Grid.Intersection(i, j)
+		local alongX = math.random() < 0.5
+		local t = math.random(-120, 120)
+		local lateral = math.random(-22, 22)
+		local pos = base + (if alongX then Vector3.new(t, 0, lateral) else Vector3.new(lateral, 0, t))
+		local kind = math.random(1, 3)
+		local p = Instance.new("Part")
+		p.Name = "TakeoverProp"
+		p.Anchored = true
+		if kind == 1 then
+			p.Size = Vector3.new(1.6, 2.8, 1.6)
+			p.Color = Color3.fromRGB(255, 120, 0)
+			p.Material = Enum.Material.SmoothPlastic
+		elseif kind == 2 then
+			p.Shape = Enum.PartType.Cylinder
+			p.Size = Vector3.new(3.4, 2.4, 2.4)
+			p.Color = Color3.fromRGB(40, 90, 170)
+			p.Material = Enum.Material.Metal
+		else
+			p.Size = Vector3.new(3, 3, 3)
+			p.Color = Color3.fromRGB(150, 110, 60)
+			p.Material = Enum.Material.WoodPlanks
+		end
+		p.CFrame = CFrame.new(pos + Vector3.new(0, p.Size.Y / 2 + 0.5, 0)) * (if kind == 2 then CFrame.Angles(0, 0, math.rad(90)) else CFrame.identity)
+		local ring = Instance.new("SelectionBox")
+		ring.Adornee = p
+		ring.Color3 = Color3.fromRGB(255, 230, 40)
+		ring.LineThickness = 0.08
+		ring.Parent = p
+		local smashed = false
+		p.Touched:Connect(function(hit)
+			if smashed or race.state ~= "racing" then
+				return
+			end
+			local car = playerSession.car
+			if not car or not hit:IsDescendantOf(car) then
+				return
+			end
+			smashed = true
+			ring:Destroy()
+			p.Anchored = false
+			local root = car.PrimaryPart :: BasePart
+			p.AssemblyLinearVelocity = root.AssemblyLinearVelocity * 1.2 + Vector3.new(0, 30, 0)
+			p.AssemblyAngularVelocity = Vector3.new(math.random(-8, 8), math.random(-8, 8), math.random(-8, 8))
+			race.driftScore += 1500
+			Session.Notify(playerSession.player, "SMASH  +1,500", Color3.fromRGB(255, 200, 60))
+		end)
+		p.Parent = race.folder
+	end
+end
+
 function Races.Start(s: Session.Session, def: Config.RaceDef, rival: Config.Rival?): (boolean, string)
 	if s.race then
 		return false, "Already racing"
@@ -242,6 +327,8 @@ function Races.Start(s: Session.Session, def: Config.RaceDef, rival: Config.Riva
 		rival = rival,
 		driftScore = 0,
 		folder = folder,
+		sideBet = nil,
+		center = Grid.Intersection(def.route[1][1], def.route[1][2]),
 	}
 	s.race = race
 
@@ -263,7 +350,7 @@ function Races.Start(s: Session.Session, def: Config.RaceDef, rival: Config.Riva
 		return CFrame.lookAt(p, p + dir)
 	end
 
-	Vehicles.Spawn(s, slot(if def.kind == "drift" then 0 else 2))
+	Vehicles.Spawn(s, slot(if scored(def.kind) then 0 else 2))
 	Vehicles.Freeze(s, 3.2)
 
 	local rivals = if rival then 1 else def.rivals
@@ -325,7 +412,25 @@ function Races.Start(s: Session.Session, def: Config.RaceDef, rival: Config.Riva
 		RaceNext = checkpoints[1] or startPos,
 		RaceScore = 0,
 		RaceTarget = def.driftTarget or 0,
+		RaceSideBet = "",
+		RaceInZone = true,
 	})
+
+	-- Unbound side bet: stake against one of the rivals finishing behind you
+	if not rival and #race.racers > 1 then
+		local stake = math.max(Config.SideBet.Min, math.floor(def.buyIn * Config.SideBet.Fraction))
+		if s.profile.cash >= stake then
+			s.profile.cash -= stake
+			local target = race.racers[math.random(2, #race.racers)]
+			race.sideBet = { racer = target, stake = stake }
+			s.player:SetAttribute("RaceSideBet", "SIDE BET: beat " .. target.name .. "  ($" .. stake .. " -> $" .. stake * 2 .. ")")
+		end
+	end
+
+	-- takeover: smashable props scattered around the zone
+	if def.kind == "takeover" then
+		spawnTakeoverProps(race)
+	end
 
 	task.spawn(function()
 		for n = 3, 1, -1 do
@@ -376,8 +481,18 @@ function Races.Update(s: Session.Session, driftGain: number)
 	local player = s.player
 	player:SetAttribute("RaceTime", elapsed)
 
-	if race.def.kind == "drift" then
-		race.driftScore += driftGain
+	if scored(race.def.kind) then
+		local takeover = race.def.kind == "takeover"
+		local pos = Session.CarPosition(s)
+		local inZone = not takeover or (pos ~= nil and (Vector3.new(pos.X, 0, pos.Z) - Vector3.new(race.center.X, 0, race.center.Z)).Magnitude < 420)
+		player:SetAttribute("RaceInZone", inZone)
+		if inZone then
+			race.driftScore += driftGain * (if takeover then 1.2 else 1)
+			-- takeovers also reward big air
+			if takeover and pos and pos.Y > Grid.RoadY + 6 then
+				race.driftScore += 90
+			end
+		end
 		player:SetAttribute("RaceScore", math.floor(race.driftScore))
 		local left = (race.def.duration or 60) - elapsed
 		player:SetAttribute("RaceTimeLeft", left)

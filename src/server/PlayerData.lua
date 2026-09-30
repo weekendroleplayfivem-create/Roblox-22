@@ -23,6 +23,11 @@ export type Profile = {
 	stats: { [string]: number }, -- milestone stats
 	milestones: { [string]: boolean }, -- completed milestone ids
 	settings: { [string]: any }, -- client settings (camera shake, units, volume...)
+	redeemed: { [string]: boolean }, -- codes already used
+	weapons: { [string]: boolean }, -- weapons owned
+	weapon: string, -- equipped weapon id ("" = none)
+	collected: { [string]: boolean }, -- street art found
+	rep: number, -- total REP earned
 }
 
 local STORE_NAME = "WantedUnbound_v1"
@@ -55,6 +60,11 @@ local function default(): Profile
 		stats = {},
 		milestones = {},
 		settings = {},
+		redeemed = {},
+		weapons = {},
+		weapon = "",
+		collected = {},
+		rep = 0,
 	}
 end
 

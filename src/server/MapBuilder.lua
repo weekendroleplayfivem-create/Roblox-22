@@ -28,6 +28,8 @@ export type MapInfo = {
 	nightLights: { Light },
 	nightNeon: { BasePart },
 	nightToggles: { Architecture.Toggle },
+	blackMarket: Vector3,
+	collectibles: { { id: string, position: Vector3 } },
 }
 
 local rng = Random.new(22)
@@ -567,6 +569,131 @@ local function ramp(pos: Vector3, axis: string, props: Folder)
 	end
 end
 
+-- The Black Market: a graffiti-covered garage behind a fence at the docks. Weapons for sale.
+local function blackMarket(bx: number, bz: number, buildings: Folder, props: Folder, ground: Folder): Vector3
+	local c = Grid.BlockCenter(bx, bz)
+	anchored({ Name = "BlackMarketLot", Size = Vector3.new(BLOCK, 1, BLOCK), CFrame = CFrame.new(c.X, SURFACE - 0.5, c.Z), Color = Color3.fromRGB(34, 34, 38), Material = Enum.Material.Asphalt }, ground)
+	anchored({ Name = "BlackMarketShed", Size = Vector3.new(150, 34, 56), CFrame = CFrame.new(c.X, SURFACE + 17, c.Z + 80), Color = Color3.fromRGB(70, 40, 36), Material = Enum.Material.Brick }, buildings)
+	-- half-open roll-up door glowing red inside
+	anchored({ Name = "Door", Size = Vector3.new(44, 12, 0.6), CFrame = CFrame.new(c.X, SURFACE + 20, c.Z + 51.8), Color = Color3.fromRGB(90, 92, 96), Material = Enum.Material.CorrodedMetal, CanCollide = false }, props)
+	local glow = anchored({ Name = "InsideGlow", Size = Vector3.new(44, 14, 0.4), CFrame = CFrame.new(c.X, SURFACE + 7, c.Z + 52.2), Color = Color3.fromRGB(255, 30, 40), Material = Enum.Material.Neon, Transparency = 0.35, CanCollide = false, CanQuery = false }, props)
+	local light = Instance.new("SurfaceLight")
+	light.Face = Enum.NormalId.Front
+	light.Color = Color3.fromRGB(255, 40, 40)
+	light.Range = 40
+	light.Brightness = 3
+	light.Parent = glow
+	glow.CFrame = CFrame.lookAt(glow.Position, glow.Position - Vector3.zAxis)
+	local sign = anchored({ Name = "Sign", Size = Vector3.new(70, 9, 0.6), CFrame = CFrame.new(c.X, SURFACE + 29, c.Z + 51.6), Color = Color3.fromRGB(10, 10, 12), CanCollide = false }, props)
+	sign.CFrame = CFrame.lookAt(sign.Position, sign.Position - Vector3.zAxis)
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = Enum.NormalId.Front
+	gui.LightInfluence = 0
+	gui.Brightness = 3
+	local t = Instance.new("TextLabel")
+	t.BackgroundTransparency = 1
+	t.Size = UDim2.fromScale(1, 1)
+	t.Text = "BLACK MARKET AUTO"
+	t.TextScaled = true
+	t.Font = Enum.Font.GothamBlack
+	t.TextColor3 = Color3.fromRGB(255, 40, 50)
+	t.Parent = gui
+	gui.Parent = sign
+	-- graffiti tags on the walls
+	for k, tag in { "NO COPS", "RVLT", "BURN IT" } do
+		local wall = anchored({ Name = "Graffiti", Size = Vector3.new(24, 8, 0.2), CFrame = CFrame.new(c.X - 60 + (k - 1) * 40, SURFACE + 8 + (k % 2) * 3, c.Z + 51.7), Color = Color3.fromRGB(70, 40, 36), Transparency = 1, CanCollide = false, CanQuery = false }, props)
+		wall.CFrame = CFrame.lookAt(wall.Position, wall.Position - Vector3.zAxis)
+		local g = Instance.new("SurfaceGui")
+		g.Face = Enum.NormalId.Front
+		local l = Instance.new("TextLabel")
+		l.BackgroundTransparency = 1
+		l.Size = UDim2.fromScale(1, 1)
+		l.Text = tag
+		l.TextScaled = true
+		l.Font = Enum.Font.FredokaOne
+		l.TextColor3 = ({ Color3.fromRGB(120, 255, 60), Color3.fromRGB(255, 80, 200), Color3.fromRGB(60, 200, 255) })[k]
+		l.Rotation = -6 + k * 4
+		l.Parent = g
+		g.Parent = wall
+	end
+	-- chain-link fence with a gap at the front, burning barrels
+	for _, side in { -1, 1 } do
+		anchored({ Name = "Fence", Size = Vector3.new(0.3, 10, BLOCK - 40), CFrame = CFrame.new(c.X + side * (BLOCK / 2 - 20), SURFACE + 5, c.Z + 10), Color = Color3.fromRGB(150, 155, 160), Material = Enum.Material.ForceField, Transparency = 0.3, CanCollide = false, CanQuery = false }, props)
+	end
+	for _, o in { Vector3.new(-40, 0, 30), Vector3.new(40, 0, 30), Vector3.new(-60, 0, -40) } do
+		local barrel = anchored({ Name = "Barrel", Shape = Enum.PartType.Cylinder, Size = Vector3.new(4, 3, 3), CFrame = CFrame.new(c + o + Vector3.new(0, 2, 0)) * CFrame.Angles(0, 0, math.rad(90)), Color = Color3.fromRGB(60, 55, 50), Material = Enum.Material.CorrodedMetal }, props)
+		local fire = Instance.new("Fire")
+		fire.Size = 4
+		fire.Heat = 8
+		fire.Parent = barrel
+		local fl = Instance.new("PointLight")
+		fl.Color = Color3.fromRGB(255, 140, 50)
+		fl.Range = 20
+		fl.Brightness = 2
+		fl.Parent = barrel
+	end
+	local pad = anchored({ Name = "BlackMarketPad", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.2, 70, 70), CFrame = CFrame.new(c.X, SURFACE + 0.05, c.Z) * CFrame.Angles(0, 0, math.rad(90)), Color = Color3.fromRGB(255, 30, 40), Material = Enum.Material.Neon, Transparency = 0.6, CanCollide = false, CanQuery = false }, props)
+	billboard(pad, "BLACK MARKET - roof weapons", Color3.fromRGB(255, 60, 60), 16, 500)
+	return Vector3.new(c.X, SURFACE, c.Z)
+end
+
+local TAGS = { "NEO", "RVLT", "DRFT", "WNTD", "ZERO", "GHST", "KAIJU", "BURN", "FAST", "LOW", "NITRO", "BAY" }
+local TAG_COLORS = { Color3.fromRGB(255, 60, 170), Color3.fromRGB(60, 220, 255), Color3.fromRGB(140, 255, 60), Color3.fromRGB(255, 200, 40), Color3.fromRGB(190, 90, 255) }
+
+-- Street art collectibles: bright tagged panels on sidewalks all over the city.
+local function placeCollectibles(info: MapInfo, isSpecial: (number, number) -> string?, map: Folder)
+	local folder = Instance.new("Folder")
+	folder.Name = "Collectibles"
+	folder.Parent = map
+	local crng = Random.new(99)
+	local used: { [string]: boolean } = {}
+	local placed = 0
+	while placed < Config.CollectibleCount do
+		local bx, bz = crng:NextInteger(0, Grid.Size - 1), crng:NextInteger(0, Grid.Size - 1)
+		local key = bx .. "," .. bz
+		if used[key] or isSpecial(bx, bz) then
+			continue
+		end
+		used[key] = true
+		placed += 1
+		local c = Grid.BlockCenter(bx, bz)
+		local dirs = { Vector3.xAxis, -Vector3.xAxis, Vector3.zAxis, -Vector3.zAxis }
+		local n = dirs[crng:NextInteger(1, 4)]
+		local across = n:Cross(Vector3.yAxis)
+		local pos = c + n * (BLOCK / 2 - 9) + across * crng:NextNumber(-70, 70)
+		local id = "art_" .. placed
+		local panel = anchored({
+			Name = id,
+			Size = Vector3.new(9, 6, 0.4),
+			CFrame = CFrame.lookAt(pos + Vector3.new(0, 4.5, 0), pos + Vector3.new(0, 4.5, 0) + n),
+			Color = Color3.fromRGB(20, 20, 24),
+			CanCollide = false,
+			CanQuery = false,
+		}, folder)
+		local color = TAG_COLORS[crng:NextInteger(1, #TAG_COLORS)]
+		local g = Instance.new("SurfaceGui")
+		g.Face = Enum.NormalId.Front
+		g.LightInfluence = 0
+		g.Brightness = 2
+		local l = Instance.new("TextLabel")
+		l.BackgroundTransparency = 1
+		l.Size = UDim2.fromScale(1, 1)
+		l.Text = TAGS[crng:NextInteger(1, #TAGS)]
+		l.TextScaled = true
+		l.Font = Enum.Font.FredokaOne
+		l.TextColor3 = color
+		l.Rotation = crng:NextNumber(-8, 8)
+		l.Parent = g
+		g.Parent = panel
+		local halo = Instance.new("PointLight")
+		halo.Color = color
+		halo.Range = 16
+		halo.Brightness = 2
+		halo.Parent = panel
+		table.insert(info.collectibles, { id = id, position = pos })
+	end
+end
+
 function MapBuilder.Build(): MapInfo
 	local existing = workspace:FindFirstChild("Map")
 	if existing then
@@ -633,6 +760,8 @@ function MapBuilder.Build(): MapInfo
 		nightLights = nightLights,
 		nightNeon = nightNeon,
 		nightToggles = Architecture.Toggles(),
+		blackMarket = Vector3.zero,
+		collectibles = {},
 	}
 
 	local function isSpecial(bx: number, bz: number): string?
@@ -649,6 +778,10 @@ function MapBuilder.Build(): MapInfo
 				return "hide"
 			end
 		end
+		local bm = Config.Blocks.BlackMarket
+		if bx == bm[1] and bz == bm[2] then
+			return "blackmarket"
+		end
 		return nil
 	end
 
@@ -663,6 +796,9 @@ function MapBuilder.Build(): MapInfo
 			elseif kind == "park" then
 				park(bx, bz, props, ground)
 				Architecture.Sidewalks(Grid.BlockCenter(bx, bz), BLOCK, true)
+			elseif kind == "blackmarket" then
+				info.blackMarket = blackMarket(bx, bz, buildings, props, ground)
+				Architecture.Sidewalks(Grid.BlockCenter(bx, bz), BLOCK, false, "industrial")
 			elseif kind == "hide" then
 				hidingSpot(bx, bz, buildings, props, ground)
 				Architecture.Sidewalks(Grid.BlockCenter(bx, bz), BLOCK, false)
@@ -673,6 +809,7 @@ function MapBuilder.Build(): MapInfo
 		end
 	end
 
+	placeCollectibles(info, isSpecial, map)
 	for _, b in Config.PursuitBreakers do
 		table.insert(info.breakers, pursuitBreaker(b[1], b[2], breakersFolder))
 	end

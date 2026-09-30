@@ -118,6 +118,7 @@ function MapDraw.Draw(canvas: Frame, scale: number, labels: boolean): (Vector3) 
 	end
 	local big = if labels then 1.4 else 1
 	marker(Grid.BlockCenter(B.Safehouse[1], B.Safehouse[2]), Color3.fromRGB(0, 255, 200), 14 * big, "S", "SAFEHOUSE")
+	marker(Grid.BlockCenter(B.BlackMarket[1], B.BlackMarket[2]), Color3.fromRGB(255, 40, 50), 13 * big, "B", "BLACK MARKET")
 	for _, h in B.HidingSpots do
 		marker(Grid.BlockCenter(h[1], h[2]), Color3.fromRGB(80, 255, 120), 9 * big, "H", "Hiding spot")
 	end

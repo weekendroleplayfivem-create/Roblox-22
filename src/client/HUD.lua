@@ -117,7 +117,17 @@ local nitroBack = new("Frame", {
 corner(nitroBack, 7)
 local nitroFill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = CYAN }, nitroBack)
 corner(nitroFill, 7)
-label({ Size = UDim2.fromScale(1, 1), Text = "NITROUS", TextColor3 = Color3.new(1, 1, 1), Font = FONT2, TextStrokeTransparency = 0.2, ZIndex = 2 }, nitroBack)
+local nitroText = label({ Size = UDim2.fromScale(1, 1), Text = "NITROUS", TextColor3 = Color3.new(1, 1, 1), Font = FONT2, TextStrokeTransparency = 0.2, ZIndex = 2 }, nitroBack)
+local burstMarks: { Frame } = {}
+for k = 1, 2 do
+	burstMarks[k] = new("Frame", { Position = UDim2.new(k / 3, -1, 0, 0), Size = UDim2.new(0, 3, 1, 0), BackgroundColor3 = Color3.fromRGB(10, 10, 18), BorderSizePixel = 0, ZIndex = 3, Visible = false }, nitroBack)
+end
+function HUD.SetBurst(on: boolean)
+	for _, m in burstMarks do
+		m.Visible = on
+	end
+	nitroText.Text = if on then "BURST NITROUS" else "NITROUS"
+end
 
 ---------------------------------------------------------------------------
 -- Heat + pursuit (top centre)
@@ -171,6 +181,36 @@ corner(money, 12)
 local bankLabel = label({ Position = UDim2.fromOffset(12, 6), Size = UDim2.new(1, -24, 0, 26), Text = "$0", TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(120, 255, 150) }, money)
 local unbankedLabel = label({ Position = UDim2.fromOffset(12, 34), Size = UDim2.new(1, -24, 0, 20), Text = "", Font = FONT2, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(255, 190, 60) }, money)
 local bountyLabel = label({ Position = UDim2.fromOffset(12, 58), Size = UDim2.new(1, -24, 0, 20), Text = "", Font = FONT2, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(255, 120, 120) }, money)
+local repFrame = new("Frame", {
+	Position = UDim2.fromOffset(16, 172),
+	Size = UDim2.fromOffset(260, 28),
+	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
+	BackgroundTransparency = 0.4,
+}, gui)
+corner(repFrame, 10)
+local repLabel = label({ Position = UDim2.fromOffset(10, 4), Size = UDim2.fromOffset(90, 20), Text = "REP 1", Font = FONT2, TextColor3 = Color3.fromRGB(190, 160, 255), TextXAlignment = Enum.TextXAlignment.Left }, repFrame)
+local repBack = new("Frame", { Position = UDim2.fromOffset(100, 10), Size = UDim2.new(1, -112, 0, 8), BackgroundColor3 = Color3.fromRGB(40, 36, 60) }, repFrame)
+corner(repBack, 4)
+local repFill = new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = Color3.fromRGB(170, 120, 255) }, repBack)
+corner(repFill, 4)
+
+-- mounted weapon + cooldown (bottom right, above the speedometer)
+local weaponFrame = new("Frame", {
+	AnchorPoint = Vector2.new(1, 1),
+	Position = UDim2.new(1, -20, 1, -168),
+	Size = UDim2.fromOffset(230, 44),
+	BackgroundColor3 = Color3.fromRGB(18, 8, 10),
+	BackgroundTransparency = 0.25,
+	Visible = false,
+}, gui)
+corner(weaponFrame, 10)
+new("UIStroke", { Color = Color3.fromRGB(255, 50, 60), Thickness = 2, Transparency = 0.3 }, weaponFrame)
+local weaponLabel = label({ Position = UDim2.fromOffset(10, 4), Size = UDim2.new(1, -20, 0, 20), Text = "", Font = FONT2, TextXAlignment = Enum.TextXAlignment.Left }, weaponFrame)
+local weaponBack = new("Frame", { Position = UDim2.fromOffset(10, 28), Size = UDim2.new(1, -20, 0, 8), BackgroundColor3 = Color3.fromRGB(50, 30, 34) }, weaponFrame)
+corner(weaponBack, 4)
+local weaponFill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(255, 60, 70) }, weaponBack)
+corner(weaponFill, 4)
+
 local timeLabel = label({ Position = UDim2.fromOffset(12, 82), Size = UDim2.new(1, -24, 0, 18), Text = "", Font = FONT2, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(190, 170, 255) }, money)
 
 ---------------------------------------------------------------------------
@@ -179,7 +219,7 @@ local timeLabel = label({ Position = UDim2.fromOffset(12, 82), Size = UDim2.new(
 local racePanel = new("Frame", {
 	AnchorPoint = Vector2.new(1, 0),
 	Position = UDim2.new(1, -16, 0, 250),
-	Size = UDim2.fromOffset(230, 250),
+	Size = UDim2.fromOffset(230, 290),
 	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
 	BackgroundTransparency = 0.35,
 	Visible = false,
@@ -190,6 +230,14 @@ local raceName = label({ Position = UDim2.fromOffset(10, 6), Size = UDim2.new(1,
 local racePos = label({ Position = UDim2.fromOffset(10, 30), Size = UDim2.new(1, -20, 0, 50), Text = "" }, racePanel)
 local raceInfo = label({ Position = UDim2.fromOffset(10, 84), Size = UDim2.new(1, -20, 0, 22), Text = "", Font = FONT2 }, racePanel)
 local raceTime = label({ Position = UDim2.fromOffset(10, 110), Size = UDim2.new(1, -20, 0, 22), Text = "", Font = FONT2, TextColor3 = Color3.fromRGB(200, 200, 220) }, racePanel)
+local sideBetLabel = label({
+	Position = UDim2.fromOffset(10, 250),
+	Size = UDim2.new(1, -20, 0, 32),
+	Text = "",
+	Font = FONT2,
+	TextWrapped = true,
+	TextColor3 = Color3.fromRGB(255, 200, 60),
+}, racePanel)
 local standings = label({
 	Position = UDim2.fromOffset(14, 140),
 	Size = UDim2.new(1, -28, 0, 100),
@@ -433,6 +481,19 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	unbankedLabel.Text = if unbanked > 0 then "Unbanked: $" .. commas(unbanked) .. "  (at risk!)" else "Unbanked: $0"
 	local bounty = num("Bounty")
 	bountyLabel.Text = if mode ~= "idle" then "Pursuit bounty: " .. commas(bounty) else "Total bounty: " .. commas(num("TotalBounty"))
+	repLabel.Text = "REP " .. math.floor(num("RepLevel"))
+	repFill.Size = UDim2.fromScale(math.clamp(num("RepProgress"), 0, 1), 1)
+	local weaponId = player:GetAttribute("Weapon")
+	local weaponDef = if type(weaponId) == "string" and weaponId ~= "" then Config.GetWeapon(weaponId) else nil
+	weaponFrame.Visible = weaponDef ~= nil
+	if weaponDef then
+		local readyAt = num("WeaponReadyAt")
+		local left = readyAt - workspace:GetServerTimeNow()
+		local ready = left <= 0
+		weaponLabel.Text = string.upper(weaponDef.name) .. (if ready then "   [F] READY" else string.format("   %.1fs", left))
+		weaponFill.Size = UDim2.fromScale(if ready then 1 else math.clamp(1 - left / weaponDef.cooldown, 0, 1), 1)
+		weaponFill.BackgroundColor3 = if ready then weaponDef.color else Color3.fromRGB(120, 60, 60)
+	end
 	timeLabel.Text = if player:GetAttribute("Night") then "NIGHT  -  x" .. Config.NightMultiplier .. " payouts" else "DAY"
 
 	-- drift combo
@@ -445,9 +506,10 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	if racing then
 		raceName.Text = tostring(player:GetAttribute("RaceName") or "")
 		local kind = player:GetAttribute("RaceKind")
-		if kind == "drift" then
+		sideBetLabel.Text = tostring(player:GetAttribute("RaceSideBet") or "")
+		if kind == "drift" or kind == "takeover" then
 			racePos.Text = commas(num("RaceScore"))
-			raceInfo.Text = "Target: " .. commas(num("RaceTarget"))
+			raceInfo.Text = if player:GetAttribute("RaceInZone") == false then "LEAVING THE ZONE!" else "Target: " .. commas(num("RaceTarget"))
 			raceTime.Text = string.format("Time left: %.1fs", math.max(0, num("RaceTimeLeft")))
 			standings.Text = ""
 		else

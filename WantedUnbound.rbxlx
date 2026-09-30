@@ -1,4 +1,4 @@
-<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4"><Item class="Workspace" referent="RBX00000000000000000000000000000021"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">true</bool><int name="StreamingTargetRadius">1500</int><int name="StreamingMinRadius">400</int></Properties></Item><Item class="Lighting" referent="RBX00000000000000000000000000000022"><Properties><string name="Name">Lighting</string><token name="Technology">4</token></Properties></Item><Item class="ReplicatedStorage" referent="RBX00000000000000000000000000000023"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">Shared</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">CarPhysics</string><ProtectedString name="Source"><![CDATA[--!strict
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4"><Item class="Workspace" referent="RBX00000000000000000000000000000025"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">true</bool><int name="StreamingTargetRadius">1500</int><int name="StreamingMinRadius">400</int></Properties></Item><Item class="Lighting" referent="RBX00000000000000000000000000000026"><Properties><string name="Name">Lighting</string><token name="Technology">4</token></Properties></Item><Item class="ReplicatedStorage" referent="RBX00000000000000000000000000000027"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">Shared</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">CarPhysics</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Arcade driving model shared by the player's car (simulated on the client that owns it)
 -- and AI cars (police and rivals, simulated on the server).
 --
@@ -553,6 +553,8 @@ Config.HandlingSliders = {
 	{ id = "downforce", name = "Downforce", left = "LOW", right = "HIGH", min = 0, max = 5, default = 1 },
 	{ id = "steering", name = "Steering", left = "SLOW", right = "FAST", min = -3, max = 3, default = 0 },
 	{ id = "ride", name = "Ride Height", left = "LOW", right = "HIGH", min = -2, max = 2, default = 0 },
+	-- Unbound: Classic nitrous (hold) or Burst nitrous (tap for short, harder shots, 3 charges)
+	{ id = "nitroType", name = "Nitrous Type", left = "CLASSIC", right = "BURST", min = 0, max = 1, default = 0 },
 } :: { Slider }
 
 Config.Visual = {
@@ -624,6 +626,7 @@ export type Stats = {
 	driftGrip: number,
 	downforce: number,
 	rating: number,
+	burst: number, -- 1 = burst nitrous
 }
 
 -- Performance rating like Unbound: C < 400, B 400+, A 500+, A+ 600+, S 700+, S+ 800+
@@ -678,6 +681,7 @@ function Config.ComputeStats(car: CarDef, tune: Tune?): Stats
 		driftGrip = 0.4 + 0.12 * g,
 		downforce = df,
 		rating = math.clamp(math.floor(rating), 100, 999),
+		burst = if (h.nitroType or 0) >= 1 then 1 else 0,
 	}
 end
 
@@ -1179,8 +1183,113 @@ function Config.District(bx: number, bz: number): string
 	return "suburb"
 end
 
+-- Black Market: a hidden garage at the docks where weapons are sold
+Config.Blocks.BlackMarket = { 14, 3 }
+
+table.insert(Config.Races, {
+	id = "downtown_takeover",
+	name = "Downtown Takeover",
+	kind = "takeover",
+	route = { { 7, 6 } },
+	laps = 1,
+	buyIn = 1500,
+	reward = 9000,
+	heat = 0.8,
+	rivals = 0,
+	rivalSpeed = 0,
+	driftTarget = 40000,
+	duration = 75,
+})
+table.insert(Config.Races, {
+	id = "harbor_takeover",
+	name = "Harbor Takeover",
+	kind = "takeover",
+	route = { { 13, 9 } },
+	laps = 1,
+	buyIn = 3000,
+	reward = 16000,
+	heat = 1,
+	rivals = 0,
+	rivalSpeed = 0,
+	driftTarget = 65000,
+	duration = 90,
+})
+
 -- "signals" (traffic lights + crosswalks) in the dense districts, "stop" signs elsewhere,
 -- "plain" on the Beltway ring.
+---------------------------------------------------------------------------
+-- Codes: redeem once per player from the main menu (CODES)
+---------------------------------------------------------------------------
+export type CodeReward = { cash: number?, car: string?, weapon: string?, rep: number?, message: string }
+Config.Codes = {
+	WANTED = { cash = 10000, message = "+$10,000 to get you started" },
+	UNBOUND = { cash = 25000, rep = 500, message = "+$25,000 and 500 REP" },
+	NEONBAY = { cash = 15000, message = "+$15,000 - welcome to Neon Bay" },
+	NITRO = { weapon = "emp", message = "Free EMP weapon! Equip it at the Black Market" },
+	BLACKMARKET = { weapon = "pulse", message = "Free Pulse Cannon! Equip it at the Black Market" },
+	DRIFTKING = { car = "kitsune", message = "Free car: Kitsune S15" },
+	RELEASE = { cash = 50000, rep = 1000, message = "+$50,000 and 1,000 REP - thanks for playing!" },
+} :: { [string]: CodeReward }
+
+---------------------------------------------------------------------------
+-- Weapons (mounted on the roof, bought at the Black Market). They only affect police and
+-- rival AI cars - never other players.
+---------------------------------------------------------------------------
+export type WeaponDef = {
+	id: string,
+	name: string,
+	desc: string,
+	price: number,
+	cooldown: number,
+	color: Color3,
+	model: string, -- roof mount style: "cannon" | "dish" | "pod" | "rack" | "ring"
+}
+Config.Weapons = {
+	{ id = "pulse", name = "Pulse Cannon", desc = "Fires an energy bolt at the car ahead. Two hits wreck a cop.", price = 35000, cooldown = 2.5, color = Color3.fromRGB(0, 230, 255), model = "cannon" },
+	{ id = "emp", name = "EMP Blaster", desc = "Stalls every police car within 90 studs for 5 seconds.", price = 45000, cooldown = 18, color = Color3.fromRGB(120, 160, 255), model = "dish" },
+	{ id = "oil", name = "Oil Slick", desc = "Drops a slick behind you. Cops that hit it spin out.", price = 20000, cooldown = 8, color = Color3.fromRGB(60, 50, 40), model = "pod" },
+	{ id = "spikes", name = "Spike Drop", desc = "Drops a spike strip behind you that wrecks chasing cops.", price = 30000, cooldown = 12, color = Color3.fromRGB(200, 200, 210), model = "rack" },
+	{ id = "shock", name = "Shockwave", desc = "Blasts every car around you away. Great when boxed in.", price = 60000, cooldown = 15, color = Color3.fromRGB(255, 80, 200), model = "ring" },
+} :: { WeaponDef }
+
+function Config.GetWeapon(id: string): WeaponDef?
+	for _, w in Config.Weapons do
+		if w.id == id then
+			return w
+		end
+	end
+	return nil
+end
+
+---------------------------------------------------------------------------
+-- REP levels (Unbound): earned from races, escapes, style and takeovers
+---------------------------------------------------------------------------
+Config.Rep = {
+	PerLevel = function(level: number): number
+		return 1000 + (level - 1) * 400
+	end,
+	LevelReward = 2500, -- cash per level (x level / 2)
+	MaxLevel = 50,
+}
+
+---------------------------------------------------------------------------
+-- Street art collectibles hidden around the city
+---------------------------------------------------------------------------
+Config.CollectibleCount = 40
+Config.CollectibleCash = 1000
+
+---------------------------------------------------------------------------
+-- Side bets (Unbound): beat a named rival in a race for extra cash
+---------------------------------------------------------------------------
+Config.SideBet = { Min = 500, Fraction = 0.5 } -- stake = half the buy-in (at least $500)
+
+for _, m in tiers("art", "Find %d street art pieces", "art", "sum", { 10, 25, 40 }, { 5000, 15000, 40000 }) do
+	table.insert(Config.Milestones, m)
+end
+for _, m in tiers("takeover", "Complete %d takeovers", "takeovers", "sum", { 1, 5, 15 }, { 4000, 15000, 40000 }) do
+	table.insert(Config.Milestones, m)
+end
+
 function Config.IntersectionMode(i: number, j: number): string
 	local n = Config.Grid.Blocks
 	if i == 0 or j == 0 or i == n or j == n then
@@ -1306,7 +1415,7 @@ function Signals.Now(): number
 end
 
 return Signals
-]]></ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX00000000000000000000000000000024"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000013"><Properties><string name="Name">Server</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000006"><Properties><string name="Name">AIDriver</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX00000000000000000000000000000028"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000014"><Properties><string name="Name">Server</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000006"><Properties><string name="Name">AIDriver</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Server-side driver for AI cars (police and race rivals). Each AI has a `think` callback
 -- that picks a goal; AIDriver handles road-grid navigation, steering, unsticking and
 -- runs the shared arcade physics.
@@ -1522,6 +1631,14 @@ RunService.Heartbeat:Connect(function(dt: number)
 		local root = ai.state.root
 		if root.Anchored then
 			continue
+		end
+		-- weapons (EMP, oil, spikes) can stall a car for a moment
+		local stunned = ai.data.stunnedUntil
+		if stunned and os.clock() < stunned then
+			ai.input.throttle = 0
+			ai.input.steer = 0
+			ai.input.handbrake = true
+			ai.input.nitro = false
 		end
 
 		-- unstick: back up when pushing against something
@@ -2298,6 +2415,8 @@ export type BuildOptions = {
 	kit: number?, -- 1 stock, 2 street kit, 3 widebody
 	glow: Color3?, -- underglow colour (nil = off)
 	ride: number?, -- -2..2 ride height
+	weapon: string?, -- roof mount style from Config.Weapons (nil = none)
+	weaponColor: Color3?,
 }
 
 type Dims = {
@@ -2763,6 +2882,53 @@ function CarBuilder.Build(opts: BuildOptions): Model
 		model:SetAttribute("Police", true)
 	end
 
+	-- Roof-mounted weapon (Black Market)
+	if opts.weapon then
+		local wc = opts.weaponColor or Color3.fromRGB(0, 230, 255)
+		local gun = Color3.fromRGB(38, 40, 44)
+		local baseY = roof + 0.2
+		local z = roofMid
+		box(ctx, "WeaponBase", Vector3.new(cabW * 0.5, 0.35, 2.4), CFrame.new(0, baseY, z), gun, Enum.Material.Metal)
+		local muzzleOffset = Vector3.new(0, baseY + 1, z - 2)
+		if opts.weapon == "cannon" then
+			cylinder(ctx, "Turret", Vector3.new(1.2, 2.2, 2.2), CFrame.new(0, baseY + 0.8, z) * CFrame.Angles(0, 0, math.rad(90)), gun, Enum.Material.Metal)
+			cylinder(ctx, "Barrel", Vector3.new(4.2, 0.55, 0.55), CFrame.new(0, baseY + 1, z - 2.4) * CFrame.Angles(0, math.rad(90), 0), gun, Enum.Material.Metal)
+			cylinder(ctx, "BarrelTip", Vector3.new(0.4, 0.7, 0.7), CFrame.new(0, baseY + 1, z - 4.5) * CFrame.Angles(0, math.rad(90), 0), wc, Enum.Material.Neon)
+			muzzleOffset = Vector3.new(0, baseY + 1, z - 4.8)
+		elseif opts.weapon == "dish" then
+			box(ctx, "DishMast", Vector3.new(0.4, 1.4, 0.4), CFrame.new(0, baseY + 0.8, z), gun, Enum.Material.Metal)
+			cylinder(ctx, "Dish", Vector3.new(0.3, 3, 3), CFrame.new(0, baseY + 1.8, z - 0.3) * CFrame.Angles(0, math.rad(90), 0) * CFrame.Angles(0, 0, math.rad(-20)), Color3.fromRGB(200, 205, 215), Enum.Material.Metal)
+			local core = box(ctx, "EmitterCore", Vector3.new(0.7, 0.7, 0.7), CFrame.new(0, baseY + 1.8, z - 0.9), wc, Enum.Material.Neon)
+			core.Shape = Enum.PartType.Ball
+			muzzleOffset = Vector3.new(0, baseY + 1.8, z - 1)
+		elseif opts.weapon == "pod" then
+			box(ctx, "Pod", Vector3.new(cabW * 0.45, 1, 2.2), CFrame.new(0, baseY + 0.6, z + 0.4), gun, Enum.Material.Metal)
+			for _, x in { -0.6, 0.6 } do
+				cylinder(ctx, "Nozzle", Vector3.new(0.9, 0.5, 0.5), CFrame.new(x, baseY + 0.6, z + 1.8) * CFrame.Angles(0, math.rad(90), 0), wc, Enum.Material.Metal)
+			end
+			muzzleOffset = Vector3.new(0, baseY + 0.6, z + 2.2)
+		elseif opts.weapon == "rack" then
+			box(ctx, "Rack", Vector3.new(cabW * 0.6, 0.8, 2), CFrame.new(0, baseY + 0.5, z + 0.5), gun, Enum.Material.DiamondPlate)
+			for k = -2, 2 do
+				box(ctx, "RackSpike", Vector3.new(0.25, 0.9, 0.25), CFrame.new(k * 0.55, baseY + 1.3, z + 0.5), wc, Enum.Material.Metal)
+			end
+			muzzleOffset = Vector3.new(0, baseY + 0.5, z + 1.6)
+		elseif opts.weapon == "ring" then
+			for k = 0, 7 do
+				local ang = k * math.pi / 4
+				box(ctx, "RingSeg", Vector3.new(0.35, 0.35, 1.2), CFrame.new(math.cos(ang) * 1.3, baseY + 1, z + math.sin(ang) * 1.3) * CFrame.Angles(0, -ang, 0), wc, Enum.Material.Neon)
+			end
+			local orb = box(ctx, "RingCore", Vector3.new(0.9, 0.9, 0.9), CFrame.new(0, baseY + 1, z), Color3.new(1, 1, 1), Enum.Material.Neon)
+			orb.Shape = Enum.PartType.Ball
+			muzzleOffset = Vector3.new(0, baseY + 1, z)
+		end
+		local m = Instance.new("Attachment")
+		m.Name = "WeaponMuzzle"
+		m.Position = muzzleOffset - Vector3.new(0, chassisH / 2, 0)
+		m.Parent = chassis
+		model:SetAttribute("Weapon", opts.weapon)
+	end
+
 	-- Underglow
 	local glowColor = opts.glow
 	local glow = Instance.new("PointLight")
@@ -3093,6 +3259,7 @@ local Vehicles = require(script.Parent.Vehicles)
 local Police = require(script.Parent.Police)
 local Traffic = require(script.Parent.Traffic)
 local Showroom = require(script.Parent.Showroom)
+local Weapons = require(script.Parent.Weapons)
 local Races = require(script.Parent.Races)
 
 ---------------------------------------------------------------------------
@@ -3115,6 +3282,9 @@ local respawnEvent = remote("RemoteEvent", "RespawnCar") :: RemoteEvent
 local rivalEvent = remote("RemoteEvent", "ChallengeRival") :: RemoteEvent
 local garageEvent = remote("RemoteEvent", "Garage") :: RemoteEvent
 local settingsEvent = remote("RemoteEvent", "SaveSettings") :: RemoteEvent
+local fireEvent = remote("RemoteEvent", "FireWeapon") :: RemoteEvent
+local codeFunction = remote("RemoteFunction", "RedeemCode") :: RemoteFunction
+local collectedEvent = remote("RemoteEvent", "Collected") :: RemoteEvent
 local exitGarage: (s: Session.Session, respawn: boolean) -> ()
 local quitEvent = remote("RemoteEvent", "QuitRace") :: RemoteEvent
 local shopFunction = remote("RemoteFunction", "Shop") :: RemoteFunction
@@ -3146,6 +3316,22 @@ spawnLocation.Parent = workspace
 
 -- Realistic day / night lighting (sky, clouds, colour grading, street lamps)
 DayNight.Init(mapInfo.nightLights, mapInfo.nightNeon, mapInfo.nightToggles)
+
+-- weather: rain showers every few minutes
+task.spawn(function()
+	workspace:SetAttribute("Raining", false)
+	while true do
+		task.wait(math.random(240, 480))
+		if math.random() < 0.45 then
+			workspace:SetAttribute("Raining", true)
+			for _, s in Session.All() do
+				Session.Notify(s.player, "It's starting to rain - roads are slippery", Color3.fromRGB(150, 190, 255))
+			end
+			task.wait(math.random(120, 240))
+			workspace:SetAttribute("Raining", false)
+		end
+	end
+end)
 
 -- day / night cycle
 task.spawn(function()
@@ -3304,6 +3490,49 @@ quitEvent.OnServerEvent:Connect(function(player)
 end)
 
 ---------------------------------------------------------------------------
+-- Weapons and codes
+---------------------------------------------------------------------------
+fireEvent.OnServerEvent:Connect(function(player)
+	local s = Session.Get(player)
+	if s then
+		Weapons.Fire(s)
+	end
+end)
+
+codeFunction.OnServerInvoke = function(player, code)
+	local s = Session.Get(player)
+	if not s or type(code) ~= "string" then
+		return false, "Try again in a moment"
+	end
+	local key = string.upper((string.gsub(code, "%s", "")))
+	local reward = Config.Codes[key]
+	if not reward then
+		return false, "Invalid code"
+	end
+	local p = s.profile
+	if p.redeemed[key] then
+		return false, "You already redeemed this code"
+	end
+	p.redeemed[key] = true
+	if reward.cash then
+		p.cash += reward.cash
+	end
+	if reward.car and Config.GetCar(reward.car) then
+		p.owned[reward.car] = true
+	end
+	if reward.weapon and Config.GetWeapon(reward.weapon) then
+		p.weapons[reward.weapon] = true
+	end
+	if reward.rep then
+		Session.AddRep(s, reward.rep)
+	end
+	Session.Sync(s)
+	PlayerData.Save(player)
+	Session.Banner(player, "CODE REDEEMED", reward.message, Color3.fromRGB(0, 255, 200))
+	return true, reward.message
+end
+
+---------------------------------------------------------------------------
 -- Garage: press E at the safehouse to drive inside the workshop
 ---------------------------------------------------------------------------
 exitGarage = function(s: Session.Session, respawn: boolean)
@@ -3408,6 +3637,10 @@ nearMissEvent.OnServerEvent:Connect(function(player, civ)
 	end
 	lastNearMiss[player] = now
 	Session.AddStat(s, "nearMisses", 1)
+	Session.AddRep(s, 15)
+	if s.race and s.race.def.kind == "takeover" then
+		s.race.driftScore += 600
+	end
 	s.unbanked += Config.Traffic.NearMissCash * Session.NightMult()
 end)
 
@@ -3427,6 +3660,10 @@ local function snapshot(s: Session.Session)
 		stats = p.stats,
 		milestones = p.milestones,
 		settings = p.settings,
+		weapons = p.weapons,
+		weapon = p.weapon,
+		collected = p.collected,
+		rep = p.rep,
 	}
 end
 
@@ -3438,6 +3675,41 @@ shopFunction.OnServerInvoke = function(player, action, a, b)
 	local p = s.profile
 	if action == "Get" then
 		return true, "", snapshot(s)
+	end
+	-- Black Market: roof weapons
+	if action == "BuyWeapon" or action == "EquipWeapon" then
+		if not s.atBlackMarket or s.mode ~= "idle" or s.race then
+			return false, "Weapons are sold at the Black Market (red B on the map) - lose the cops first", snapshot(s)
+		end
+		if type(a) ~= "string" then
+			return false, "Bad request", snapshot(s)
+		end
+		if action == "EquipWeapon" and a == "" then
+			p.weapon = ""
+			Vehicles.Spawn(s)
+			Session.Sync(s)
+			return true, "Weapon removed", snapshot(s)
+		end
+		local w = Config.GetWeapon(a)
+		if not w then
+			return false, "Unknown weapon", snapshot(s)
+		end
+		if action == "BuyWeapon" then
+			if p.weapons[a] then
+				return false, "Already owned", snapshot(s)
+			end
+			if p.cash < w.price then
+				return false, "Not enough cash", snapshot(s)
+			end
+			p.cash -= w.price
+			p.weapons[a] = true
+		elseif not p.weapons[a] then
+			return false, "Buy it first", snapshot(s)
+		end
+		p.weapon = a
+		Vehicles.Spawn(s)
+		Session.Sync(s)
+		return true, w.name .. " mounted - press F to fire", snapshot(s)
 	end
 	if not s.atSafehouse or s.mode ~= "idle" or s.race then
 		return false, "Garage is only available at the safehouse (and without cops on you)", snapshot(s)
@@ -3572,6 +3844,25 @@ task.spawn(function()
 				Vehicles.SeatCharacter(s)
 			end
 
+			-- Black Market zone
+			s.atBlackMarket = not s.inGarage and (Vector3.new(pos.X, 0, pos.Z) - Vector3.new(mapInfo.blackMarket.X, 0, mapInfo.blackMarket.Z)).Magnitude < 60
+
+			-- street art collectibles
+			for _, art in mapInfo.collectibles do
+				if not s.profile.collected[art.id] and (Vector3.new(pos.X, art.position.Y, pos.Z) - art.position).Magnitude < 24 then
+					s.profile.collected[art.id] = true
+					local count = 0
+					for _ in s.profile.collected do
+						count += 1
+					end
+					s.profile.cash += Config.CollectibleCash
+					collectedEvent:FireClient(s.player, art.id)
+					Session.Banner(s.player, "STREET ART " .. count .. " / " .. #mapInfo.collectibles, "+$" .. Config.CollectibleCash .. " banked", Color3.fromRGB(140, 255, 60))
+					Session.AddRep(s, 100)
+					Session.AddStat(s, "art", 1)
+				end
+			end
+
 			-- safehouse: bank unbanked cash and clear heat (Unbound)
 			local flat = Vector3.new(pos.X - mapInfo.safehouse.X, 0, pos.Z - mapInfo.safehouse.Z)
 			s.atSafehouse = s.inGarage or flat.Magnitude < 70
@@ -3602,6 +3893,7 @@ task.spawn(function()
 				if s.driftIdle > 1.2 and s.driftCombo > 0 then
 					local combo = s.driftCombo
 					Session.MaxStat(s, "bestDrift", math.floor(combo))
+					Session.AddRep(s, combo / 100)
 					s.driftCombo = 0
 					if combo > 400 and not s.race then
 						Session.AddUnbanked(s, combo / 25 * Session.NightMult(), "DRIFT x" .. math.floor(combo))
@@ -3668,6 +3960,8 @@ export type MapInfo = {
 	nightLights: { Light },
 	nightNeon: { BasePart },
 	nightToggles: { Architecture.Toggle },
+	blackMarket: Vector3,
+	collectibles: { { id: string, position: Vector3 } },
 }
 
 local rng = Random.new(22)
@@ -4207,6 +4501,131 @@ local function ramp(pos: Vector3, axis: string, props: Folder)
 	end
 end
 
+-- The Black Market: a graffiti-covered garage behind a fence at the docks. Weapons for sale.
+local function blackMarket(bx: number, bz: number, buildings: Folder, props: Folder, ground: Folder): Vector3
+	local c = Grid.BlockCenter(bx, bz)
+	anchored({ Name = "BlackMarketLot", Size = Vector3.new(BLOCK, 1, BLOCK), CFrame = CFrame.new(c.X, SURFACE - 0.5, c.Z), Color = Color3.fromRGB(34, 34, 38), Material = Enum.Material.Asphalt }, ground)
+	anchored({ Name = "BlackMarketShed", Size = Vector3.new(150, 34, 56), CFrame = CFrame.new(c.X, SURFACE + 17, c.Z + 80), Color = Color3.fromRGB(70, 40, 36), Material = Enum.Material.Brick }, buildings)
+	-- half-open roll-up door glowing red inside
+	anchored({ Name = "Door", Size = Vector3.new(44, 12, 0.6), CFrame = CFrame.new(c.X, SURFACE + 20, c.Z + 51.8), Color = Color3.fromRGB(90, 92, 96), Material = Enum.Material.CorrodedMetal, CanCollide = false }, props)
+	local glow = anchored({ Name = "InsideGlow", Size = Vector3.new(44, 14, 0.4), CFrame = CFrame.new(c.X, SURFACE + 7, c.Z + 52.2), Color = Color3.fromRGB(255, 30, 40), Material = Enum.Material.Neon, Transparency = 0.35, CanCollide = false, CanQuery = false }, props)
+	local light = Instance.new("SurfaceLight")
+	light.Face = Enum.NormalId.Front
+	light.Color = Color3.fromRGB(255, 40, 40)
+	light.Range = 40
+	light.Brightness = 3
+	light.Parent = glow
+	glow.CFrame = CFrame.lookAt(glow.Position, glow.Position - Vector3.zAxis)
+	local sign = anchored({ Name = "Sign", Size = Vector3.new(70, 9, 0.6), CFrame = CFrame.new(c.X, SURFACE + 29, c.Z + 51.6), Color = Color3.fromRGB(10, 10, 12), CanCollide = false }, props)
+	sign.CFrame = CFrame.lookAt(sign.Position, sign.Position - Vector3.zAxis)
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = Enum.NormalId.Front
+	gui.LightInfluence = 0
+	gui.Brightness = 3
+	local t = Instance.new("TextLabel")
+	t.BackgroundTransparency = 1
+	t.Size = UDim2.fromScale(1, 1)
+	t.Text = "BLACK MARKET AUTO"
+	t.TextScaled = true
+	t.Font = Enum.Font.GothamBlack
+	t.TextColor3 = Color3.fromRGB(255, 40, 50)
+	t.Parent = gui
+	gui.Parent = sign
+	-- graffiti tags on the walls
+	for k, tag in { "NO COPS", "RVLT", "BURN IT" } do
+		local wall = anchored({ Name = "Graffiti", Size = Vector3.new(24, 8, 0.2), CFrame = CFrame.new(c.X - 60 + (k - 1) * 40, SURFACE + 8 + (k % 2) * 3, c.Z + 51.7), Color = Color3.fromRGB(70, 40, 36), Transparency = 1, CanCollide = false, CanQuery = false }, props)
+		wall.CFrame = CFrame.lookAt(wall.Position, wall.Position - Vector3.zAxis)
+		local g = Instance.new("SurfaceGui")
+		g.Face = Enum.NormalId.Front
+		local l = Instance.new("TextLabel")
+		l.BackgroundTransparency = 1
+		l.Size = UDim2.fromScale(1, 1)
+		l.Text = tag
+		l.TextScaled = true
+		l.Font = Enum.Font.FredokaOne
+		l.TextColor3 = ({ Color3.fromRGB(120, 255, 60), Color3.fromRGB(255, 80, 200), Color3.fromRGB(60, 200, 255) })[k]
+		l.Rotation = -6 + k * 4
+		l.Parent = g
+		g.Parent = wall
+	end
+	-- chain-link fence with a gap at the front, burning barrels
+	for _, side in { -1, 1 } do
+		anchored({ Name = "Fence", Size = Vector3.new(0.3, 10, BLOCK - 40), CFrame = CFrame.new(c.X + side * (BLOCK / 2 - 20), SURFACE + 5, c.Z + 10), Color = Color3.fromRGB(150, 155, 160), Material = Enum.Material.ForceField, Transparency = 0.3, CanCollide = false, CanQuery = false }, props)
+	end
+	for _, o in { Vector3.new(-40, 0, 30), Vector3.new(40, 0, 30), Vector3.new(-60, 0, -40) } do
+		local barrel = anchored({ Name = "Barrel", Shape = Enum.PartType.Cylinder, Size = Vector3.new(4, 3, 3), CFrame = CFrame.new(c + o + Vector3.new(0, 2, 0)) * CFrame.Angles(0, 0, math.rad(90)), Color = Color3.fromRGB(60, 55, 50), Material = Enum.Material.CorrodedMetal }, props)
+		local fire = Instance.new("Fire")
+		fire.Size = 4
+		fire.Heat = 8
+		fire.Parent = barrel
+		local fl = Instance.new("PointLight")
+		fl.Color = Color3.fromRGB(255, 140, 50)
+		fl.Range = 20
+		fl.Brightness = 2
+		fl.Parent = barrel
+	end
+	local pad = anchored({ Name = "BlackMarketPad", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.2, 70, 70), CFrame = CFrame.new(c.X, SURFACE + 0.05, c.Z) * CFrame.Angles(0, 0, math.rad(90)), Color = Color3.fromRGB(255, 30, 40), Material = Enum.Material.Neon, Transparency = 0.6, CanCollide = false, CanQuery = false }, props)
+	billboard(pad, "BLACK MARKET - roof weapons", Color3.fromRGB(255, 60, 60), 16, 500)
+	return Vector3.new(c.X, SURFACE, c.Z)
+end
+
+local TAGS = { "NEO", "RVLT", "DRFT", "WNTD", "ZERO", "GHST", "KAIJU", "BURN", "FAST", "LOW", "NITRO", "BAY" }
+local TAG_COLORS = { Color3.fromRGB(255, 60, 170), Color3.fromRGB(60, 220, 255), Color3.fromRGB(140, 255, 60), Color3.fromRGB(255, 200, 40), Color3.fromRGB(190, 90, 255) }
+
+-- Street art collectibles: bright tagged panels on sidewalks all over the city.
+local function placeCollectibles(info: MapInfo, isSpecial: (number, number) -> string?, map: Folder)
+	local folder = Instance.new("Folder")
+	folder.Name = "Collectibles"
+	folder.Parent = map
+	local crng = Random.new(99)
+	local used: { [string]: boolean } = {}
+	local placed = 0
+	while placed < Config.CollectibleCount do
+		local bx, bz = crng:NextInteger(0, Grid.Size - 1), crng:NextInteger(0, Grid.Size - 1)
+		local key = bx .. "," .. bz
+		if used[key] or isSpecial(bx, bz) then
+			continue
+		end
+		used[key] = true
+		placed += 1
+		local c = Grid.BlockCenter(bx, bz)
+		local dirs = { Vector3.xAxis, -Vector3.xAxis, Vector3.zAxis, -Vector3.zAxis }
+		local n = dirs[crng:NextInteger(1, 4)]
+		local across = n:Cross(Vector3.yAxis)
+		local pos = c + n * (BLOCK / 2 - 9) + across * crng:NextNumber(-70, 70)
+		local id = "art_" .. placed
+		local panel = anchored({
+			Name = id,
+			Size = Vector3.new(9, 6, 0.4),
+			CFrame = CFrame.lookAt(pos + Vector3.new(0, 4.5, 0), pos + Vector3.new(0, 4.5, 0) + n),
+			Color = Color3.fromRGB(20, 20, 24),
+			CanCollide = false,
+			CanQuery = false,
+		}, folder)
+		local color = TAG_COLORS[crng:NextInteger(1, #TAG_COLORS)]
+		local g = Instance.new("SurfaceGui")
+		g.Face = Enum.NormalId.Front
+		g.LightInfluence = 0
+		g.Brightness = 2
+		local l = Instance.new("TextLabel")
+		l.BackgroundTransparency = 1
+		l.Size = UDim2.fromScale(1, 1)
+		l.Text = TAGS[crng:NextInteger(1, #TAGS)]
+		l.TextScaled = true
+		l.Font = Enum.Font.FredokaOne
+		l.TextColor3 = color
+		l.Rotation = crng:NextNumber(-8, 8)
+		l.Parent = g
+		g.Parent = panel
+		local halo = Instance.new("PointLight")
+		halo.Color = color
+		halo.Range = 16
+		halo.Brightness = 2
+		halo.Parent = panel
+		table.insert(info.collectibles, { id = id, position = pos })
+	end
+end
+
 function MapBuilder.Build(): MapInfo
 	local existing = workspace:FindFirstChild("Map")
 	if existing then
@@ -4273,6 +4692,8 @@ function MapBuilder.Build(): MapInfo
 		nightLights = nightLights,
 		nightNeon = nightNeon,
 		nightToggles = Architecture.Toggles(),
+		blackMarket = Vector3.zero,
+		collectibles = {},
 	}
 
 	local function isSpecial(bx: number, bz: number): string?
@@ -4289,6 +4710,10 @@ function MapBuilder.Build(): MapInfo
 				return "hide"
 			end
 		end
+		local bm = Config.Blocks.BlackMarket
+		if bx == bm[1] and bz == bm[2] then
+			return "blackmarket"
+		end
 		return nil
 	end
 
@@ -4303,6 +4728,9 @@ function MapBuilder.Build(): MapInfo
 			elseif kind == "park" then
 				park(bx, bz, props, ground)
 				Architecture.Sidewalks(Grid.BlockCenter(bx, bz), BLOCK, true)
+			elseif kind == "blackmarket" then
+				info.blackMarket = blackMarket(bx, bz, buildings, props, ground)
+				Architecture.Sidewalks(Grid.BlockCenter(bx, bz), BLOCK, false, "industrial")
 			elseif kind == "hide" then
 				hidingSpot(bx, bz, buildings, props, ground)
 				Architecture.Sidewalks(Grid.BlockCenter(bx, bz), BLOCK, false)
@@ -4313,6 +4741,7 @@ function MapBuilder.Build(): MapInfo
 		end
 	end
 
+	placeCollectibles(info, isSpecial, map)
 	for _, b in Config.PursuitBreakers do
 		table.insert(info.breakers, pursuitBreaker(b[1], b[2], breakersFolder))
 	end
@@ -4413,6 +4842,11 @@ export type Profile = {
 	stats: { [string]: number }, -- milestone stats
 	milestones: { [string]: boolean }, -- completed milestone ids
 	settings: { [string]: any }, -- client settings (camera shake, units, volume...)
+	redeemed: { [string]: boolean }, -- codes already used
+	weapons: { [string]: boolean }, -- weapons owned
+	weapon: string, -- equipped weapon id ("" = none)
+	collected: { [string]: boolean }, -- street art found
+	rep: number, -- total REP earned
 }
 
 local STORE_NAME = "WantedUnbound_v1"
@@ -4445,6 +4879,11 @@ local function default(): Profile
 		stats = {},
 		milestones = {},
 		settings = {},
+		redeemed = {},
+		weapons = {},
+		weapon = "",
+		collected = {},
+		rep = 0,
 	}
 end
 
@@ -4719,6 +5158,7 @@ local function escaped(s: Session.Session)
 	Session.MaxStat(s, "maxHeatEvaded", Session.HeatLevel(s))
 	Session.MaxStat(s, "bestBounty", reward)
 	Session.AddUnbanked(s, reward, "Bounty cash (take it to the safehouse)")
+	Session.AddRep(s, 250 * math.max(1, Session.HeatLevel(s)), "Escape")
 	endPursuit(s)
 end
 
@@ -4752,7 +5192,17 @@ local function copThink(ai: AIDriver.AI, _dt: number)
 			end
 			state.speedMult = mult
 			local lead = math.clamp(dist / 200, 0.1, 0.6)
-			AIDriver.DriveTo(ai, target + vel * lead, dist < 60)
+			local aim = target + vel * lead
+			if dist < 45 then
+				-- close behind: go for a PIT on the rear quarter instead of the bumper
+				local pcf = (car.PrimaryPart :: BasePart).CFrame
+				local rel = pcf:PointToObjectSpace(pos)
+				if rel.Z > 0 then
+					local side = if rel.X >= 0 then 1 else -1
+					aim = pcf:PointToWorldSpace(Vector3.new(side * 3.5, 0, 3)) + vel * 0.15
+				end
+			end
+			AIDriver.DriveTo(ai, aim, dist < 60)
 			-- hit the nitro to catch up on long straights
 			ai.input.nitro = dist > 180 and math.abs(ai.input.steer) < 0.3
 		else
@@ -4890,6 +5340,7 @@ wreck = function(ai: AIDriver.AI, by: Session.Session?)
 	if by and by.mode ~= "idle" then
 		by.copsWrecked += 1
 		Session.AddStat(by, "copsWrecked", 1)
+		Session.AddRep(by, 50)
 		by.bounty += Config.Bounty.CopWrecked * Session.NightMult()
 		by.heat = math.min(5, by.heat + 0.12)
 		Session.Notify(by.player, "COP WRECKED  +" .. Config.Bounty.CopWrecked .. " bounty", Color3.fromRGB(255, 160, 60))
@@ -5430,6 +5881,28 @@ function Police.Init(info: MapBuilder.MapInfo)
 	end)
 end
 
+-- Weapons: damage / stun a police car. `by` gets the bounty and heat.
+function Police.DamageCop(ai: AIDriver.AI, amount: number, by: Session.Session?)
+	if not ai.alive or ai.data.wrecked or ai.kind ~= "cop" then
+		return
+	end
+	ai.data.health = (ai.data.health or P.CopHealth) - amount
+	if by then
+		if by.mode == "idle" and not by.race then
+			startPursuit(by, "Attacking the police!")
+		end
+		by.heat = math.min(5, by.heat + 0.08)
+		by.bounty += 200 * Session.NightMult()
+	end
+	if ai.data.health <= 0 then
+		wreck(ai, by)
+	end
+end
+
+function Police.IsCop(ai: AIDriver.AI): boolean
+	return ai.kind == "cop" and not ai.data.wrecked
+end
+
 function Police.SetBustedCallback(fn: (s: Session.Session) -> ())
 	onBusted = fn
 end
@@ -5474,9 +5947,17 @@ type Race = {
 	startTime: number,
 	finishedCount: number,
 	rival: Config.Rival?,
-	driftScore: number,
+	driftScore: number, -- drift and takeover score
 	folder: Folder,
+	sideBet: { racer: Racer, stake: number }?,
+	center: Vector3, -- takeover zone centre
 }
+
+local spawnTakeoverProps: (race: Race) -> ()
+
+local function scored(kind: string): boolean
+	return kind == "drift" or kind == "takeover"
+end
 
 local racesFolder = Instance.new("Folder")
 racesFolder.Name = "Races"
@@ -5571,7 +6052,17 @@ local function finishPlayer(race: Race, place: number?)
 	race.state = "done"
 	local night = Session.NightMult()
 	local heatMult = Session.HeatPayoutMult(s)
-	if def.kind == "drift" then
+	-- side bet against a named rival
+	local bet = race.sideBet
+	if bet then
+		local beat = place ~= nil and (not bet.racer.finished or (bet.racer.place or 99) > place)
+		if beat then
+			Session.AddUnbanked(s, bet.stake * 2, "SIDE BET WON vs " .. bet.racer.name)
+		else
+			Session.Notify(s.player, "Side bet lost to " .. bet.racer.name .. " (-$" .. bet.stake .. ")", Color3.fromRGB(255, 90, 90))
+		end
+	end
+	if scored(def.kind) then
 		local target = def.driftTarget or 1
 		if race.driftScore >= target then
 			local ratio = math.min(race.driftScore / target, 2)
@@ -5579,6 +6070,10 @@ local function finishPlayer(race: Race, place: number?)
 			s.profile.racesWon += 1
 			Session.Banner(s.player, "DRIFT EVENT COMPLETE", "Score " .. math.floor(race.driftScore), GOLD)
 			Session.AddUnbanked(s, payout, def.name .. " winnings")
+			Session.AddRep(s, if def.kind == "takeover" then 500 else 400, "Event complete")
+			if def.kind == "takeover" then
+				Session.AddStat(s, "takeovers", 1)
+			end
 		else
 			Session.Banner(s.player, "TARGET MISSED", math.floor(race.driftScore) .. " / " .. target, Color3.fromRGB(255, 90, 90))
 		end
@@ -5594,6 +6089,7 @@ local function finishPlayer(race: Race, place: number?)
 				Session.Banner(s.player, "BLACKLIST #" .. rival.rank .. " DEFEATED", string.upper(rival.name) .. " is off the list", GOLD)
 				Session.Notify(s.player, "PINK SLIP: " .. (if carDef then carDef.name else rival.carId) .. " is now in your garage", GOLD)
 				Session.AddUnbanked(s, rival.reward, "Blacklist reward")
+				Session.AddRep(s, 2000, "Blacklist win")
 			else
 				Session.Banner(s.player, "YOU LOST", string.upper(rival.name) .. " beat you. Try again!", Color3.fromRGB(255, 90, 90))
 			end
@@ -5607,11 +6103,13 @@ local function finishPlayer(race: Race, place: number?)
 			if frac > 0 then
 				Session.AddUnbanked(s, (def.reward + def.buyIn) * frac * night * heatMult, def.name .. " winnings")
 			end
+			local repByPlace = { 500, 250, 150 }
+			Session.AddRep(s, repByPlace[place] or 50, "Race finish")
 		end
 	else
 		Session.Notify(s.player, "Race abandoned", Color3.fromRGB(255, 90, 90))
 	end
-	if place or def.kind == "drift" then
+	if place or scored(def.kind) then
 		local before = Session.HeatLevel(s)
 		s.heat = math.min(5, s.heat + def.heat * night)
 		if Session.HeatLevel(s) > before then
@@ -5649,6 +6147,66 @@ local function rivalThink(race: Race, racer: Racer)
 	end
 end
 
+-- Takeover props: cones, barrels and crates on the roads around the zone. Smashing one
+-- is worth points.
+spawnTakeoverProps = function(race: Race)
+	local c = race.center
+	local ci, cj = Grid.NearestIntersection(c)
+	local playerSession = race.session
+	for _ = 1, 45 do
+		local i = math.clamp(ci + math.random(-1, 1), 0, Grid.Size)
+		local j = math.clamp(cj + math.random(-1, 1), 0, Grid.Size)
+		local base = Grid.Intersection(i, j)
+		local alongX = math.random() < 0.5
+		local t = math.random(-120, 120)
+		local lateral = math.random(-22, 22)
+		local pos = base + (if alongX then Vector3.new(t, 0, lateral) else Vector3.new(lateral, 0, t))
+		local kind = math.random(1, 3)
+		local p = Instance.new("Part")
+		p.Name = "TakeoverProp"
+		p.Anchored = true
+		if kind == 1 then
+			p.Size = Vector3.new(1.6, 2.8, 1.6)
+			p.Color = Color3.fromRGB(255, 120, 0)
+			p.Material = Enum.Material.SmoothPlastic
+		elseif kind == 2 then
+			p.Shape = Enum.PartType.Cylinder
+			p.Size = Vector3.new(3.4, 2.4, 2.4)
+			p.Color = Color3.fromRGB(40, 90, 170)
+			p.Material = Enum.Material.Metal
+		else
+			p.Size = Vector3.new(3, 3, 3)
+			p.Color = Color3.fromRGB(150, 110, 60)
+			p.Material = Enum.Material.WoodPlanks
+		end
+		p.CFrame = CFrame.new(pos + Vector3.new(0, p.Size.Y / 2 + 0.5, 0)) * (if kind == 2 then CFrame.Angles(0, 0, math.rad(90)) else CFrame.identity)
+		local ring = Instance.new("SelectionBox")
+		ring.Adornee = p
+		ring.Color3 = Color3.fromRGB(255, 230, 40)
+		ring.LineThickness = 0.08
+		ring.Parent = p
+		local smashed = false
+		p.Touched:Connect(function(hit)
+			if smashed or race.state ~= "racing" then
+				return
+			end
+			local car = playerSession.car
+			if not car or not hit:IsDescendantOf(car) then
+				return
+			end
+			smashed = true
+			ring:Destroy()
+			p.Anchored = false
+			local root = car.PrimaryPart :: BasePart
+			p.AssemblyLinearVelocity = root.AssemblyLinearVelocity * 1.2 + Vector3.new(0, 30, 0)
+			p.AssemblyAngularVelocity = Vector3.new(math.random(-8, 8), math.random(-8, 8), math.random(-8, 8))
+			race.driftScore += 1500
+			Session.Notify(playerSession.player, "SMASH  +1,500", Color3.fromRGB(255, 200, 60))
+		end)
+		p.Parent = race.folder
+	end
+end
+
 function Races.Start(s: Session.Session, def: Config.RaceDef, rival: Config.Rival?): (boolean, string)
 	if s.race then
 		return false, "Already racing"
@@ -5683,6 +6241,8 @@ function Races.Start(s: Session.Session, def: Config.RaceDef, rival: Config.Riva
 		rival = rival,
 		driftScore = 0,
 		folder = folder,
+		sideBet = nil,
+		center = Grid.Intersection(def.route[1][1], def.route[1][2]),
 	}
 	s.race = race
 
@@ -5704,7 +6264,7 @@ function Races.Start(s: Session.Session, def: Config.RaceDef, rival: Config.Riva
 		return CFrame.lookAt(p, p + dir)
 	end
 
-	Vehicles.Spawn(s, slot(if def.kind == "drift" then 0 else 2))
+	Vehicles.Spawn(s, slot(if scored(def.kind) then 0 else 2))
 	Vehicles.Freeze(s, 3.2)
 
 	local rivals = if rival then 1 else def.rivals
@@ -5766,7 +6326,25 @@ function Races.Start(s: Session.Session, def: Config.RaceDef, rival: Config.Riva
 		RaceNext = checkpoints[1] or startPos,
 		RaceScore = 0,
 		RaceTarget = def.driftTarget or 0,
+		RaceSideBet = "",
+		RaceInZone = true,
 	})
+
+	-- Unbound side bet: stake against one of the rivals finishing behind you
+	if not rival and #race.racers > 1 then
+		local stake = math.max(Config.SideBet.Min, math.floor(def.buyIn * Config.SideBet.Fraction))
+		if s.profile.cash >= stake then
+			s.profile.cash -= stake
+			local target = race.racers[math.random(2, #race.racers)]
+			race.sideBet = { racer = target, stake = stake }
+			s.player:SetAttribute("RaceSideBet", "SIDE BET: beat " .. target.name .. "  ($" .. stake .. " -> $" .. stake * 2 .. ")")
+		end
+	end
+
+	-- takeover: smashable props scattered around the zone
+	if def.kind == "takeover" then
+		spawnTakeoverProps(race)
+	end
 
 	task.spawn(function()
 		for n = 3, 1, -1 do
@@ -5817,8 +6395,18 @@ function Races.Update(s: Session.Session, driftGain: number)
 	local player = s.player
 	player:SetAttribute("RaceTime", elapsed)
 
-	if race.def.kind == "drift" then
-		race.driftScore += driftGain
+	if scored(race.def.kind) then
+		local takeover = race.def.kind == "takeover"
+		local pos = Session.CarPosition(s)
+		local inZone = not takeover or (pos ~= nil and (Vector3.new(pos.X, 0, pos.Z) - Vector3.new(race.center.X, 0, race.center.Z)).Magnitude < 420)
+		player:SetAttribute("RaceInZone", inZone)
+		if inZone then
+			race.driftScore += driftGain * (if takeover then 1.2 else 1)
+			-- takeovers also reward big air
+			if takeover and pos and pos.Y > Grid.RoadY + 6 then
+				race.driftScore += 90
+			end
+		end
 		player:SetAttribute("RaceScore", math.floor(race.driftScore))
 		local left = (race.def.duration or 60) - elapsed
 		player:SetAttribute("RaceTimeLeft", left)
@@ -5948,6 +6536,7 @@ export type Session = {
 	hiding: boolean,
 	frozenUntil: number,
 	inGarage: boolean,
+	atBlackMarket: boolean,
 }
 
 local sessions: { [Player]: Session } = {}
@@ -5985,6 +6574,7 @@ function Session.Create(player: Player, profile: PlayerData.Profile): Session
 		hiding = false,
 		frozenUntil = 0,
 		inGarage = false,
+		atBlackMarket = false,
 	}
 	sessions[player] = s
 	return s
@@ -6044,8 +6634,13 @@ function Session.Sync(s: Session)
 	p:SetAttribute("BlacklistBeaten", s.profile.blacklistBeaten)
 	p:SetAttribute("DriftCombo", math.floor(s.driftCombo))
 	p:SetAttribute("AtSafehouse", s.atSafehouse)
+	p:SetAttribute("AtBlackMarket", s.atBlackMarket)
 	p:SetAttribute("Hiding", s.hiding)
 	p:SetAttribute("Night", Session.IsNight())
+	local level, into, need = Session.RepLevel(s.profile.rep)
+	p:SetAttribute("RepLevel", level)
+	p:SetAttribute("RepProgress", into / need)
+	p:SetAttribute("Weapon", s.profile.weapon)
 	local ls = p:FindFirstChild("leaderstats")
 	if ls then
 		local cash = ls:FindFirstChild("Cash") :: IntValue?
@@ -6087,6 +6682,7 @@ function Session.CheckMilestones(s: Session)
 		if not done[m.id] and Session.StatValue(s, m.stat) >= m.goal then
 			done[m.id] = true
 			s.profile.cash += m.reward
+			Session.AddRep(s, 200)
 			Session.Banner(s.player, "MILESTONE COMPLETE", m.name .. "   +$" .. m.reward, Color3.fromRGB(120, 255, 170))
 		end
 	end
@@ -6101,6 +6697,39 @@ function Session.MaxStat(s: Session, stat: string, value: number)
 	if value > (s.profile.stats[stat] or 0) then
 		s.profile.stats[stat] = value
 		Session.CheckMilestones(s)
+	end
+end
+
+function Session.RepLevel(rep: number): (number, number, number)
+	-- returns level, rep into this level, rep needed for the next level
+	local level = 1
+	local left = rep
+	while level < Config.Rep.MaxLevel do
+		local need = Config.Rep.PerLevel(level)
+		if left < need then
+			return level, left, need
+		end
+		left -= need
+		level += 1
+	end
+	return level, 0, 1
+end
+
+function Session.AddRep(s: Session, amount: number, reason: string?)
+	amount = math.floor(amount)
+	if amount <= 0 then
+		return
+	end
+	local before = Session.RepLevel(s.profile.rep)
+	s.profile.rep += amount
+	local after = Session.RepLevel(s.profile.rep)
+	if reason then
+		Session.Notify(s.player, reason .. "  +" .. amount .. " REP", Color3.fromRGB(170, 140, 255))
+	end
+	if after > before then
+		local cash = Config.Rep.LevelReward * math.max(1, math.floor(after / 2))
+		s.profile.cash += cash
+		Session.Banner(s.player, "REP LEVEL " .. after, "+$" .. cash .. " level-up bonus", Color3.fromRGB(170, 140, 255))
 	end
 end
 
@@ -6611,6 +7240,7 @@ function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 	end
 	local rimEntry = Config.Visual.rimColor[v.rimColor] or Config.Visual.rimColor[1]
 	local tintEntry = Config.Visual.tint[v.tint] or Config.Visual.tint[2]
+	local weaponDef = if profile.weapon ~= "" then Config.GetWeapon(profile.weapon) else nil
 
 	local car = CarBuilder.Build({
 		style = def.style,
@@ -6626,6 +7256,8 @@ function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 		kit = v.kit,
 		glow = glowColor,
 		ride = tune.handling.ride,
+		weapon = weaponDef and weaponDef.model,
+		weaponColor = weaponDef and weaponDef.color,
 	})
 	car:SetAttribute("Owner", s.player.UserId)
 	car:SetAttribute("CarId", def.id)
@@ -6705,7 +7337,412 @@ function Vehicles.Freeze(s: Session.Session, seconds: number)
 end
 
 return Vehicles
-]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX00000000000000000000000000000025"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX00000000000000000000000000000020"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="Folder" referent="RBX0000000000000000000000000000001F"><Properties><string name="Name">Client</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000014"><Properties><string name="Name">CarVisuals</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000013"><Properties><string name="Name">Weapons</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Roof-mounted car weapons, bought at the Black Market. They only affect police and rival AI
+-- cars (never other players). Using them on cops starts a pursuit and raises your heat.
+
+local Debris = game:GetService("Debris")
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared:WaitForChild("Config"))
+local Grid = require(Shared:WaitForChild("Grid"))
+local AIDriver = require(script.Parent.AIDriver)
+local Police = require(script.Parent.Police)
+local Session = require(script.Parent.Session)
+
+local Weapons = {}
+
+local fx = Instance.new("Folder")
+fx.Name = "WeaponFX"
+fx.Parent = workspace
+
+local function effectPart(props: { [string]: any }): Part
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.Material = Enum.Material.Neon
+	for k, v in props do
+		(p :: any)[k] = v
+	end
+	p.Parent = fx
+	return p
+end
+
+local function aiFromPart(part: BasePart): AIDriver.AI?
+	for _, ai in AIDriver.All() do
+		if ai.alive and (ai.kind == "cop" or ai.kind == "rival") and part:IsDescendantOf(ai.model) then
+			return ai
+		end
+	end
+	return nil
+end
+
+local function targetsNear(pos: Vector3, radius: number): { AIDriver.AI }
+	local out = {}
+	for _, ai in AIDriver.All() do
+		if ai.alive and (ai.kind == "cop" or ai.kind == "rival") and (ai.state.root.Position - pos).Magnitude < radius then
+			table.insert(out, ai)
+		end
+	end
+	return out
+end
+
+local function stun(ai: AIDriver.AI, seconds: number)
+	ai.data.stunnedUntil = os.clock() + seconds
+end
+
+local function hit(ai: AIDriver.AI, damage: number, by: Session.Session)
+	if Police.IsCop(ai) then
+		Police.DamageCop(ai, damage, by)
+	else
+		stun(ai, 1.2)
+	end
+end
+
+local function boom(pos: Vector3)
+	local e = Instance.new("Explosion")
+	e.BlastPressure = 0
+	e.BlastRadius = 0
+	e.DestroyJointRadiusPercent = 0
+	e.ExplosionType = Enum.ExplosionType.NoCraters
+	e.Position = pos
+	e.Parent = workspace
+end
+
+local function muzzle(car: Model): Vector3
+	local root = car.PrimaryPart :: BasePart
+	local att = root:FindFirstChild("WeaponMuzzle", true)
+	if att and att:IsA("Attachment") then
+		return att.WorldPosition
+	end
+	return root.Position + Vector3.new(0, 5, 0)
+end
+
+---------------------------------------------------------------------------
+-- The weapons
+---------------------------------------------------------------------------
+local function pulse(s: Session.Session, car: Model, w: Config.WeaponDef)
+	local root = car.PrimaryPart :: BasePart
+	local from = muzzle(car)
+	local look = root.CFrame.LookVector
+	-- lock on to the closest target in a cone ahead
+	local best: AIDriver.AI? = nil
+	local bestD = 320
+	for _, ai in targetsNear(root.Position, 320) do
+		local to = ai.state.root.Position - root.Position
+		local d = to.Magnitude
+		if d > 1 and to.Unit:Dot(look) > 0.93 and d < bestD then
+			best, bestD = ai, d
+		end
+	end
+	local target = if best then best.state.root.Position else from + look * 260
+	local dist = (target - from).Magnitude
+	local bolt = effectPart({ Name = "PulseBolt", Size = Vector3.new(0.8, 0.8, 8), Color = w.color, CFrame = CFrame.lookAt(from, target) })
+	local light = Instance.new("PointLight")
+	light.Color = w.color
+	light.Range = 18
+	light.Brightness = 4
+	light.Parent = bolt
+	local travel = math.clamp(dist / 450, 0.05, 0.5)
+	TweenService:Create(bolt, TweenInfo.new(travel, Enum.EasingStyle.Linear), { CFrame = CFrame.lookAt(target, target + (target - from).Unit) }):Play()
+	Debris:AddItem(bolt, travel + 0.05)
+	local victim = best
+	task.delay(travel, function()
+		if victim and victim.alive then
+			boom(victim.state.root.Position)
+			victim.state.root.AssemblyLinearVelocity += (target - from).Unit * 40 + Vector3.new(0, 20, 0)
+			hit(victim, 55, s)
+		end
+	end)
+end
+
+local function emp(s: Session.Session, car: Model, w: Config.WeaponDef)
+	local pos = (car.PrimaryPart :: BasePart).Position
+	local sphere = effectPart({ Name = "EMP", Shape = Enum.PartType.Ball, Size = Vector3.new(4, 4, 4), Color = w.color, Transparency = 0.3, Material = Enum.Material.ForceField, CFrame = CFrame.new(pos) })
+	TweenService:Create(sphere, TweenInfo.new(0.6), { Size = Vector3.new(180, 180, 180), Transparency = 1 }):Play()
+	Debris:AddItem(sphere, 0.7)
+	for _, ai in targetsNear(pos, 90) do
+		stun(ai, 5)
+		if Police.IsCop(ai) then
+			ai.model:SetAttribute("Siren", false)
+			task.delay(5, function()
+				if ai.alive and ai.data.mode ~= "patrol" then
+					ai.model:SetAttribute("Siren", true)
+				end
+			end)
+			Police.DamageCop(ai, 10, s)
+		end
+	end
+end
+
+local function dropBehind(car: Model, dist: number): (Vector3, Vector3)
+	local root = car.PrimaryPart :: BasePart
+	local look = root.CFrame.LookVector
+	local flat = Vector3.new(look.X, 0, look.Z).Unit
+	local p = root.Position - flat * dist
+	return Vector3.new(p.X, Grid.RoadY, p.Z), flat
+end
+
+local function oil(s: Session.Session, car: Model, w: Config.WeaponDef)
+	local pos, flat = dropBehind(car, 14)
+	local slick = effectPart({ Name = "OilSlick", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.12, 22, 22), Color = w.color, Material = Enum.Material.Glass, Reflectance = 0.5, Transparency = 0.1, CanTouch = true, CFrame = CFrame.new(pos + Vector3.new(0, 0.07, 0)) * CFrame.Angles(0, 0, math.rad(90)) })
+	local done: { [AIDriver.AI]: boolean } = {}
+	slick.Touched:Connect(function(part)
+		local ai = aiFromPart(part)
+		if ai and not done[ai] then
+			done[ai] = true
+			stun(ai, 1.8)
+			local r = ai.state.root
+			r.AssemblyAngularVelocity = Vector3.new(0, (if math.random() < 0.5 then -1 else 1) * 9, 0)
+			r.AssemblyLinearVelocity *= 0.6
+			if Police.IsCop(ai) then
+				Police.DamageCop(ai, 20, s)
+			end
+		end
+	end)
+	local _ = flat
+	Debris:AddItem(slick, 15)
+end
+
+local function spikes(s: Session.Session, car: Model, w: Config.WeaponDef)
+	local pos, flat = dropBehind(car, 12)
+	local across = flat:Cross(Vector3.yAxis)
+	local strip = effectPart({ Name = "SpikeDrop", Size = Vector3.new(26, 0.35, 2.2), Color = Color3.fromRGB(60, 60, 65), Material = Enum.Material.DiamondPlate, CanTouch = true, CFrame = CFrame.fromMatrix(pos + Vector3.new(0, 0.18, 0), across, Vector3.yAxis) })
+	for k = -8, 8 do
+		local spike = effectPart({ Name = "Spike", Size = Vector3.new(0.3, 0.7, 0.3), Color = w.color, Material = Enum.Material.Metal, CFrame = strip.CFrame * CFrame.new(k * 1.5, 0.5, 0) })
+		spike.Parent = strip
+	end
+	local done: { [AIDriver.AI]: boolean } = {}
+	strip.Touched:Connect(function(part)
+		local ai = aiFromPart(part)
+		if ai and not done[ai] then
+			done[ai] = true
+			stun(ai, 2.5)
+			hit(ai, 120, s)
+		end
+	end)
+	Debris:AddItem(strip, 20)
+end
+
+local function shock(s: Session.Session, car: Model, w: Config.WeaponDef)
+	local pos = (car.PrimaryPart :: BasePart).Position
+	local ring = effectPart({ Name = "Shockwave", Shape = Enum.PartType.Cylinder, Size = Vector3.new(1, 6, 6), Color = w.color, Transparency = 0.2, CFrame = CFrame.new(pos) * CFrame.Angles(0, 0, math.rad(90)) })
+	TweenService:Create(ring, TweenInfo.new(0.45), { Size = Vector3.new(1, 130, 130), Transparency = 1 }):Play()
+	Debris:AddItem(ring, 0.5)
+	for _, ai in targetsNear(pos, 65) do
+		local r = ai.state.root
+		local away = r.Position - pos
+		away = Vector3.new(away.X, 0, away.Z)
+		if away.Magnitude < 1 then
+			away = Vector3.xAxis
+		end
+		r.AssemblyLinearVelocity += away.Unit * 130 + Vector3.new(0, 35, 0)
+		r.AssemblyAngularVelocity += Vector3.new(math.random(-3, 3), math.random(-6, 6), math.random(-3, 3))
+		stun(ai, 1.5)
+		if Police.IsCop(ai) then
+			Police.DamageCop(ai, 40, s)
+		end
+	end
+	-- traffic gets shoved too, it just isn't damaged
+	local traffic = workspace:FindFirstChild("Traffic")
+	if traffic then
+		for _, m in traffic:GetChildren() do
+			if m:IsA("Model") and m.PrimaryPart and (m.PrimaryPart.Position - pos).Magnitude < 50 then
+				local away = m.PrimaryPart.Position - pos
+				m.PrimaryPart.AssemblyLinearVelocity += Vector3.new(away.X, 0, away.Z).Unit * 70 + Vector3.new(0, 20, 0)
+			end
+		end
+	end
+end
+
+local FIRE = {
+	pulse = pulse,
+	emp = emp,
+	oil = oil,
+	spikes = spikes,
+	shock = shock,
+}
+
+-- Returns true if the weapon fired.
+function Weapons.Fire(s: Session.Session): boolean
+	local w = Config.GetWeapon(s.profile.weapon)
+	local car = s.car
+	if not w or not car or not car.PrimaryPart or s.inGarage then
+		return false
+	end
+	local now = workspace:GetServerTimeNow()
+	local ready = s.player:GetAttribute("WeaponReadyAt")
+	if type(ready) == "number" and now < ready then
+		return false
+	end
+	s.player:SetAttribute("WeaponReadyAt", now + w.cooldown)
+	local fn = FIRE[w.id]
+	if fn then
+		fn(s, car, w)
+	end
+	return true
+end
+
+return Weapons
+]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX00000000000000000000000000000029"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX00000000000000000000000000000024"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000023"><Properties><string name="Name">Client</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000015"><Properties><string name="Name">BlackMarket</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Black Market window (buy / mount roof weapons) and the fire button (F / gamepad RB / touch).
+
+local ContextActionService = game:GetService("ContextActionService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local Shop = Remotes:WaitForChild("Shop") :: RemoteFunction
+local FireWeapon = Remotes:WaitForChild("FireWeapon") :: RemoteEvent
+
+local HUD = require(script.Parent.HUD)
+local Sounds = require(script.Parent.Sounds)
+local Drive = require(script.Parent.DriveController)
+
+local player = Players.LocalPlayer
+local BlackMarket = {}
+BlackMarket.Open = false
+
+local RED = Color3.fromRGB(255, 50, 60)
+
+local function new(className: string, props: { [string]: any }, parent: Instance?): any
+	local inst = Instance.new(className)
+	for k, v in props do
+		(inst :: any)[k] = v
+	end
+	if parent then
+		inst.Parent = parent
+	end
+	return inst
+end
+
+local function text(parent: Instance, props: { [string]: any }): TextLabel
+	local base = { BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextColor3 = Color3.new(1, 1, 1), TextScaled = true, TextXAlignment = Enum.TextXAlignment.Left }
+	for k, v in props do
+		base[k] = v
+	end
+	return new("TextLabel", base, parent)
+end
+
+local window = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(620, 520),
+	BackgroundColor3 = Color3.fromRGB(14, 8, 10),
+	BackgroundTransparency = 0.03,
+	Visible = false,
+	ZIndex = 10,
+}, HUD.Gui)
+new("UICorner", { CornerRadius = UDim.new(0, 14) }, window)
+new("UIStroke", { Color = RED, Thickness = 3 }, window)
+new("UISizeConstraint", { MaxSize = Vector2.new(620, 520) }, window)
+text(window, { Position = UDim2.fromOffset(20, 12), Size = UDim2.new(0.7, 0, 0, 36), Text = "BLACK MARKET AUTO", Font = Enum.Font.GothamBlack, TextColor3 = RED })
+text(window, { Position = UDim2.fromOffset(20, 48), Size = UDim2.new(1, -40, 0, 18), Text = "Roof-mounted hardware. Works on cops and rivals only. One weapon at a time - fire with F.", Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(200, 180, 180) })
+local cashText = text(window, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -70, 0, 16), Size = UDim2.fromOffset(200, 26), Text = "", TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = Color3.fromRGB(120, 255, 150) })
+local close = new("TextButton", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 12), Size = UDim2.fromOffset(44, 36), BackgroundColor3 = Color3.fromRGB(80, 20, 30), Text = "X", TextScaled = true, Font = Enum.Font.GothamBlack, TextColor3 = Color3.new(1, 1, 1) }, window)
+new("UICorner", { CornerRadius = UDim.new(0, 8) }, close)
+local list = new("ScrollingFrame", { Position = UDim2.fromOffset(20, 80), Size = UDim2.new(1, -40, 1, -130), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 6, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new() }, window)
+local status = text(window, { Position = UDim2.new(0, 20, 1, -40), Size = UDim2.new(1, -40, 0, 24), Text = "", TextColor3 = Color3.fromRGB(255, 200, 80) })
+
+local data: any = nil
+local render: () -> ()
+
+local function act(action: string, id: string)
+	local ok, msg, snap = Shop:InvokeServer(action, id)
+	if snap then
+		data = snap
+	end
+	status.Text = msg or ""
+	status.TextColor3 = if ok then Color3.fromRGB(120, 255, 150) else Color3.fromRGB(255, 100, 100)
+	Sounds.Tick(if ok then 1.3 else 0.7, 0.5)
+	render()
+end
+
+render = function()
+	for _, c in list:GetChildren() do
+		c:Destroy()
+	end
+	if not data then
+		return
+	end
+	cashText.Text = "$" .. HUD.Commas(data.cash)
+	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+	for idx, w in Config.Weapons do
+		local owned = data.weapons and data.weapons[w.id]
+		local equipped = data.weapon == w.id
+		local card = new("Frame", { Size = UDim2.new(1, -10, 0, 74), BackgroundColor3 = Color3.fromRGB(30, 18, 22), LayoutOrder = idx }, list)
+		new("UICorner", { CornerRadius = UDim.new(0, 10) }, card)
+		local sw = new("Frame", { Position = UDim2.fromOffset(12, 14), Size = UDim2.fromOffset(46, 46), BackgroundColor3 = w.color }, card)
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, sw)
+		text(card, { Position = UDim2.fromOffset(70, 8), Size = UDim2.new(0.5, 0, 0, 24), Text = w.name, Font = Enum.Font.GothamBlack })
+		text(card, { Position = UDim2.fromOffset(70, 34), Size = UDim2.new(0.62, -70, 0, 30), Text = w.desc .. "  (cooldown " .. w.cooldown .. "s)", Font = Enum.Font.Gotham, TextWrapped = true, TextColor3 = Color3.fromRGB(210, 190, 190) })
+		local label, color, action
+		if equipped then
+			label, color, action = "UNMOUNT", Color3.fromRGB(70, 60, 60), function()
+				act("EquipWeapon", "")
+			end
+		elseif owned then
+			label, color, action = "MOUNT", Color3.fromRGB(0, 180, 200), function()
+				act("EquipWeapon", w.id)
+			end
+		else
+			label, color, action = "BUY $" .. HUD.Commas(w.price), RED, function()
+				act("BuyWeapon", w.id)
+			end
+		end
+		local b = new("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(150, 40), BackgroundColor3 = color, Text = label, TextScaled = true, Font = Enum.Font.GothamBlack, TextColor3 = Color3.new(1, 1, 1) }, card)
+		new("UICorner", { CornerRadius = UDim.new(0, 8) }, b)
+		new("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6) }, b)
+		b.Activated:Connect(action)
+	end
+end
+
+function BlackMarket.Toggle(open: boolean?)
+	local want = if open == nil then not window.Visible else open
+	window.Visible = want
+	BlackMarket.Open = want
+	if want then
+		status.Text = ""
+		local ok, _, snap = Shop:InvokeServer("Get")
+		if ok then
+			data = snap
+		end
+		render()
+	end
+end
+close.Activated:Connect(function()
+	BlackMarket.Toggle(false)
+end)
+
+-- fire the mounted weapon
+local function fire(_: string, state: Enum.UserInputState)
+	if state == Enum.UserInputState.Begin then
+		local w = player:GetAttribute("Weapon")
+		if type(w) == "string" and w ~= "" and Drive.Car then
+			local ready = player:GetAttribute("WeaponReadyAt")
+			if type(ready) ~= "number" or workspace:GetServerTimeNow() >= ready then
+				FireWeapon:FireServer()
+				Sounds.Play("rbxasset://sounds/impact_explosion_03.mp3", 0.35, 2.2)
+			else
+				Sounds.Tick(0.6, 0.3)
+			end
+		end
+	end
+	return Enum.ContextActionResult.Sink
+end
+ContextActionService:BindAction("WU_Fire", fire, true, Enum.KeyCode.F, Enum.KeyCode.ButtonR1)
+ContextActionService:SetTitle("WU_Fire", "FIRE")
+pcall(function()
+	ContextActionService:SetPosition("WU_Fire", UDim2.new(1, -250, 1, -120))
+end)
+
+return BlackMarket
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000016"><Properties><string name="Name">CarVisuals</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Local visual effects for every car near the camera: spinning wheels, front wheels steering,
 -- headlights at night, and brake / reverse lights on your own car.
 
@@ -6941,7 +7978,80 @@ RunService.RenderStepped:Connect(function(dt)
 end)
 
 return CarVisuals
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000015"><Properties><string name="Name">DriveController</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000017"><Properties><string name="Name">Collectibles</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Hides street art pieces this player already found (they stay visible for everyone else).
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local Shop = Remotes:WaitForChild("Shop") :: RemoteFunction
+local Collected = Remotes:WaitForChild("Collected") :: RemoteEvent
+
+local Collectibles = {}
+local found: { [string]: boolean } = {}
+
+local function hide(part: Instance)
+	if part:IsA("BasePart") and found[part.Name] then
+		part.Transparency = 1
+		for _, d in part:GetDescendants() do
+			if d:IsA("SurfaceGui") then
+				d.Enabled = false
+			elseif d:IsA("Light") then
+				d.Enabled = false
+			end
+		end
+	end
+end
+
+local folder: Instance? = nil
+local function hookFolder()
+	local map = workspace:FindFirstChild("Map")
+	local f = map and map:FindFirstChild("Collectibles")
+	if not f or f == folder then
+		return
+	end
+	folder = f
+	for _, p in f:GetChildren() do
+		hide(p)
+	end
+	-- with streaming, pieces arrive as you get close
+	f.ChildAdded:Connect(hide)
+end
+
+Collected.OnClientEvent:Connect(function(id: string)
+	found[id] = true
+	local f = folder
+	local p = f and f:FindFirstChild(id)
+	if p then
+		hide(p)
+	end
+end)
+
+task.spawn(function()
+	local ok, _, snap = pcall(function()
+		return Shop:InvokeServer("Get")
+	end)
+	if ok and type(snap) == "table" and type(snap.collected) == "table" then
+		for id in snap.collected do
+			found[id] = true
+		end
+	end
+	while not folder do
+		hookFolder()
+		task.wait(1)
+	end
+end)
+
+function Collectibles.Found(): number
+	local n = 0
+	for _ in found do
+		n += 1
+	end
+	return n
+end
+
+return Collectibles
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000018"><Properties><string name="Name">DriveController</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Drives the local player's car: input, arcade physics (we own the car's physics),
 -- nitro, drift smoke and the chase camera.
 
@@ -6976,6 +8086,8 @@ Drive.Throttle = 0
 Drive.Steer = 0
 Drive.Handbrake = false
 Drive.Flat = false
+Drive.BurstMode = false
+Drive.Bursting = false
 Drive.MenuOpen = false -- the title screen drives the camera while this is true
 Drive.Shake = 0 -- camera shake impulse (crashes)
 Drive.NearMissCombo = 0
@@ -6998,6 +8110,7 @@ local camPos: Vector3? = nil
 local lastSpeed = 0
 local lastThrottle = 0
 local smoothSteer = 0
+local burstUntil = 0
 local smoothThrottle = 0
 local nearTrack: { [Model]: { min: number, rel: number, speed: number } } = setmetatable({}, { __mode = "k" }) :: any
 local lastNearMiss = 0
@@ -7066,8 +8179,12 @@ local function handleHandbrake(_name: string, inputState: Enum.UserInputState, _
 	return if Drive.Car then Enum.ContextActionResult.Sink else Enum.ContextActionResult.Pass
 end
 
+local burstRequested = false
 local function handleNitro(_name: string, inputState: Enum.UserInputState, _obj: InputObject)
 	nitroHeld = inputState == Enum.UserInputState.Begin
+	if nitroHeld then
+		burstRequested = true -- burst nitrous fires on the press, not while held
+	end
 	return Enum.ContextActionResult.Sink
 end
 
@@ -7142,10 +8259,26 @@ RunService.PreSimulation:Connect(function(dt: number)
 
 	local capacity = stat(car, "nitroCapacity", 1)
 	Drive.NitroCapacity = capacity
-	local nitroOn = nitroHeld and Drive.Nitro > 0.02 and throttle > 0 and car:GetAttribute("Flat") ~= true
-	if nitroOn then
-		Drive.Nitro = math.max(0, Drive.Nitro - dt * 0.3)
+	local burstMode = stat(car, "burst", 0) >= 1
+	Drive.BurstMode = burstMode
+	local canBoost = throttle > 0 and car:GetAttribute("Flat") ~= true
+	local nitroOn
+	if burstMode then
+		-- Unbound burst nitrous: each tap spends a third of the tank on a short, hard shot
+		local charge = capacity / 3
+		if burstRequested and canBoost and os.clock() > burstUntil and Drive.Nitro >= charge - 0.001 then
+			Drive.Nitro -= charge
+			burstUntil = os.clock() + 1.3
+		end
+		nitroOn = os.clock() < burstUntil
+	else
+		nitroOn = nitroHeld and Drive.Nitro > 0.02 and canBoost
+		if nitroOn then
+			Drive.Nitro = math.max(0, Drive.Nitro - dt * 0.3)
+		end
 	end
+	burstRequested = false
+	Drive.Bursting = burstMode and nitroOn
 	Drive.NitroOn = nitroOn
 	setNitroVisual(nitroOn)
 
@@ -7159,6 +8292,15 @@ RunService.PreSimulation:Connect(function(dt: number)
 		driftGrip = stat(car, "driftGrip", 0.4),
 		downforce = stat(car, "downforce", 0.2),
 	}
+	if Drive.Bursting then
+		stats.nitroMult *= 1.1
+		stats.accel *= 1.35
+	end
+	-- wet roads
+	if workspace:GetAttribute("Raining") == true then
+		stats.grip *= 0.88
+		stats.brake *= 0.9
+	end
 	-- spiked tyres: slow and slippery
 	Drive.Flat = car:GetAttribute("Flat") == true
 	if Drive.Flat then
@@ -7189,7 +8331,7 @@ RunService.PreSimulation:Connect(function(dt: number)
 		if speed > 110 then
 			gain += 0.03
 		end
-		Drive.Nitro = math.min(capacity, Drive.Nitro + gain * dt)
+		Drive.Nitro = math.min(capacity, Drive.Nitro + gain * dt * (if burstMode then 1.25 else 1))
 	end
 
 	-- drivetrain: pick a gear from road speed, rpm sweeps through each gear's band
@@ -7362,7 +8504,7 @@ RunService:BindToRenderStep("WU_ChaseCam", Enum.RenderPriority.Camera.Value + 1,
 end)
 
 return Drive
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000016"><Properties><string name="Name">Effects</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000019"><Properties><string name="Name">Effects</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Screen and audio effects: big animated banners, speed lines, nitro blur / colour grading,
 -- near-miss popups, crash flashes, checkpoint pings, engine + siren loops and a GPS arrow
 -- that points to your next checkpoint, the nearest hiding spot or the safehouse.
@@ -7691,7 +8833,7 @@ RunService.RenderStepped:Connect(function(dt: number)
 end)
 
 return Effects
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000017"><Properties><string name="Name">FullMap</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001A"><Properties><string name="Name">FullMap</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Full-screen city map (press M): districts, roads, races with names, hiding spots, the
 -- safehouse, police and your car.
 
@@ -7830,7 +8972,7 @@ end)
 
 local _ = Config
 return FullMap
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000018"><Properties><string name="Name">Garage</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001B"><Properties><string name="Name">Garage</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Safehouse garage: buy / select cars, Unbound-style tuning (performance parts, handling,
 -- visuals), driving effects and the Blacklist.
 
@@ -8380,7 +9522,7 @@ function Garage.Toggle(open: boolean?)
 end
 
 return Garage
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000019"><Properties><string name="Name">HUD</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001C"><Properties><string name="Name">HUD</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Heads-up display: speedometer + nitro, heat stars and pursuit meters, cash, race panel,
 -- drift combo, minimap, notifications and context prompts.
 
@@ -8499,7 +9641,17 @@ local nitroBack = new("Frame", {
 corner(nitroBack, 7)
 local nitroFill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = CYAN }, nitroBack)
 corner(nitroFill, 7)
-label({ Size = UDim2.fromScale(1, 1), Text = "NITROUS", TextColor3 = Color3.new(1, 1, 1), Font = FONT2, TextStrokeTransparency = 0.2, ZIndex = 2 }, nitroBack)
+local nitroText = label({ Size = UDim2.fromScale(1, 1), Text = "NITROUS", TextColor3 = Color3.new(1, 1, 1), Font = FONT2, TextStrokeTransparency = 0.2, ZIndex = 2 }, nitroBack)
+local burstMarks: { Frame } = {}
+for k = 1, 2 do
+	burstMarks[k] = new("Frame", { Position = UDim2.new(k / 3, -1, 0, 0), Size = UDim2.new(0, 3, 1, 0), BackgroundColor3 = Color3.fromRGB(10, 10, 18), BorderSizePixel = 0, ZIndex = 3, Visible = false }, nitroBack)
+end
+function HUD.SetBurst(on: boolean)
+	for _, m in burstMarks do
+		m.Visible = on
+	end
+	nitroText.Text = if on then "BURST NITROUS" else "NITROUS"
+end
 
 ---------------------------------------------------------------------------
 -- Heat + pursuit (top centre)
@@ -8553,6 +9705,36 @@ corner(money, 12)
 local bankLabel = label({ Position = UDim2.fromOffset(12, 6), Size = UDim2.new(1, -24, 0, 26), Text = "$0", TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(120, 255, 150) }, money)
 local unbankedLabel = label({ Position = UDim2.fromOffset(12, 34), Size = UDim2.new(1, -24, 0, 20), Text = "", Font = FONT2, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(255, 190, 60) }, money)
 local bountyLabel = label({ Position = UDim2.fromOffset(12, 58), Size = UDim2.new(1, -24, 0, 20), Text = "", Font = FONT2, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(255, 120, 120) }, money)
+local repFrame = new("Frame", {
+	Position = UDim2.fromOffset(16, 172),
+	Size = UDim2.fromOffset(260, 28),
+	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
+	BackgroundTransparency = 0.4,
+}, gui)
+corner(repFrame, 10)
+local repLabel = label({ Position = UDim2.fromOffset(10, 4), Size = UDim2.fromOffset(90, 20), Text = "REP 1", Font = FONT2, TextColor3 = Color3.fromRGB(190, 160, 255), TextXAlignment = Enum.TextXAlignment.Left }, repFrame)
+local repBack = new("Frame", { Position = UDim2.fromOffset(100, 10), Size = UDim2.new(1, -112, 0, 8), BackgroundColor3 = Color3.fromRGB(40, 36, 60) }, repFrame)
+corner(repBack, 4)
+local repFill = new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = Color3.fromRGB(170, 120, 255) }, repBack)
+corner(repFill, 4)
+
+-- mounted weapon + cooldown (bottom right, above the speedometer)
+local weaponFrame = new("Frame", {
+	AnchorPoint = Vector2.new(1, 1),
+	Position = UDim2.new(1, -20, 1, -168),
+	Size = UDim2.fromOffset(230, 44),
+	BackgroundColor3 = Color3.fromRGB(18, 8, 10),
+	BackgroundTransparency = 0.25,
+	Visible = false,
+}, gui)
+corner(weaponFrame, 10)
+new("UIStroke", { Color = Color3.fromRGB(255, 50, 60), Thickness = 2, Transparency = 0.3 }, weaponFrame)
+local weaponLabel = label({ Position = UDim2.fromOffset(10, 4), Size = UDim2.new(1, -20, 0, 20), Text = "", Font = FONT2, TextXAlignment = Enum.TextXAlignment.Left }, weaponFrame)
+local weaponBack = new("Frame", { Position = UDim2.fromOffset(10, 28), Size = UDim2.new(1, -20, 0, 8), BackgroundColor3 = Color3.fromRGB(50, 30, 34) }, weaponFrame)
+corner(weaponBack, 4)
+local weaponFill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(255, 60, 70) }, weaponBack)
+corner(weaponFill, 4)
+
 local timeLabel = label({ Position = UDim2.fromOffset(12, 82), Size = UDim2.new(1, -24, 0, 18), Text = "", Font = FONT2, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(190, 170, 255) }, money)
 
 ---------------------------------------------------------------------------
@@ -8561,7 +9743,7 @@ local timeLabel = label({ Position = UDim2.fromOffset(12, 82), Size = UDim2.new(
 local racePanel = new("Frame", {
 	AnchorPoint = Vector2.new(1, 0),
 	Position = UDim2.new(1, -16, 0, 250),
-	Size = UDim2.fromOffset(230, 250),
+	Size = UDim2.fromOffset(230, 290),
 	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
 	BackgroundTransparency = 0.35,
 	Visible = false,
@@ -8572,6 +9754,14 @@ local raceName = label({ Position = UDim2.fromOffset(10, 6), Size = UDim2.new(1,
 local racePos = label({ Position = UDim2.fromOffset(10, 30), Size = UDim2.new(1, -20, 0, 50), Text = "" }, racePanel)
 local raceInfo = label({ Position = UDim2.fromOffset(10, 84), Size = UDim2.new(1, -20, 0, 22), Text = "", Font = FONT2 }, racePanel)
 local raceTime = label({ Position = UDim2.fromOffset(10, 110), Size = UDim2.new(1, -20, 0, 22), Text = "", Font = FONT2, TextColor3 = Color3.fromRGB(200, 200, 220) }, racePanel)
+local sideBetLabel = label({
+	Position = UDim2.fromOffset(10, 250),
+	Size = UDim2.new(1, -20, 0, 32),
+	Text = "",
+	Font = FONT2,
+	TextWrapped = true,
+	TextColor3 = Color3.fromRGB(255, 200, 60),
+}, racePanel)
 local standings = label({
 	Position = UDim2.fromOffset(14, 140),
 	Size = UDim2.new(1, -28, 0, 100),
@@ -8815,6 +10005,19 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	unbankedLabel.Text = if unbanked > 0 then "Unbanked: $" .. commas(unbanked) .. "  (at risk!)" else "Unbanked: $0"
 	local bounty = num("Bounty")
 	bountyLabel.Text = if mode ~= "idle" then "Pursuit bounty: " .. commas(bounty) else "Total bounty: " .. commas(num("TotalBounty"))
+	repLabel.Text = "REP " .. math.floor(num("RepLevel"))
+	repFill.Size = UDim2.fromScale(math.clamp(num("RepProgress"), 0, 1), 1)
+	local weaponId = player:GetAttribute("Weapon")
+	local weaponDef = if type(weaponId) == "string" and weaponId ~= "" then Config.GetWeapon(weaponId) else nil
+	weaponFrame.Visible = weaponDef ~= nil
+	if weaponDef then
+		local readyAt = num("WeaponReadyAt")
+		local left = readyAt - workspace:GetServerTimeNow()
+		local ready = left <= 0
+		weaponLabel.Text = string.upper(weaponDef.name) .. (if ready then "   [F] READY" else string.format("   %.1fs", left))
+		weaponFill.Size = UDim2.fromScale(if ready then 1 else math.clamp(1 - left / weaponDef.cooldown, 0, 1), 1)
+		weaponFill.BackgroundColor3 = if ready then weaponDef.color else Color3.fromRGB(120, 60, 60)
+	end
 	timeLabel.Text = if player:GetAttribute("Night") then "NIGHT  -  x" .. Config.NightMultiplier .. " payouts" else "DAY"
 
 	-- drift combo
@@ -8827,9 +10030,10 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	if racing then
 		raceName.Text = tostring(player:GetAttribute("RaceName") or "")
 		local kind = player:GetAttribute("RaceKind")
-		if kind == "drift" then
+		sideBetLabel.Text = tostring(player:GetAttribute("RaceSideBet") or "")
+		if kind == "drift" or kind == "takeover" then
 			racePos.Text = commas(num("RaceScore"))
-			raceInfo.Text = "Target: " .. commas(num("RaceTarget"))
+			raceInfo.Text = if player:GetAttribute("RaceInZone") == false then "LEAVING THE ZONE!" else "Target: " .. commas(num("RaceTarget"))
 			raceTime.Text = string.format("Time left: %.1fs", math.max(0, num("RaceTimeLeft")))
 			standings.Text = ""
 		else
@@ -8913,7 +10117,7 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 end
 
 return HUD
-]]></ProtectedString></Properties></Item><Item class="LocalScript" referent="RBX0000000000000000000000000000001A"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="LocalScript" referent="RBX0000000000000000000000000000001D"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
 -- WANTED: UNBOUND - client entry point.
 
 local ContextActionService = game:GetService("ContextActionService")
@@ -8935,6 +10139,9 @@ local Garage = require(script.Parent.Garage)
 require(script.Parent.CarVisuals)
 require(script.Parent.Effects)
 require(script.Parent.Sounds)
+local BlackMarket = require(script.Parent.BlackMarket)
+require(script.Parent.Collectibles)
+require(script.Parent.Weather)
 require(script.Parent.Menu)
 
 local player = Players.LocalPlayer
@@ -8973,6 +10180,8 @@ local function doPrompt()
 		else
 			Garage.Enter()
 		end
+	elseif action.kind == "blackmarket" then
+		BlackMarket.Toggle()
 	elseif action.kind == "quit" then
 		QuitRace:FireServer()
 	end
@@ -9014,6 +10223,11 @@ local function updatePrompt(pos: Vector3?)
 	end
 	if mode ~= "idle" and mode ~= nil then
 		HUD.SetPrompt(nil)
+		return
+	end
+	if player:GetAttribute("AtBlackMarket") then
+		promptAction = { kind = "blackmarket" }
+		HUD.SetPrompt(if BlackMarket.Open then "[E] Close the Black Market" else "[E] Black Market  (roof weapons)")
 		return
 	end
 	if player:GetAttribute("AtSafehouse") then
@@ -9115,6 +10329,7 @@ RunService.RenderStepped:Connect(function(dt)
 	HUD.Update(dt, Drive.Speed, Drive.Nitro, Drive.NitroCapacity, Drive.NitroOn, car)
 	local st = Drive.State
 	HUD.SetEngine(Drive.Gear, Drive.Rpm, st ~= nil and st.speed < -1)
+	HUD.SetBurst(Drive.BurstMode)
 	promptTimer += dt
 	if promptTimer > 0.2 then
 		promptTimer = 0
@@ -9122,6 +10337,9 @@ RunService.RenderStepped:Connect(function(dt)
 		updatePrompt(pos)
 		if Garage.Open and not player:GetAttribute("AtSafehouse") and not Garage.InGarage() then
 			Garage.Toggle(false)
+		end
+		if BlackMarket.Open and not player:GetAttribute("AtBlackMarket") then
+			BlackMarket.Toggle(false)
 		end
 	end
 	sirenTimer += dt
@@ -9133,7 +10351,7 @@ RunService.RenderStepped:Connect(function(dt)
 end)
 
 print("[" .. Config.GameName .. "] client ready")
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001B"><Properties><string name="Name">MapDraw</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001E"><Properties><string name="Name">MapDraw</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Draws the city (districts, roads, coast and points of interest) into a GUI frame at any
 -- scale. Used by the radar minimap and the full-screen city map.
 
@@ -9253,6 +10471,7 @@ function MapDraw.Draw(canvas: Frame, scale: number, labels: boolean): (Vector3) 
 	end
 	local big = if labels then 1.4 else 1
 	marker(Grid.BlockCenter(B.Safehouse[1], B.Safehouse[2]), Color3.fromRGB(0, 255, 200), 14 * big, "S", "SAFEHOUSE")
+	marker(Grid.BlockCenter(B.BlackMarket[1], B.BlackMarket[2]), Color3.fromRGB(255, 40, 50), 13 * big, "B", "BLACK MARKET")
 	for _, h in B.HidingSpots do
 		marker(Grid.BlockCenter(h[1], h[2]), Color3.fromRGB(80, 255, 120), 9 * big, "H", "Hiding spot")
 	end
@@ -9267,7 +10486,7 @@ function MapDraw.Draw(canvas: Frame, scale: number, labels: boolean): (Vector3) 
 end
 
 return MapDraw
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001C"><Properties><string name="Name">Menu</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001F"><Properties><string name="Name">Menu</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Main menu and pause menu.
 -- Title screen: cinematic camera shots around the safehouse, animated menu buttons, a player card
 -- with your stats, settings, how to play, credits and a rotating tips bar.
@@ -9284,6 +10503,7 @@ local Config = require(Shared:WaitForChild("Config"))
 local Grid = require(Shared:WaitForChild("Grid"))
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local Shop = Remotes:WaitForChild("Shop") :: RemoteFunction
+local RedeemCode = Remotes:WaitForChild("RedeemCode") :: RemoteFunction
 
 local Drive = require(script.Parent.DriveController)
 local Settings = require(script.Parent.Settings)
@@ -9445,6 +10665,14 @@ local function refreshCard()
 		"Driving:  " .. (if car then car.name else "?"),
 		"Milestones:  " .. done .. " / " .. #Config.Milestones,
 	}
+	local rep = snap.rep or 0
+	local level = 1
+	local left = rep
+	while level < Config.Rep.MaxLevel and left >= Config.Rep.PerLevel(level) do
+		left -= Config.Rep.PerLevel(level)
+		level += 1
+	end
+	rankLabel.Text ..= "   |   REP " .. level
 	for k, r in rows do
 		statRows[k].Text = r
 	end
@@ -9551,7 +10779,7 @@ local function showHelp()
 		TextYAlignment = Enum.TextYAlignment.Top,
 		Font = Enum.Font.Gotham,
 		Text = table.concat({
-			"<b>CONTROLS</b>   WASD drive · SPACE drift · SHIFT nitro · R reset · E interact · G garage · M map · P pause",
+			"<b>CONTROLS</b>   WASD drive · SPACE drift · SHIFT nitro · F fire weapon · R reset · E interact · G garage · M map · P pause",
 			"",
 			"<b>RACE</b>  at the pink R markers. Winnings grow with your heat and at night.",
 			"<b>DRIFT</b>  with the handbrake, or tap the brake and get back on the gas while steering. Hold the throttle to keep the slide going.",
@@ -9560,10 +10788,68 @@ local function showHelp()
 			"<b>BANK</b>  your cash at the safehouse (S). Get busted and you lose everything unbanked.",
 			"<b>GARAGE</b>  Press E at the safehouse to drive in: buy cars, tune parts, handling and looks.",
 			"<b>BLACKLIST</b>  Earn bounty and wins, then beat the five rivals to win their cars.",
+			"<b>WEAPONS</b>  Buy roof weapons at the Black Market (B) at the docks. Fire with F - they only hit cops and rivals.",
+			"<b>UNBOUND</b>  Takeovers (score style in a zone), side bets in races, burst nitrous (tuning), REP levels and 40 street art pieces to find.",
 			"",
 			"Neon Bay is huge: downtown towers, midtown, suburbs, the docks and the Beltway ring road. Press M for the city map.",
 		}, "\n"),
 	})
+end
+
+local function showCodes()
+	clearPanel()
+	panelTitle.Text = "CODES"
+	text(panelBody, { Size = UDim2.new(1, 0, 0, 40), TextWrapped = true, Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(200, 200, 215), Text = "Enter a code for free cash, cars and weapons. Each code works once per player." })
+	local box = new("TextBox", {
+		Position = UDim2.fromOffset(0, 56),
+		Size = UDim2.new(1, -170, 0, 50),
+		BackgroundColor3 = Color3.fromRGB(24, 24, 36),
+		Font = Enum.Font.GothamBlack,
+		TextScaled = true,
+		TextColor3 = Color3.new(1, 1, 1),
+		PlaceholderText = "ENTER CODE",
+		PlaceholderColor3 = Color3.fromRGB(120, 120, 140),
+		Text = "",
+		ClearTextOnFocus = false,
+	}, panelBody)
+	new("UICorner", { CornerRadius = UDim.new(0, 8) }, box)
+	new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10) }, box)
+	local result = text(panelBody, { Position = UDim2.fromOffset(0, 120), Size = UDim2.new(1, 0, 0, 26), Text = "", TextXAlignment = Enum.TextXAlignment.Center })
+	local redeem = new("TextButton", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, 0, 0, 56),
+		Size = UDim2.fromOffset(150, 50),
+		BackgroundColor3 = PINK,
+		Font = Enum.Font.GothamBlack,
+		TextScaled = true,
+		TextColor3 = Color3.new(1, 1, 1),
+		Text = "REDEEM",
+	}, panelBody)
+	new("UICorner", { CornerRadius = UDim.new(0, 8) }, redeem)
+	new("UIPadding", { PaddingTop = UDim.new(0, 12), PaddingBottom = UDim.new(0, 12) }, redeem)
+	local busy = false
+	local function submit()
+		if busy or box.Text == "" then
+			return
+		end
+		busy = true
+		local ok, msg = RedeemCode:InvokeServer(box.Text)
+		result.Text = tostring(msg)
+		result.TextColor3 = if ok then Color3.fromRGB(120, 255, 150) else Color3.fromRGB(255, 100, 100)
+		Sounds.Tick(if ok then 1.4 else 0.6, 0.5)
+		if ok then
+			box.Text = ""
+			refreshCard()
+		end
+		busy = false
+	end
+	redeem.Activated:Connect(submit)
+	box.FocusLost:Connect(function(enter)
+		if enter then
+			submit()
+		end
+	end)
+	text(panelBody, { Position = UDim2.fromOffset(0, 170), Size = UDim2.new(1, 0, 0, 22), Text = "Tip: follow the game for new codes!", Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(160, 160, 180), TextXAlignment = Enum.TextXAlignment.Center })
 end
 
 local function showCredits()
@@ -9597,6 +10883,10 @@ end
 -- tips bar
 local tipLabel = text(barBottom, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0.9, 0, 0, 20), TextXAlignment = Enum.TextXAlignment.Center, Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(200, 200, 215), Text = "" })
 local TIPS = {
+	"CODES: try WANTED, UNBOUND and NEONBAY in the CODES menu for free cash!",
+	"TIP: Weapons from the Black Market (B) mount on your roof. Fire with F.",
+	"TIP: Set Nitrous Type to BURST in Handling for short, hard boosts.",
+	"TIP: 40 pieces of street art are hidden around the city. Find them all!",
 	"TIP: Night doubles the danger - and pays x" .. Config.NightMultiplier .. ".",
 	"TIP: Drive through a pursuit breaker (red ring) to drop it on the cops behind you.",
 	"TIP: Near misses fill your nitro. Weave through traffic!",
@@ -9672,13 +10962,16 @@ end)
 menuButton("CITY MAP", 3, function()
 	FullMap.Toggle(true)
 end)
-menuButton("SETTINGS", 4, function()
+menuButton("CODES", 4, function()
+	togglePanel("codes", showCodes)
+end)
+menuButton("SETTINGS", 5, function()
 	togglePanel("settings", showSettings)
 end)
-menuButton("HOW TO PLAY", 5, function()
+menuButton("HOW TO PLAY", 6, function()
 	togglePanel("help", showHelp)
 end)
-menuButton("CREDITS", 6, function()
+menuButton("CREDITS", 7, function()
 	togglePanel("credits", showCredits)
 end)
 
@@ -9745,7 +11038,7 @@ end)
 
 openMenu("title")
 return Menu
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001D"><Properties><string name="Name">Settings</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000020"><Properties><string name="Name">Settings</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Player settings, saved in the player's profile on the server.
 
 local Lighting = game:GetService("Lighting")
@@ -9841,7 +11134,7 @@ Lighting.ChildAdded:Connect(function()
 end)
 
 return Settings
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001E"><Properties><string name="Name">Sounds</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000021"><Properties><string name="Name">Sounds</string><ProtectedString name="Source"><![CDATA[--!strict
 -- All game audio. Roblox only ships a handful of built-in sounds, so the engine and tyre sounds
 -- are synthesized from its wind-noise loop: pitched down, bass boosted, distorted and pulsed by a
 -- tremolo at the engine's firing rate (it follows the simulated RPM and gear shifts). If you put
@@ -10022,6 +11315,16 @@ workspace.ChildAdded:Connect(function(child)
 	end
 end)
 
+player:GetAttributeChangedSignal("RaceCountdown"):Connect(function()
+	local n = player:GetAttribute("RaceCountdown")
+	if n == 0 then
+		Sounds.Tick(2, 0.8)
+		Sounds.Whoosh(1.6, 0.8)
+	elseif type(n) == "number" and n > 0 then
+		Sounds.Tick(1, 0.7)
+	end
+end)
+
 player:GetAttributeChangedSignal("RaceCP"):Connect(function()
 	local cp = player:GetAttribute("RaceCP")
 	if type(cp) == "number" and cp > 0 then
@@ -10197,4 +11500,89 @@ RunService.RenderStepped:Connect(function(dt: number)
 end)
 
 return Sounds
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000022"><Properties><string name="Name">Weather</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Rain showers (the server decides when it rains; see workspace attribute "Raining").
+-- Rain streaks follow the camera, the picture goes greyer, and you hear the rain.
+
+local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+local TweenService = game:GetService("TweenService")
+
+local Settings = require(script.Parent.Settings)
+
+local Weather = {}
+
+local camera = workspace.CurrentCamera
+
+local emitterPart = Instance.new("Part")
+emitterPart.Name = "RainEmitter"
+emitterPart.Anchored = true
+emitterPart.CanCollide = false
+emitterPart.CanQuery = false
+emitterPart.CanTouch = false
+emitterPart.Transparency = 1
+emitterPart.Size = Vector3.new(160, 1, 160)
+
+local rain = Instance.new("ParticleEmitter")
+rain.Texture = "rbxasset://textures/particles/SquareParticle.png"
+rain.Color = ColorSequence.new(Color3.fromRGB(200, 215, 235))
+rain.Transparency = NumberSequence.new(0.35)
+rain.LightInfluence = 1
+rain.Size = NumberSequence.new(0.12)
+rain.Squash = NumberSequence.new(2.6) -- stretched into streaks
+rain.Lifetime = NumberRange.new(0.8, 1)
+rain.Speed = NumberRange.new(90, 110)
+rain.EmissionDirection = Enum.NormalId.Bottom
+rain.Rate = 0
+rain.SpreadAngle = Vector2.new(4, 4)
+rain.Parent = emitterPart
+
+local grade = Instance.new("ColorCorrectionEffect")
+grade.Name = "RainGrade"
+grade.Enabled = true
+grade.Saturation = 0
+grade.Brightness = 0
+grade.Parent = camera
+
+local sound = Instance.new("Sound")
+sound.Name = "Rain"
+sound.SoundId = "rbxasset://sounds/action_falling.ogg"
+sound.Looped = true
+sound.Volume = 0
+sound.PlaybackSpeed = 1.6
+sound.SoundGroup = Settings.Master
+local eq = Instance.new("EqualizerSoundEffect")
+eq.LowGain = -30
+eq.MidGain = -4
+eq.HighGain = 6
+eq.Parent = sound
+sound.Parent = SoundService
+sound:Play()
+
+local raining = false
+local function update()
+	local now = workspace:GetAttribute("Raining") == true
+	if now == raining then
+		return
+	end
+	raining = now
+	local info = TweenInfo.new(4)
+	TweenService:Create(grade, info, { Saturation = if now then -0.25 else 0, Brightness = if now then -0.04 else 0, Contrast = if now then -0.05 else 0 }):Play()
+	TweenService:Create(sound, info, { Volume = if now then 0.35 else 0 }):Play()
+end
+workspace:GetAttributeChangedSignal("Raining"):Connect(update)
+update()
+
+function Weather.IsRaining(): boolean
+	return raining
+end
+
+RunService.RenderStepped:Connect(function()
+	local cf = camera.CFrame
+	emitterPart.CFrame = CFrame.new(cf.Position + cf.LookVector * 40 + Vector3.new(0, 45, 0))
+	emitterPart.Parent = if raining then camera else nil
+	rain.Rate = if raining then (if Settings.Values.performance then 250 else 700) else 0
+end)
+
+return Weather
 ]]></ProtectedString></Properties></Item></Item></Item></Item></roblox>

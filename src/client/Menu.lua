@@ -15,6 +15,7 @@ local Config = require(Shared:WaitForChild("Config"))
 local Grid = require(Shared:WaitForChild("Grid"))
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local Shop = Remotes:WaitForChild("Shop") :: RemoteFunction
+local RedeemCode = Remotes:WaitForChild("RedeemCode") :: RemoteFunction
 
 local Drive = require(script.Parent.DriveController)
 local Settings = require(script.Parent.Settings)
@@ -176,6 +177,14 @@ local function refreshCard()
 		"Driving:  " .. (if car then car.name else "?"),
 		"Milestones:  " .. done .. " / " .. #Config.Milestones,
 	}
+	local rep = snap.rep or 0
+	local level = 1
+	local left = rep
+	while level < Config.Rep.MaxLevel and left >= Config.Rep.PerLevel(level) do
+		left -= Config.Rep.PerLevel(level)
+		level += 1
+	end
+	rankLabel.Text ..= "   |   REP " .. level
 	for k, r in rows do
 		statRows[k].Text = r
 	end
@@ -282,7 +291,7 @@ local function showHelp()
 		TextYAlignment = Enum.TextYAlignment.Top,
 		Font = Enum.Font.Gotham,
 		Text = table.concat({
-			"<b>CONTROLS</b>   WASD drive · SPACE drift · SHIFT nitro · R reset · E interact · G garage · M map · P pause",
+			"<b>CONTROLS</b>   WASD drive · SPACE drift · SHIFT nitro · F fire weapon · R reset · E interact · G garage · M map · P pause",
 			"",
 			"<b>RACE</b>  at the pink R markers. Winnings grow with your heat and at night.",
 			"<b>DRIFT</b>  with the handbrake, or tap the brake and get back on the gas while steering. Hold the throttle to keep the slide going.",
@@ -291,10 +300,68 @@ local function showHelp()
 			"<b>BANK</b>  your cash at the safehouse (S). Get busted and you lose everything unbanked.",
 			"<b>GARAGE</b>  Press E at the safehouse to drive in: buy cars, tune parts, handling and looks.",
 			"<b>BLACKLIST</b>  Earn bounty and wins, then beat the five rivals to win their cars.",
+			"<b>WEAPONS</b>  Buy roof weapons at the Black Market (B) at the docks. Fire with F - they only hit cops and rivals.",
+			"<b>UNBOUND</b>  Takeovers (score style in a zone), side bets in races, burst nitrous (tuning), REP levels and 40 street art pieces to find.",
 			"",
 			"Neon Bay is huge: downtown towers, midtown, suburbs, the docks and the Beltway ring road. Press M for the city map.",
 		}, "\n"),
 	})
+end
+
+local function showCodes()
+	clearPanel()
+	panelTitle.Text = "CODES"
+	text(panelBody, { Size = UDim2.new(1, 0, 0, 40), TextWrapped = true, Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(200, 200, 215), Text = "Enter a code for free cash, cars and weapons. Each code works once per player." })
+	local box = new("TextBox", {
+		Position = UDim2.fromOffset(0, 56),
+		Size = UDim2.new(1, -170, 0, 50),
+		BackgroundColor3 = Color3.fromRGB(24, 24, 36),
+		Font = Enum.Font.GothamBlack,
+		TextScaled = true,
+		TextColor3 = Color3.new(1, 1, 1),
+		PlaceholderText = "ENTER CODE",
+		PlaceholderColor3 = Color3.fromRGB(120, 120, 140),
+		Text = "",
+		ClearTextOnFocus = false,
+	}, panelBody)
+	new("UICorner", { CornerRadius = UDim.new(0, 8) }, box)
+	new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10) }, box)
+	local result = text(panelBody, { Position = UDim2.fromOffset(0, 120), Size = UDim2.new(1, 0, 0, 26), Text = "", TextXAlignment = Enum.TextXAlignment.Center })
+	local redeem = new("TextButton", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, 0, 0, 56),
+		Size = UDim2.fromOffset(150, 50),
+		BackgroundColor3 = PINK,
+		Font = Enum.Font.GothamBlack,
+		TextScaled = true,
+		TextColor3 = Color3.new(1, 1, 1),
+		Text = "REDEEM",
+	}, panelBody)
+	new("UICorner", { CornerRadius = UDim.new(0, 8) }, redeem)
+	new("UIPadding", { PaddingTop = UDim.new(0, 12), PaddingBottom = UDim.new(0, 12) }, redeem)
+	local busy = false
+	local function submit()
+		if busy or box.Text == "" then
+			return
+		end
+		busy = true
+		local ok, msg = RedeemCode:InvokeServer(box.Text)
+		result.Text = tostring(msg)
+		result.TextColor3 = if ok then Color3.fromRGB(120, 255, 150) else Color3.fromRGB(255, 100, 100)
+		Sounds.Tick(if ok then 1.4 else 0.6, 0.5)
+		if ok then
+			box.Text = ""
+			refreshCard()
+		end
+		busy = false
+	end
+	redeem.Activated:Connect(submit)
+	box.FocusLost:Connect(function(enter)
+		if enter then
+			submit()
+		end
+	end)
+	text(panelBody, { Position = UDim2.fromOffset(0, 170), Size = UDim2.new(1, 0, 0, 22), Text = "Tip: follow the game for new codes!", Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(160, 160, 180), TextXAlignment = Enum.TextXAlignment.Center })
 end
 
 local function showCredits()
@@ -328,6 +395,10 @@ end
 -- tips bar
 local tipLabel = text(barBottom, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0.9, 0, 0, 20), TextXAlignment = Enum.TextXAlignment.Center, Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(200, 200, 215), Text = "" })
 local TIPS = {
+	"CODES: try WANTED, UNBOUND and NEONBAY in the CODES menu for free cash!",
+	"TIP: Weapons from the Black Market (B) mount on your roof. Fire with F.",
+	"TIP: Set Nitrous Type to BURST in Handling for short, hard boosts.",
+	"TIP: 40 pieces of street art are hidden around the city. Find them all!",
 	"TIP: Night doubles the danger - and pays x" .. Config.NightMultiplier .. ".",
 	"TIP: Drive through a pursuit breaker (red ring) to drop it on the cops behind you.",
 	"TIP: Near misses fill your nitro. Weave through traffic!",
@@ -403,13 +474,16 @@ end)
 menuButton("CITY MAP", 3, function()
 	FullMap.Toggle(true)
 end)
-menuButton("SETTINGS", 4, function()
+menuButton("CODES", 4, function()
+	togglePanel("codes", showCodes)
+end)
+menuButton("SETTINGS", 5, function()
 	togglePanel("settings", showSettings)
 end)
-menuButton("HOW TO PLAY", 5, function()
+menuButton("HOW TO PLAY", 6, function()
 	togglePanel("help", showHelp)
 end)
-menuButton("CREDITS", 6, function()
+menuButton("CREDITS", 7, function()
 	togglePanel("credits", showCredits)
 end)
 

@@ -179,6 +179,16 @@ workspace.ChildAdded:Connect(function(child)
 	end
 end)
 
+player:GetAttributeChangedSignal("RaceCountdown"):Connect(function()
+	local n = player:GetAttribute("RaceCountdown")
+	if n == 0 then
+		Sounds.Tick(2, 0.8)
+		Sounds.Whoosh(1.6, 0.8)
+	elseif type(n) == "number" and n > 0 then
+		Sounds.Tick(1, 0.7)
+	end
+end)
+
 player:GetAttributeChangedSignal("RaceCP"):Connect(function()
 	local cp = player:GetAttribute("RaceCP")
 	if type(cp) == "number" and cp > 0 then

@@ -17,6 +17,7 @@ local Vehicles = require(script.Parent.Vehicles)
 local Police = require(script.Parent.Police)
 local Traffic = require(script.Parent.Traffic)
 local Showroom = require(script.Parent.Showroom)
+local Weapons = require(script.Parent.Weapons)
 local Races = require(script.Parent.Races)
 
 ---------------------------------------------------------------------------
@@ -39,6 +40,9 @@ local respawnEvent = remote("RemoteEvent", "RespawnCar") :: RemoteEvent
 local rivalEvent = remote("RemoteEvent", "ChallengeRival") :: RemoteEvent
 local garageEvent = remote("RemoteEvent", "Garage") :: RemoteEvent
 local settingsEvent = remote("RemoteEvent", "SaveSettings") :: RemoteEvent
+local fireEvent = remote("RemoteEvent", "FireWeapon") :: RemoteEvent
+local codeFunction = remote("RemoteFunction", "RedeemCode") :: RemoteFunction
+local collectedEvent = remote("RemoteEvent", "Collected") :: RemoteEvent
 local exitGarage: (s: Session.Session, respawn: boolean) -> ()
 local quitEvent = remote("RemoteEvent", "QuitRace") :: RemoteEvent
 local shopFunction = remote("RemoteFunction", "Shop") :: RemoteFunction
@@ -70,6 +74,22 @@ spawnLocation.Parent = workspace
 
 -- Realistic day / night lighting (sky, clouds, colour grading, street lamps)
 DayNight.Init(mapInfo.nightLights, mapInfo.nightNeon, mapInfo.nightToggles)
+
+-- weather: rain showers every few minutes
+task.spawn(function()
+	workspace:SetAttribute("Raining", false)
+	while true do
+		task.wait(math.random(240, 480))
+		if math.random() < 0.45 then
+			workspace:SetAttribute("Raining", true)
+			for _, s in Session.All() do
+				Session.Notify(s.player, "It's starting to rain - roads are slippery", Color3.fromRGB(150, 190, 255))
+			end
+			task.wait(math.random(120, 240))
+			workspace:SetAttribute("Raining", false)
+		end
+	end
+end)
 
 -- day / night cycle
 task.spawn(function()
@@ -228,6 +248,49 @@ quitEvent.OnServerEvent:Connect(function(player)
 end)
 
 ---------------------------------------------------------------------------
+-- Weapons and codes
+---------------------------------------------------------------------------
+fireEvent.OnServerEvent:Connect(function(player)
+	local s = Session.Get(player)
+	if s then
+		Weapons.Fire(s)
+	end
+end)
+
+codeFunction.OnServerInvoke = function(player, code)
+	local s = Session.Get(player)
+	if not s or type(code) ~= "string" then
+		return false, "Try again in a moment"
+	end
+	local key = string.upper((string.gsub(code, "%s", "")))
+	local reward = Config.Codes[key]
+	if not reward then
+		return false, "Invalid code"
+	end
+	local p = s.profile
+	if p.redeemed[key] then
+		return false, "You already redeemed this code"
+	end
+	p.redeemed[key] = true
+	if reward.cash then
+		p.cash += reward.cash
+	end
+	if reward.car and Config.GetCar(reward.car) then
+		p.owned[reward.car] = true
+	end
+	if reward.weapon and Config.GetWeapon(reward.weapon) then
+		p.weapons[reward.weapon] = true
+	end
+	if reward.rep then
+		Session.AddRep(s, reward.rep)
+	end
+	Session.Sync(s)
+	PlayerData.Save(player)
+	Session.Banner(player, "CODE REDEEMED", reward.message, Color3.fromRGB(0, 255, 200))
+	return true, reward.message
+end
+
+---------------------------------------------------------------------------
 -- Garage: press E at the safehouse to drive inside the workshop
 ---------------------------------------------------------------------------
 exitGarage = function(s: Session.Session, respawn: boolean)
@@ -332,6 +395,10 @@ nearMissEvent.OnServerEvent:Connect(function(player, civ)
 	end
 	lastNearMiss[player] = now
 	Session.AddStat(s, "nearMisses", 1)
+	Session.AddRep(s, 15)
+	if s.race and s.race.def.kind == "takeover" then
+		s.race.driftScore += 600
+	end
 	s.unbanked += Config.Traffic.NearMissCash * Session.NightMult()
 end)
 
@@ -351,6 +418,10 @@ local function snapshot(s: Session.Session)
 		stats = p.stats,
 		milestones = p.milestones,
 		settings = p.settings,
+		weapons = p.weapons,
+		weapon = p.weapon,
+		collected = p.collected,
+		rep = p.rep,
 	}
 end
 
@@ -362,6 +433,41 @@ shopFunction.OnServerInvoke = function(player, action, a, b)
 	local p = s.profile
 	if action == "Get" then
 		return true, "", snapshot(s)
+	end
+	-- Black Market: roof weapons
+	if action == "BuyWeapon" or action == "EquipWeapon" then
+		if not s.atBlackMarket or s.mode ~= "idle" or s.race then
+			return false, "Weapons are sold at the Black Market (red B on the map) - lose the cops first", snapshot(s)
+		end
+		if type(a) ~= "string" then
+			return false, "Bad request", snapshot(s)
+		end
+		if action == "EquipWeapon" and a == "" then
+			p.weapon = ""
+			Vehicles.Spawn(s)
+			Session.Sync(s)
+			return true, "Weapon removed", snapshot(s)
+		end
+		local w = Config.GetWeapon(a)
+		if not w then
+			return false, "Unknown weapon", snapshot(s)
+		end
+		if action == "BuyWeapon" then
+			if p.weapons[a] then
+				return false, "Already owned", snapshot(s)
+			end
+			if p.cash < w.price then
+				return false, "Not enough cash", snapshot(s)
+			end
+			p.cash -= w.price
+			p.weapons[a] = true
+		elseif not p.weapons[a] then
+			return false, "Buy it first", snapshot(s)
+		end
+		p.weapon = a
+		Vehicles.Spawn(s)
+		Session.Sync(s)
+		return true, w.name .. " mounted - press F to fire", snapshot(s)
 	end
 	if not s.atSafehouse or s.mode ~= "idle" or s.race then
 		return false, "Garage is only available at the safehouse (and without cops on you)", snapshot(s)
@@ -496,6 +602,25 @@ task.spawn(function()
 				Vehicles.SeatCharacter(s)
 			end
 
+			-- Black Market zone
+			s.atBlackMarket = not s.inGarage and (Vector3.new(pos.X, 0, pos.Z) - Vector3.new(mapInfo.blackMarket.X, 0, mapInfo.blackMarket.Z)).Magnitude < 60
+
+			-- street art collectibles
+			for _, art in mapInfo.collectibles do
+				if not s.profile.collected[art.id] and (Vector3.new(pos.X, art.position.Y, pos.Z) - art.position).Magnitude < 24 then
+					s.profile.collected[art.id] = true
+					local count = 0
+					for _ in s.profile.collected do
+						count += 1
+					end
+					s.profile.cash += Config.CollectibleCash
+					collectedEvent:FireClient(s.player, art.id)
+					Session.Banner(s.player, "STREET ART " .. count .. " / " .. #mapInfo.collectibles, "+$" .. Config.CollectibleCash .. " banked", Color3.fromRGB(140, 255, 60))
+					Session.AddRep(s, 100)
+					Session.AddStat(s, "art", 1)
+				end
+			end
+
 			-- safehouse: bank unbanked cash and clear heat (Unbound)
 			local flat = Vector3.new(pos.X - mapInfo.safehouse.X, 0, pos.Z - mapInfo.safehouse.Z)
 			s.atSafehouse = s.inGarage or flat.Magnitude < 70
@@ -526,6 +651,7 @@ task.spawn(function()
 				if s.driftIdle > 1.2 and s.driftCombo > 0 then
 					local combo = s.driftCombo
 					Session.MaxStat(s, "bestDrift", math.floor(combo))
+					Session.AddRep(s, combo / 100)
 					s.driftCombo = 0
 					if combo > 400 and not s.race then
 						Session.AddUnbanked(s, combo / 25 * Session.NightMult(), "DRIFT x" .. math.floor(combo))

@@ -14,6 +14,7 @@ in code, so you don't need any models, meshes or assets.
 | Reset car to road | R | Y | RESET button |
 | Interact (start race / garage / quit race) | E | B | on-screen prompt |
 | Garage (at the safehouse) | G | — | on-screen prompt |
+| Fire roof weapon | F | RB | FIRE button |
 | City map | M | — | menu → CITY MAP |
 | Pause menu | P | — | ☰ button |
 
@@ -29,6 +30,45 @@ in code, so you don't need any models, meshes or assets.
    (**S**). If you get busted, you lose all of it. Banking at the safehouse also clears your heat.
 5. **Climb the Blacklist.** Earn total bounty and race wins, then challenge Blacklist rivals #5 → #1
    from the garage. Beat one and you win their car's **pink slip**.
+
+### Weapons, codes and Unbound update
+- **Codes:** open **CODES** in the main menu. Each code works once per player:
+  | Code | Reward |
+  | --- | --- |
+  | `WANTED` | $10,000 |
+  | `UNBOUND` | $25,000 + 500 REP |
+  | `NEONBAY` | $15,000 |
+  | `NITRO` | free EMP Blaster |
+  | `BLACKMARKET` | free Pulse Cannon |
+  | `DRIFTKING` | free Kitsune S15 |
+  | `RELEASE` | $50,000 + 1,000 REP |
+
+  Add your own in `Config.Codes`.
+- **Roof weapons from the Black Market** (red **B** on the map, at the docks). Drive in, press E,
+  buy and mount one. Fire with **F** (gamepad RB, or the FIRE button on mobile). They only affect
+  police and rival AI, never other players. Using them on cops starts a pursuit and raises heat.
+  - **Pulse Cannon:** locks on to the car ahead. Two hits wreck a cop.
+  - **EMP Blaster:** stalls every cop within 90 studs for 5 s.
+  - **Oil Slick:** cops that hit it spin out.
+  - **Spike Drop:** wrecks chasing cops.
+  - **Shockwave:** blasts every car around you away.
+
+  Each weapon has its own roof mount model (cannon, dish, pod, rack or ring) and a cooldown bar on
+  the HUD.
+- **From Unbound:**
+  - **Burst Nitrous:** set Nitrous Type to BURST in Handling. Tap for short, hard boosts with 3
+    charges.
+  - **Takeover events** (Downtown and Harbor): score style in a zone by drifting, near misses and
+    big air, and smash the highlighted cones, barrels and crates.
+  - **Side bets:** in every race you bet against a named rival. Beat them to double your stake.
+  - **REP levels** with a cash bonus each level, shown on the HUD and the player card.
+  - **40 street art pieces** hidden around the city, each worth cash and REP.
+  - New milestones for street art and takeovers.
+- **Also better:**
+  - **Rain showers** with streaks, grey grading, rain sound and slippery roads.
+  - Cops attempt **PIT manoeuvres** on your rear quarter.
+  - Race countdown beeps.
+  - Codes and tips on the title screen.
 
 ### Big city update
 - **Better driving:**
@@ -206,6 +246,7 @@ src/server/   (ServerScriptService.Server)
   AIDriver.lua      road-grid navigation + unstick logic for AI cars
   Police.lua        heat, pursuits, cops, roadblocks, spike strips, helicopter, pursuit breakers, busts
   Traffic.lua       civilian traffic
+  Weapons.lua       roof weapons (pulse cannon, EMP, oil, spikes, shockwave)
   Showroom.lua      the garage interior (underground workshop with turntable)
   Races.lua         races, drift events and Blacklist challenges
   Session.lua       per-player runtime state and money helpers
@@ -222,6 +263,9 @@ src/client/   (StarterPlayerScripts.Client)
   Settings.lua      player settings (saved in the profile)
   MapDraw.lua       draws the city for the radar and the full map
   FullMap.lua       full-screen city map (M)
+  BlackMarket.lua   Black Market window + fire button
+  Collectibles.lua  hides street art you already found
+  Weather.lua       rain
 ```
 
 You can change almost everything in `src/shared/Config.lua`, including car stats, prices, heat

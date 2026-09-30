@@ -22,6 +22,8 @@ export type BuildOptions = {
 	kit: number?, -- 1 stock, 2 street kit, 3 widebody
 	glow: Color3?, -- underglow colour (nil = off)
 	ride: number?, -- -2..2 ride height
+	weapon: string?, -- roof mount style from Config.Weapons (nil = none)
+	weaponColor: Color3?,
 }
 
 type Dims = {
@@ -485,6 +487,53 @@ function CarBuilder.Build(opts: BuildOptions): Model
 		box(ctx, "PushBarTop", Vector3.new(2.2, 0.18, 0.18), CFrame.new(0, bottom + 1.3, front - 0.55), Color3.fromRGB(60, 60, 65), Enum.Material.Metal)
 		box(ctx, "Antenna", Vector3.new(0.04, 1.2, 0.04), CFrame.new(0.6, roof + 0.6, roofE - 0.2), DARK)
 		model:SetAttribute("Police", true)
+	end
+
+	-- Roof-mounted weapon (Black Market)
+	if opts.weapon then
+		local wc = opts.weaponColor or Color3.fromRGB(0, 230, 255)
+		local gun = Color3.fromRGB(38, 40, 44)
+		local baseY = roof + 0.2
+		local z = roofMid
+		box(ctx, "WeaponBase", Vector3.new(cabW * 0.5, 0.35, 2.4), CFrame.new(0, baseY, z), gun, Enum.Material.Metal)
+		local muzzleOffset = Vector3.new(0, baseY + 1, z - 2)
+		if opts.weapon == "cannon" then
+			cylinder(ctx, "Turret", Vector3.new(1.2, 2.2, 2.2), CFrame.new(0, baseY + 0.8, z) * CFrame.Angles(0, 0, math.rad(90)), gun, Enum.Material.Metal)
+			cylinder(ctx, "Barrel", Vector3.new(4.2, 0.55, 0.55), CFrame.new(0, baseY + 1, z - 2.4) * CFrame.Angles(0, math.rad(90), 0), gun, Enum.Material.Metal)
+			cylinder(ctx, "BarrelTip", Vector3.new(0.4, 0.7, 0.7), CFrame.new(0, baseY + 1, z - 4.5) * CFrame.Angles(0, math.rad(90), 0), wc, Enum.Material.Neon)
+			muzzleOffset = Vector3.new(0, baseY + 1, z - 4.8)
+		elseif opts.weapon == "dish" then
+			box(ctx, "DishMast", Vector3.new(0.4, 1.4, 0.4), CFrame.new(0, baseY + 0.8, z), gun, Enum.Material.Metal)
+			cylinder(ctx, "Dish", Vector3.new(0.3, 3, 3), CFrame.new(0, baseY + 1.8, z - 0.3) * CFrame.Angles(0, math.rad(90), 0) * CFrame.Angles(0, 0, math.rad(-20)), Color3.fromRGB(200, 205, 215), Enum.Material.Metal)
+			local core = box(ctx, "EmitterCore", Vector3.new(0.7, 0.7, 0.7), CFrame.new(0, baseY + 1.8, z - 0.9), wc, Enum.Material.Neon)
+			core.Shape = Enum.PartType.Ball
+			muzzleOffset = Vector3.new(0, baseY + 1.8, z - 1)
+		elseif opts.weapon == "pod" then
+			box(ctx, "Pod", Vector3.new(cabW * 0.45, 1, 2.2), CFrame.new(0, baseY + 0.6, z + 0.4), gun, Enum.Material.Metal)
+			for _, x in { -0.6, 0.6 } do
+				cylinder(ctx, "Nozzle", Vector3.new(0.9, 0.5, 0.5), CFrame.new(x, baseY + 0.6, z + 1.8) * CFrame.Angles(0, math.rad(90), 0), wc, Enum.Material.Metal)
+			end
+			muzzleOffset = Vector3.new(0, baseY + 0.6, z + 2.2)
+		elseif opts.weapon == "rack" then
+			box(ctx, "Rack", Vector3.new(cabW * 0.6, 0.8, 2), CFrame.new(0, baseY + 0.5, z + 0.5), gun, Enum.Material.DiamondPlate)
+			for k = -2, 2 do
+				box(ctx, "RackSpike", Vector3.new(0.25, 0.9, 0.25), CFrame.new(k * 0.55, baseY + 1.3, z + 0.5), wc, Enum.Material.Metal)
+			end
+			muzzleOffset = Vector3.new(0, baseY + 0.5, z + 1.6)
+		elseif opts.weapon == "ring" then
+			for k = 0, 7 do
+				local ang = k * math.pi / 4
+				box(ctx, "RingSeg", Vector3.new(0.35, 0.35, 1.2), CFrame.new(math.cos(ang) * 1.3, baseY + 1, z + math.sin(ang) * 1.3) * CFrame.Angles(0, -ang, 0), wc, Enum.Material.Neon)
+			end
+			local orb = box(ctx, "RingCore", Vector3.new(0.9, 0.9, 0.9), CFrame.new(0, baseY + 1, z), Color3.new(1, 1, 1), Enum.Material.Neon)
+			orb.Shape = Enum.PartType.Ball
+			muzzleOffset = Vector3.new(0, baseY + 1, z)
+		end
+		local m = Instance.new("Attachment")
+		m.Name = "WeaponMuzzle"
+		m.Position = muzzleOffset - Vector3.new(0, chassisH / 2, 0)
+		m.Parent = chassis
+		model:SetAttribute("Weapon", opts.weapon)
 	end
 
 	-- Underglow

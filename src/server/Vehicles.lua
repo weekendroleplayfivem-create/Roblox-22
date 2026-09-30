@@ -120,6 +120,7 @@ function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 	end
 	local rimEntry = Config.Visual.rimColor[v.rimColor] or Config.Visual.rimColor[1]
 	local tintEntry = Config.Visual.tint[v.tint] or Config.Visual.tint[2]
+	local weaponDef = if profile.weapon ~= "" then Config.GetWeapon(profile.weapon) else nil
 
 	local car = CarBuilder.Build({
 		style = def.style,
@@ -135,6 +136,8 @@ function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 		kit = v.kit,
 		glow = glowColor,
 		ride = tune.handling.ride,
+		weapon = weaponDef and weaponDef.model,
+		weaponColor = weaponDef and weaponDef.color,
 	})
 	car:SetAttribute("Owner", s.player.UserId)
 	car:SetAttribute("CarId", def.id)

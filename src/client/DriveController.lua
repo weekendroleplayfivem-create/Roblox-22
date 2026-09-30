@@ -33,6 +33,8 @@ Drive.Throttle = 0
 Drive.Steer = 0
 Drive.Handbrake = false
 Drive.Flat = false
+Drive.BurstMode = false
+Drive.Bursting = false
 Drive.MenuOpen = false -- the title screen drives the camera while this is true
 Drive.Shake = 0 -- camera shake impulse (crashes)
 Drive.NearMissCombo = 0
@@ -55,6 +57,7 @@ local camPos: Vector3? = nil
 local lastSpeed = 0
 local lastThrottle = 0
 local smoothSteer = 0
+local burstUntil = 0
 local smoothThrottle = 0
 local nearTrack: { [Model]: { min: number, rel: number, speed: number } } = setmetatable({}, { __mode = "k" }) :: any
 local lastNearMiss = 0
@@ -123,8 +126,12 @@ local function handleHandbrake(_name: string, inputState: Enum.UserInputState, _
 	return if Drive.Car then Enum.ContextActionResult.Sink else Enum.ContextActionResult.Pass
 end
 
+local burstRequested = false
 local function handleNitro(_name: string, inputState: Enum.UserInputState, _obj: InputObject)
 	nitroHeld = inputState == Enum.UserInputState.Begin
+	if nitroHeld then
+		burstRequested = true -- burst nitrous fires on the press, not while held
+	end
 	return Enum.ContextActionResult.Sink
 end
 
@@ -199,10 +206,26 @@ RunService.PreSimulation:Connect(function(dt: number)
 
 	local capacity = stat(car, "nitroCapacity", 1)
 	Drive.NitroCapacity = capacity
-	local nitroOn = nitroHeld and Drive.Nitro > 0.02 and throttle > 0 and car:GetAttribute("Flat") ~= true
-	if nitroOn then
-		Drive.Nitro = math.max(0, Drive.Nitro - dt * 0.3)
+	local burstMode = stat(car, "burst", 0) >= 1
+	Drive.BurstMode = burstMode
+	local canBoost = throttle > 0 and car:GetAttribute("Flat") ~= true
+	local nitroOn
+	if burstMode then
+		-- Unbound burst nitrous: each tap spends a third of the tank on a short, hard shot
+		local charge = capacity / 3
+		if burstRequested and canBoost and os.clock() > burstUntil and Drive.Nitro >= charge - 0.001 then
+			Drive.Nitro -= charge
+			burstUntil = os.clock() + 1.3
+		end
+		nitroOn = os.clock() < burstUntil
+	else
+		nitroOn = nitroHeld and Drive.Nitro > 0.02 and canBoost
+		if nitroOn then
+			Drive.Nitro = math.max(0, Drive.Nitro - dt * 0.3)
+		end
 	end
+	burstRequested = false
+	Drive.Bursting = burstMode and nitroOn
 	Drive.NitroOn = nitroOn
 	setNitroVisual(nitroOn)
 
@@ -216,6 +239,15 @@ RunService.PreSimulation:Connect(function(dt: number)
 		driftGrip = stat(car, "driftGrip", 0.4),
 		downforce = stat(car, "downforce", 0.2),
 	}
+	if Drive.Bursting then
+		stats.nitroMult *= 1.1
+		stats.accel *= 1.35
+	end
+	-- wet roads
+	if workspace:GetAttribute("Raining") == true then
+		stats.grip *= 0.88
+		stats.brake *= 0.9
+	end
 	-- spiked tyres: slow and slippery
 	Drive.Flat = car:GetAttribute("Flat") == true
 	if Drive.Flat then
@@ -246,7 +278,7 @@ RunService.PreSimulation:Connect(function(dt: number)
 		if speed > 110 then
 			gain += 0.03
 		end
-		Drive.Nitro = math.min(capacity, Drive.Nitro + gain * dt)
+		Drive.Nitro = math.min(capacity, Drive.Nitro + gain * dt * (if burstMode then 1.25 else 1))
 	end
 
 	-- drivetrain: pick a gear from road speed, rpm sweeps through each gear's band

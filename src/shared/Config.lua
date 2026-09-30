@@ -304,6 +304,8 @@ Config.HandlingSliders = {
 	{ id = "downforce", name = "Downforce", left = "LOW", right = "HIGH", min = 0, max = 5, default = 1 },
 	{ id = "steering", name = "Steering", left = "SLOW", right = "FAST", min = -3, max = 3, default = 0 },
 	{ id = "ride", name = "Ride Height", left = "LOW", right = "HIGH", min = -2, max = 2, default = 0 },
+	-- Unbound: Classic nitrous (hold) or Burst nitrous (tap for short, harder shots, 3 charges)
+	{ id = "nitroType", name = "Nitrous Type", left = "CLASSIC", right = "BURST", min = 0, max = 1, default = 0 },
 } :: { Slider }
 
 Config.Visual = {
@@ -375,6 +377,7 @@ export type Stats = {
 	driftGrip: number,
 	downforce: number,
 	rating: number,
+	burst: number, -- 1 = burst nitrous
 }
 
 -- Performance rating like Unbound: C < 400, B 400+, A 500+, A+ 600+, S 700+, S+ 800+
@@ -429,6 +432,7 @@ function Config.ComputeStats(car: CarDef, tune: Tune?): Stats
 		driftGrip = 0.4 + 0.12 * g,
 		downforce = df,
 		rating = math.clamp(math.floor(rating), 100, 999),
+		burst = if (h.nitroType or 0) >= 1 then 1 else 0,
 	}
 end
 
@@ -930,8 +934,113 @@ function Config.District(bx: number, bz: number): string
 	return "suburb"
 end
 
+-- Black Market: a hidden garage at the docks where weapons are sold
+Config.Blocks.BlackMarket = { 14, 3 }
+
+table.insert(Config.Races, {
+	id = "downtown_takeover",
+	name = "Downtown Takeover",
+	kind = "takeover",
+	route = { { 7, 6 } },
+	laps = 1,
+	buyIn = 1500,
+	reward = 9000,
+	heat = 0.8,
+	rivals = 0,
+	rivalSpeed = 0,
+	driftTarget = 40000,
+	duration = 75,
+})
+table.insert(Config.Races, {
+	id = "harbor_takeover",
+	name = "Harbor Takeover",
+	kind = "takeover",
+	route = { { 13, 9 } },
+	laps = 1,
+	buyIn = 3000,
+	reward = 16000,
+	heat = 1,
+	rivals = 0,
+	rivalSpeed = 0,
+	driftTarget = 65000,
+	duration = 90,
+})
+
 -- "signals" (traffic lights + crosswalks) in the dense districts, "stop" signs elsewhere,
 -- "plain" on the Beltway ring.
+---------------------------------------------------------------------------
+-- Codes: redeem once per player from the main menu (CODES)
+---------------------------------------------------------------------------
+export type CodeReward = { cash: number?, car: string?, weapon: string?, rep: number?, message: string }
+Config.Codes = {
+	WANTED = { cash = 10000, message = "+$10,000 to get you started" },
+	UNBOUND = { cash = 25000, rep = 500, message = "+$25,000 and 500 REP" },
+	NEONBAY = { cash = 15000, message = "+$15,000 - welcome to Neon Bay" },
+	NITRO = { weapon = "emp", message = "Free EMP weapon! Equip it at the Black Market" },
+	BLACKMARKET = { weapon = "pulse", message = "Free Pulse Cannon! Equip it at the Black Market" },
+	DRIFTKING = { car = "kitsune", message = "Free car: Kitsune S15" },
+	RELEASE = { cash = 50000, rep = 1000, message = "+$50,000 and 1,000 REP - thanks for playing!" },
+} :: { [string]: CodeReward }
+
+---------------------------------------------------------------------------
+-- Weapons (mounted on the roof, bought at the Black Market). They only affect police and
+-- rival AI cars - never other players.
+---------------------------------------------------------------------------
+export type WeaponDef = {
+	id: string,
+	name: string,
+	desc: string,
+	price: number,
+	cooldown: number,
+	color: Color3,
+	model: string, -- roof mount style: "cannon" | "dish" | "pod" | "rack" | "ring"
+}
+Config.Weapons = {
+	{ id = "pulse", name = "Pulse Cannon", desc = "Fires an energy bolt at the car ahead. Two hits wreck a cop.", price = 35000, cooldown = 2.5, color = Color3.fromRGB(0, 230, 255), model = "cannon" },
+	{ id = "emp", name = "EMP Blaster", desc = "Stalls every police car within 90 studs for 5 seconds.", price = 45000, cooldown = 18, color = Color3.fromRGB(120, 160, 255), model = "dish" },
+	{ id = "oil", name = "Oil Slick", desc = "Drops a slick behind you. Cops that hit it spin out.", price = 20000, cooldown = 8, color = Color3.fromRGB(60, 50, 40), model = "pod" },
+	{ id = "spikes", name = "Spike Drop", desc = "Drops a spike strip behind you that wrecks chasing cops.", price = 30000, cooldown = 12, color = Color3.fromRGB(200, 200, 210), model = "rack" },
+	{ id = "shock", name = "Shockwave", desc = "Blasts every car around you away. Great when boxed in.", price = 60000, cooldown = 15, color = Color3.fromRGB(255, 80, 200), model = "ring" },
+} :: { WeaponDef }
+
+function Config.GetWeapon(id: string): WeaponDef?
+	for _, w in Config.Weapons do
+		if w.id == id then
+			return w
+		end
+	end
+	return nil
+end
+
+---------------------------------------------------------------------------
+-- REP levels (Unbound): earned from races, escapes, style and takeovers
+---------------------------------------------------------------------------
+Config.Rep = {
+	PerLevel = function(level: number): number
+		return 1000 + (level - 1) * 400
+	end,
+	LevelReward = 2500, -- cash per level (x level / 2)
+	MaxLevel = 50,
+}
+
+---------------------------------------------------------------------------
+-- Street art collectibles hidden around the city
+---------------------------------------------------------------------------
+Config.CollectibleCount = 40
+Config.CollectibleCash = 1000
+
+---------------------------------------------------------------------------
+-- Side bets (Unbound): beat a named rival in a race for extra cash
+---------------------------------------------------------------------------
+Config.SideBet = { Min = 500, Fraction = 0.5 } -- stake = half the buy-in (at least $500)
+
+for _, m in tiers("art", "Find %d street art pieces", "art", "sum", { 10, 25, 40 }, { 5000, 15000, 40000 }) do
+	table.insert(Config.Milestones, m)
+end
+for _, m in tiers("takeover", "Complete %d takeovers", "takeovers", "sum", { 1, 5, 15 }, { 4000, 15000, 40000 }) do
+	table.insert(Config.Milestones, m)
+end
+
 function Config.IntersectionMode(i: number, j: number): string
 	local n = Config.Grid.Blocks
 	if i == 0 or j == 0 or i == n or j == n then

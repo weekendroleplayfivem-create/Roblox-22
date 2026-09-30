@@ -215,6 +215,14 @@ RunService.Heartbeat:Connect(function(dt: number)
 		if root.Anchored then
 			continue
 		end
+		-- weapons (EMP, oil, spikes) can stall a car for a moment
+		local stunned = ai.data.stunnedUntil
+		if stunned and os.clock() < stunned then
+			ai.input.throttle = 0
+			ai.input.steer = 0
+			ai.input.handbrake = true
+			ai.input.nitro = false
+		end
 
 		-- unstick: back up when pushing against something
 		if ai.reverse > 0 then

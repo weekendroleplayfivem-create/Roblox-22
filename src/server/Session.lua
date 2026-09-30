@@ -36,6 +36,7 @@ export type Session = {
 	hiding: boolean,
 	frozenUntil: number,
 	inGarage: boolean,
+	atBlackMarket: boolean,
 }
 
 local sessions: { [Player]: Session } = {}
@@ -73,6 +74,7 @@ function Session.Create(player: Player, profile: PlayerData.Profile): Session
 		hiding = false,
 		frozenUntil = 0,
 		inGarage = false,
+		atBlackMarket = false,
 	}
 	sessions[player] = s
 	return s
@@ -132,8 +134,13 @@ function Session.Sync(s: Session)
 	p:SetAttribute("BlacklistBeaten", s.profile.blacklistBeaten)
 	p:SetAttribute("DriftCombo", math.floor(s.driftCombo))
 	p:SetAttribute("AtSafehouse", s.atSafehouse)
+	p:SetAttribute("AtBlackMarket", s.atBlackMarket)
 	p:SetAttribute("Hiding", s.hiding)
 	p:SetAttribute("Night", Session.IsNight())
+	local level, into, need = Session.RepLevel(s.profile.rep)
+	p:SetAttribute("RepLevel", level)
+	p:SetAttribute("RepProgress", into / need)
+	p:SetAttribute("Weapon", s.profile.weapon)
 	local ls = p:FindFirstChild("leaderstats")
 	if ls then
 		local cash = ls:FindFirstChild("Cash") :: IntValue?
@@ -175,6 +182,7 @@ function Session.CheckMilestones(s: Session)
 		if not done[m.id] and Session.StatValue(s, m.stat) >= m.goal then
 			done[m.id] = true
 			s.profile.cash += m.reward
+			Session.AddRep(s, 200)
 			Session.Banner(s.player, "MILESTONE COMPLETE", m.name .. "   +$" .. m.reward, Color3.fromRGB(120, 255, 170))
 		end
 	end
@@ -189,6 +197,39 @@ function Session.MaxStat(s: Session, stat: string, value: number)
 	if value > (s.profile.stats[stat] or 0) then
 		s.profile.stats[stat] = value
 		Session.CheckMilestones(s)
+	end
+end
+
+function Session.RepLevel(rep: number): (number, number, number)
+	-- returns level, rep into this level, rep needed for the next level
+	local level = 1
+	local left = rep
+	while level < Config.Rep.MaxLevel do
+		local need = Config.Rep.PerLevel(level)
+		if left < need then
+			return level, left, need
+		end
+		left -= need
+		level += 1
+	end
+	return level, 0, 1
+end
+
+function Session.AddRep(s: Session, amount: number, reason: string?)
+	amount = math.floor(amount)
+	if amount <= 0 then
+		return
+	end
+	local before = Session.RepLevel(s.profile.rep)
+	s.profile.rep += amount
+	local after = Session.RepLevel(s.profile.rep)
+	if reason then
+		Session.Notify(s.player, reason .. "  +" .. amount .. " REP", Color3.fromRGB(170, 140, 255))
+	end
+	if after > before then
+		local cash = Config.Rep.LevelReward * math.max(1, math.floor(after / 2))
+		s.profile.cash += cash
+		Session.Banner(s.player, "REP LEVEL " .. after, "+$" .. cash .. " level-up bonus", Color3.fromRGB(170, 140, 255))
 	end
 end
 
