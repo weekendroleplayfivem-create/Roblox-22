@@ -2,6 +2,7 @@
 -- WANTED: UNBOUND - client entry point.
 
 local ContextActionService = game:GetService("ContextActionService")
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -21,6 +22,8 @@ require(script.Parent.CarVisuals)
 require(script.Parent.Effects)
 require(script.Parent.Sounds)
 local BlackMarket = require(script.Parent.BlackMarket)
+local Input = require(script.Parent.Input)
+require(script.Parent.TouchControls)
 require(script.Parent.Collectibles)
 require(script.Parent.Weather)
 require(script.Parent.Menu)
@@ -70,7 +73,18 @@ end
 
 HUD.PromptButton.Activated:Connect(doPrompt)
 
-ContextActionService:BindAction("WU_Interact", function(_, inputState)
+ContextActionService:BindAction("WU_Interact", function(_, inputState, inputObject)
+	-- gamepad B inside a menu closes it instead of triggering the world prompt
+	if inputObject.KeyCode == Enum.KeyCode.ButtonB and GuiService.SelectedObject ~= nil then
+		if BlackMarket.Open then
+			BlackMarket.Toggle(false)
+		elseif Garage.InGarage() then
+			Garage.Exit()
+		else
+			return Enum.ContextActionResult.Pass
+		end
+		return Enum.ContextActionResult.Sink
+	end
 	if inputState == Enum.UserInputState.Begin then
 		doPrompt()
 	end
@@ -88,7 +102,7 @@ ContextActionService:BindAction("WU_Garage", function(_, inputState)
 		end
 	end
 	return Enum.ContextActionResult.Sink
-end, false, Enum.KeyCode.G)
+end, false, Enum.KeyCode.G, Enum.KeyCode.DPadLeft)
 
 local function updatePrompt(pos: Vector3?)
 	promptAction = nil
@@ -99,7 +113,7 @@ local function updatePrompt(pos: Vector3?)
 	local mode = player:GetAttribute("PursuitMode")
 	if player:GetAttribute("RaceActive") then
 		promptAction = { kind = "quit" }
-		HUD.SetPrompt("[E] Quit race")
+		HUD.SetPrompt(Input.Label("interact") .. " Quit race")
 		return
 	end
 	if mode ~= "idle" and mode ~= nil then
@@ -108,12 +122,12 @@ local function updatePrompt(pos: Vector3?)
 	end
 	if player:GetAttribute("AtBlackMarket") then
 		promptAction = { kind = "blackmarket" }
-		HUD.SetPrompt(if BlackMarket.Open then "[E] Close the Black Market" else "[E] Black Market  (roof weapons)")
+		HUD.SetPrompt(if BlackMarket.Open then Input.Label("interact") .. " Close the Black Market" else Input.Label("interact") .. " Black Market  (roof weapons)")
 		return
 	end
 	if player:GetAttribute("AtSafehouse") then
 		promptAction = { kind = "garage" }
-		HUD.SetPrompt(if Garage.InGarage() then "[E] Drive out of the garage" else "[E] Enter the garage  (cars, tuning, paint, Blacklist)")
+		HUD.SetPrompt(if Garage.InGarage() then Input.Label("interact") .. " Drive out of the garage" else Input.Label("interact") .. " Enter the garage  (cars, tuning, paint, Blacklist)")
 		return
 	end
 	local race = nearestRace(pos)
@@ -124,7 +138,7 @@ local function updatePrompt(pos: Vector3?)
 		local what = if race.kind == "drift"
 			then string.format("score %s in %ds", HUD.Commas(race.driftTarget or 0), race.duration or 60)
 			else string.format("win up to $%s", HUD.Commas((race.reward + race.buyIn) * mult))
-		HUD.SetPrompt(string.format("[E] %s  -  buy-in $%s  -  %s", race.name, HUD.Commas(race.buyIn), what))
+		HUD.SetPrompt(string.format("%s %s  -  buy-in $%s  -  %s", Input.Label("interact"), race.name, HUD.Commas(race.buyIn), what))
 		return
 	end
 	HUD.SetPrompt(nil)
@@ -174,6 +188,40 @@ end
 -- Police siren lights (animated locally)
 ---------------------------------------------------------------------------
 local sirenClock = 0
+local sirenParts: { [Model]: { BasePart } } = setmetatable({}, { __mode = "k" }) :: any
+local function sirensOf(m: Model): { BasePart }
+	local cached = sirenParts[m]
+	if cached then
+		return cached
+	end
+	local list: { BasePart } = {}
+	for _, name in { "SirenRed", "SirenBlue" } do
+		local p = m:FindFirstChild(name)
+		if p and p:IsA("BasePart") then
+			table.insert(list, p)
+		end
+	end
+	sirenParts[m] = list
+	return list
+end
+
+local function animateSirens(m: Model, phase: boolean, camPos: Vector3)
+	local root = m.PrimaryPart
+	if not root or not m:GetAttribute("Police") then
+		return
+	end
+	local near = (root.Position - camPos).Magnitude < 250
+	local on = m:GetAttribute("Siren") == true
+	for _, part in sirensOf(m) do
+		local lit = on and ((part.Name == "SirenRed") == phase)
+		part.Transparency = if lit then 0 else 0.6
+		local light = part:FindFirstChildOfClass("PointLight")
+		if light then
+			light.Enabled = lit and near
+		end
+	end
+end
+
 local function updateSirens(dt: number)
 	sirenClock += dt
 	local phase = math.floor(sirenClock * 6) % 2 == 0
@@ -181,19 +229,17 @@ local function updateSirens(dt: number)
 	if not police then
 		return
 	end
-	for _, m in police:GetDescendants() do
-		if m:IsA("Model") and m:GetAttribute("Police") then
-			local on = m:GetAttribute("Siren") == true
-			for _, name in { "SirenRed", "SirenBlue" } do
-				local part = m:FindFirstChild(name) :: BasePart?
-				if part then
-					local lit = on and ((name == "SirenRed") == phase)
-					part.Transparency = if lit then 0 else 0.6
-					local light = part:FindFirstChildOfClass("PointLight")
-					if light then
-						light.Enabled = lit
+	local camPos = workspace.CurrentCamera.CFrame.Position
+	for _, m in police:GetChildren() do
+		if m:IsA("Model") then
+			if m.Name == "Roadblock" then
+				for _, inner in m:GetChildren() do
+					if inner:IsA("Model") then
+						animateSirens(inner, phase, camPos)
 					end
 				end
+			else
+				animateSirens(m, phase, camPos)
 			end
 		end
 	end

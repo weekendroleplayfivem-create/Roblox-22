@@ -220,9 +220,9 @@ local function streetLight(pos: Vector3, toRoad: Vector3, props: Folder)
 	}, props)
 	local light = Instance.new("SpotLight")
 	light.Face = Enum.NormalId.Bottom
-	light.Range = 58
+	light.Range = 52
 	light.Angle = 120
-	light.Brightness = 3
+	light.Brightness = 3.2
 	light.Color = Color3.fromRGB(255, 196, 130)
 	light.Parent = lamp
 	table.insert(nightLights, light)
@@ -251,13 +251,11 @@ local function cityBlock(bx: number, bz: number, ground: Folder, props: Folder)
 	if district == "suburb" then
 		Architecture.Suburb(c, BLOCK)
 		Architecture.Sidewalks(c, BLOCK, false, "suburb")
-		streetLight(c + Vector3.new(0, 0, -edge), -Vector3.zAxis, props)
-		streetLight(c + Vector3.new(0, 0, edge), Vector3.zAxis, props)
+		streetLight(c + Vector3.new(0, 0, if bx % 2 == 0 then -edge else edge), if bx % 2 == 0 then -Vector3.zAxis else Vector3.zAxis, props)
 		return
 	elseif district == "industrial" then
 		Architecture.Industrial(c, BLOCK, bx == Grid.Size - 1)
 		Architecture.Sidewalks(c, BLOCK, false, "industrial")
-		streetLight(c + Vector3.new(-edge, 0, 0), -Vector3.xAxis, props)
 		streetLight(c + Vector3.new(edge, 0, 0), Vector3.xAxis, props)
 		return
 	end
@@ -270,10 +268,14 @@ local function cityBlock(bx: number, bz: number, ground: Folder, props: Folder)
 		end
 	end
 	Architecture.Sidewalks(c, BLOCK, rng:NextNumber() < 0.3)
-	streetLight(c + Vector3.new(0, 0, -edge), -Vector3.zAxis, props)
-	streetLight(c + Vector3.new(0, 0, edge), Vector3.zAxis, props)
-	streetLight(c + Vector3.new(-edge, 0, 0), -Vector3.xAxis, props)
-	streetLight(c + Vector3.new(edge, 0, 0), Vector3.xAxis, props)
+	-- two lamps per block (on opposite sides) keeps every street lit without hundreds of lights
+	if (bx + bz) % 2 == 0 then
+		streetLight(c + Vector3.new(0, 0, -edge), -Vector3.zAxis, props)
+		streetLight(c + Vector3.new(0, 0, edge), Vector3.zAxis, props)
+	else
+		streetLight(c + Vector3.new(-edge, 0, 0), -Vector3.xAxis, props)
+		streetLight(c + Vector3.new(edge, 0, 0), Vector3.xAxis, props)
+	end
 end
 
 -- Terrain around the city: ocean and beaches to the east and south, hills and mountains to the
@@ -685,11 +687,6 @@ local function placeCollectibles(info: MapInfo, isSpecial: (number, number) -> s
 		l.Rotation = crng:NextNumber(-8, 8)
 		l.Parent = g
 		g.Parent = panel
-		local halo = Instance.new("PointLight")
-		halo.Color = color
-		halo.Range = 16
-		halo.Brightness = 2
-		halo.Parent = panel
 		table.insert(info.collectibles, { id = id, position = pos })
 	end
 end

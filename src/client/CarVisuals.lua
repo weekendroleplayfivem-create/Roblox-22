@@ -29,6 +29,8 @@ type Entry = {
 	rollVel: number,
 	pitchVel: number,
 	skidding: boolean?,
+	glows: { Light }, -- underglow + tail glow
+	lightsNear: boolean?,
 }
 
 local cache: { [Model]: Entry } = setmetatable({}, { __mode = "k" }) :: any
@@ -36,7 +38,7 @@ local TAIL = Color3.fromRGB(230, 15, 30)
 local BRAKE = Color3.fromRGB(255, 70, 70)
 
 local function build(model: Model): Entry
-	local e: Entry = { welds = {}, spin = 0, steer = 0, heads = {}, tails = {}, reverse = {}, skids = {}, roll = 0, pitch = 0, rollVel = 0, pitchVel = 0 }
+	local e: Entry = { welds = {}, spin = 0, steer = 0, heads = {}, tails = {}, reverse = {}, skids = {}, glows = {}, roll = 0, pitch = 0, rollVel = 0, pitchVel = 0 }
 	for _, d in model:GetDescendants() do
 		if d:IsA("Weld") and d.Name == "WheelWeld" then
 			table.insert(e.welds, d)
@@ -48,6 +50,9 @@ local function build(model: Model): Entry
 			table.insert(e.reverse, d)
 		elseif d:IsA("SurfaceLight") and d.Name == "TailGlow" then
 			e.tailGlow = d
+			table.insert(e.glows, d)
+		elseif d:IsA("PointLight") and d.Name == "Underglow" and d.Brightness > 0 then
+			table.insert(e.glows, d)
 		elseif d:IsA("Weld") and d.Name == "BodyWeld" then
 			e.bodyWeld = d
 		elseif d:IsA("Trail") and d.Name == "SkidMark" then
@@ -63,10 +68,28 @@ local function animate(model: Model, dt: number, night: boolean, camPos: Vector3
 	if not root then
 		return
 	end
-	if (root.Position - camPos).Magnitude > 400 then
+	local dist = (root.Position - camPos).Magnitude
+	local e = cache[model]
+	-- lights are the most expensive thing on a car: only cars close to the camera get them
+	local lightsOn = dist < 230
+	if e and e.lightsNear ~= lightsOn then
+		e.lightsNear = lightsOn
+		e.night = nil -- force the headlight state to refresh
+		for _, l in e.glows do
+			l.Enabled = lightsOn
+		end
+		if not lightsOn then
+			for _, light in e.heads do
+				light.Enabled = false
+			end
+		end
+	end
+	if dist > 400 then
 		return
 	end
-	local e = cache[model] or build(model)
+	if not e then
+		e = build(model)
+	end
 	local cf = root.CFrame
 	local vel = root.AssemblyLinearVelocity
 	local fwd = vel:Dot(cf.LookVector)
@@ -130,10 +153,11 @@ local function animate(model: Model, dt: number, night: boolean, camPos: Vector3
 		end
 	end
 
-	if e.night ~= night then
-		e.night = night
+	local headsOn = night and dist < 230
+	if e.night ~= headsOn then
+		e.night = headsOn
 		for _, light in e.heads do
-			light.Enabled = night
+			light.Enabled = headsOn
 		end
 	end
 

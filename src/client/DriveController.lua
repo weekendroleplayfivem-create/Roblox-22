@@ -3,6 +3,7 @@
 -- nitro, drift smoke and the chase camera.
 
 local ContextActionService = game:GetService("ContextActionService")
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -76,6 +77,10 @@ local function setNitroVisual(on: boolean)
 end
 
 local function attach(newSeat: VehicleSeat?)
+	local old = Drive.State
+	if old and old.antiGravity then
+		old.antiGravity.Force = Vector3.zero
+	end
 	seat = nil
 	Drive.Car = nil
 	Drive.State = nil
@@ -121,13 +126,24 @@ end
 ---------------------------------------------------------------------------
 -- Input
 ---------------------------------------------------------------------------
+-- While a menu is being navigated with a gamepad, A / B / X belong to the menu.
+local function uiNavigating(): boolean
+	return GuiService.SelectedObject ~= nil
+end
+
 local function handleHandbrake(_name: string, inputState: Enum.UserInputState, _obj: InputObject)
+	if uiNavigating() then
+		return Enum.ContextActionResult.Pass
+	end
 	handbrake = inputState == Enum.UserInputState.Begin
 	return if Drive.Car then Enum.ContextActionResult.Sink else Enum.ContextActionResult.Pass
 end
 
 local burstRequested = false
 local function handleNitro(_name: string, inputState: Enum.UserInputState, _obj: InputObject)
+	if uiNavigating() then
+		return Enum.ContextActionResult.Pass
+	end
 	nitroHeld = inputState == Enum.UserInputState.Begin
 	if nitroHeld then
 		burstRequested = true -- burst nitrous fires on the press, not while held
@@ -136,23 +152,32 @@ local function handleNitro(_name: string, inputState: Enum.UserInputState, _obj:
 end
 
 local function handleReset(_name: string, inputState: Enum.UserInputState, _obj: InputObject)
+	if uiNavigating() then
+		return Enum.ContextActionResult.Pass
+	end
 	if inputState == Enum.UserInputState.Begin then
 		RespawnCar:FireServer()
 	end
 	return Enum.ContextActionResult.Sink
 end
 
-ContextActionService:BindActionAtPriority("WU_Handbrake", handleHandbrake, true, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Space, Enum.KeyCode.ButtonX)
-ContextActionService:BindActionAtPriority("WU_Nitro", handleNitro, true, Enum.ContextActionPriority.High.Value, Enum.KeyCode.LeftShift, Enum.KeyCode.ButtonA)
-ContextActionService:BindActionAtPriority("WU_Reset", handleReset, true, Enum.ContextActionPriority.High.Value, Enum.KeyCode.R, Enum.KeyCode.ButtonY)
-ContextActionService:SetTitle("WU_Handbrake", "DRIFT")
-ContextActionService:SetTitle("WU_Nitro", "NOS")
-ContextActionService:SetTitle("WU_Reset", "RESET")
-pcall(function()
-	ContextActionService:SetPosition("WU_Nitro", UDim2.new(1, -170, 1, -170))
-	ContextActionService:SetPosition("WU_Handbrake", UDim2.new(1, -95, 1, -230))
-	ContextActionService:SetPosition("WU_Reset", UDim2.new(1, -95, 0, 80))
-end)
+-- keyboard + gamepad (touch devices get their own layout in TouchControls)
+ContextActionService:BindActionAtPriority("WU_Handbrake", handleHandbrake, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Space, Enum.KeyCode.ButtonX)
+ContextActionService:BindActionAtPriority("WU_Nitro", handleNitro, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.LeftShift, Enum.KeyCode.ButtonA)
+ContextActionService:BindActionAtPriority("WU_Reset", handleReset, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.R, Enum.KeyCode.ButtonY)
+
+-- touch controls
+Drive.TouchThrottle = 0
+Drive.TouchSteer = 0
+function Drive.SetNitroHeld(on: boolean)
+	nitroHeld = on
+	if on then
+		burstRequested = true
+	end
+end
+function Drive.SetHandbrake(on: boolean)
+	handbrake = on
+end
 
 -- Fallback keyboard reading in case the default vehicle controls are disabled.
 local function readKeys()
@@ -196,6 +221,12 @@ RunService.PreSimulation:Connect(function(dt: number)
 	end
 	if math.abs(keySteer) > math.abs(steer) then
 		steer = keySteer
+	end
+	if math.abs(Drive.TouchThrottle) > math.abs(throttle) then
+		throttle = Drive.TouchThrottle
+	end
+	if math.abs(Drive.TouchSteer) > math.abs(steer) then
+		steer = Drive.TouchSteer
 	end
 	-- smooth the inputs: keyboard steering ramps in and recentres quickly, like a real rack
 	local steerRate = if math.abs(steer) < math.abs(smoothSteer) or steer * smoothSteer < 0 then 9 else 5.5

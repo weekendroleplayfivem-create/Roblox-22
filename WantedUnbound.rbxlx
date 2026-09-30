@@ -1,4 +1,4 @@
-<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4"><Item class="Workspace" referent="RBX00000000000000000000000000000025"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">true</bool><int name="StreamingTargetRadius">1500</int><int name="StreamingMinRadius">400</int></Properties></Item><Item class="Lighting" referent="RBX00000000000000000000000000000026"><Properties><string name="Name">Lighting</string><token name="Technology">4</token></Properties></Item><Item class="ReplicatedStorage" referent="RBX00000000000000000000000000000027"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">Shared</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">CarPhysics</string><ProtectedString name="Source"><![CDATA[--!strict
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4"><Item class="Workspace" referent="RBX00000000000000000000000000000028"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">true</bool><int name="StreamingTargetRadius">900</int><int name="StreamingMinRadius">280</int><token name="StreamOutBehavior">2</token></Properties></Item><Item class="Lighting" referent="RBX00000000000000000000000000000029"><Properties><string name="Name">Lighting</string><token name="Technology">3</token></Properties></Item><Item class="ReplicatedStorage" referent="RBX0000000000000000000000000000002A"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">Shared</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">CarPhysics</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Arcade driving model shared by the player's car (simulated on the client that owns it)
 -- and AI cars (police and rivals, simulated on the server).
 --
@@ -40,6 +40,9 @@ export type State = {
 	weight: number, -- -1 (on the rear) .. 1 (on the nose): weight transfer
 	brakeTap: number, -- os.clock() of the last brake, for brake-to-drift
 	lowSlip: number, -- time spent nearly straight while drifting
+	hoverCenter: number, -- rest height of the chassis centre above the ground
+	antiGravity: VectorForce?,
+	corners: { Vector3 },
 }
 
 function CarPhysics.NewState(model: Model): State
@@ -62,6 +65,12 @@ function CarPhysics.NewState(model: Model): State
 		weight = 0,
 		brakeTap = 0,
 		lowSlip = 0,
+		hoverCenter = (function(): number
+			local h = model:GetAttribute("HoverCenter")
+			return if type(h) == "number" then h else root.Size.Y / 2 + 0.6
+		end)(),
+		antiGravity = root:FindFirstChild("AntiGravity") :: VectorForce?,
+		corners = { Vector3.new(-1, 0, -1), Vector3.new(1, 0, -1), Vector3.new(-1, 0, 1), Vector3.new(1, 0, 1) },
 	}
 end
 
@@ -76,28 +85,55 @@ end
 
 local UP = Vector3.yAxis
 
+-- Raycast hover suspension: the chassis floats `hoverCenter` studs above the ground on four
+-- wheel rays, so it never scrapes over the seams between road parts.
+local HOVER_TRAVEL = 1.9 -- how far below rest height the rays still count as "on the ground"
+
 function CarPhysics.Step(state: State, input: Input, stats: Stats, dt: number)
 	local root = state.root
 	if root.Anchored then
 		return
 	end
 	local cf = root.CFrame
-	local halfHeight = root.Size.Y / 2
-	local hit = workspace:Raycast(cf.Position, Vector3.new(0, -(halfHeight + 2.2), 0), state.params)
-
-	local up = UP
-	if hit then
-		up = hit.Normal
-		if up.Y < 0.5 then
-			up = UP -- walls do not count as ground
-			hit = nil
+	local size = root.Size
+	local center = state.hoverCenter
+	local hx, hz = size.X / 2 - 0.5, size.Z / 2 - 1.4
+	local down = -cf.UpVector
+	local rayLen = center + HOVER_TRAVEL
+	local hits, sumDist, sumNormal = 0, 0, Vector3.zero
+	for _, o in state.corners do
+		local origin = cf:PointToWorldSpace(Vector3.new(o.X * hx, 0, o.Z * hz))
+		local result = workspace:Raycast(origin, down * rayLen, state.params)
+		if result and result.Normal.Y > 0.55 then
+			hits += 1
+			sumDist += result.Distance
+			sumNormal += result.Normal
 		end
 	end
-	state.grounded = hit ~= nil
+	state.grounded = hits >= 2
+	local up = if state.grounded then (sumNormal / hits).Unit else UP
 
 	local align = state.align
 	if align then
 		align.PrimaryAxis = up
+		align.Responsiveness = if state.grounded then 24 else 5
+	end
+
+	-- hover spring: steer the vertical speed towards the rest height (critically damped, no bounce)
+	local anti = state.antiGravity
+	if state.grounded then
+		local dist = sumDist / hits
+		local err = center - dist
+		local v = root.AssemblyLinearVelocity
+		local vUp = v:Dot(up)
+		local target = math.clamp(err * 14, -35, 35)
+		local newUp = vUp + (target - vUp) * math.min(1, dt * 18)
+		root.AssemblyLinearVelocity = v + up * (newUp - vUp)
+		if anti then
+			anti.Force = Vector3.new(0, root.AssemblyMass * workspace.Gravity, 0)
+		end
+	elseif anti then
+		anti.Force = Vector3.zero
 	end
 
 	local vel = root.AssemblyLinearVelocity
@@ -161,7 +197,7 @@ function CarPhysics.Step(state: State, input: Input, stats: Stats, dt: number)
 			if absFwd > 35 and steerAbs > 0.2 then
 				state.drifting = true
 			end
-		elseif throttle > 0.5 and steerAbs > 0.5 and absFwd > 60 and now - state.brakeTap < 0.45 then
+		elseif throttle > 0.6 and steerAbs > 0.85 and absFwd > 75 and now - state.brakeTap < 0.3 then
 			state.drifting = true
 		end
 		local slip = math.deg(math.atan2(math.abs(lat), math.max(absFwd, 1)))
@@ -195,7 +231,7 @@ function CarPhysics.Step(state: State, input: Input, stats: Stats, dt: number)
 		lat *= math.max(0, 1 - grip * dt)
 		-- carry part of the scrubbed sideways speed into forward speed so corners keep momentum
 		if fwd > 5 then
-			local carry = if state.drifting then 0.6 else 0.45
+			local carry = if state.drifting then 0.5 else 0.2
 			fwd = math.min(fwd + (oldLat - math.abs(lat)) * carry, maxSpeed * 1.05)
 		end
 
@@ -724,8 +760,8 @@ Config.Police = {
 	Accel = 50,
 	Turn = 2.4,
 	Grip = 6.5,
-	PatrolCount = 10, -- roaming patrols across the whole city (daytime)
-	NightExtraPatrols = 8, -- extra patrol cars out at night
+	PatrolCount = 7, -- roaming patrols across the whole city (daytime)
+	NightExtraPatrols = 5, -- extra patrol cars out at night
 	NightExtraCops = 2, -- extra units per pursuit at night
 	NightSpawnMult = 0.65, -- pursuit reinforcements arrive faster at night
 	SpeedLimit = 95, -- studs/s (~71 mph). Faster than this in front of a cop starts a pursuit.
@@ -993,7 +1029,7 @@ Config.Ramps = {
 -- City traffic + near misses (Unbound)
 ---------------------------------------------------------------------------
 Config.Traffic = {
-	Count = 42, -- civilian cars driving around the city
+	Count = 26, -- civilian cars driving around the city
 	Speed = { 38, 55 }, -- studs/s cruising speed range
 	LaneOffset = 8, -- distance from the centre line (drive on the right)
 	NearMissMin = 6.8, -- closer than this (centre to centre) counts as a crash, not a near miss
@@ -1415,7 +1451,7 @@ function Signals.Now(): number
 end
 
 return Signals
-]]></ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX00000000000000000000000000000028"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000014"><Properties><string name="Name">Server</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000006"><Properties><string name="Name">AIDriver</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX0000000000000000000000000000002B"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000014"><Properties><string name="Name">Server</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000006"><Properties><string name="Name">AIDriver</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Server-side driver for AI cars (police and race rivals). Each AI has a `think` callback
 -- that picks a goal; AIDriver handles road-grid navigation, steering, unsticking and
 -- runs the shared arcade physics.
@@ -1498,6 +1534,10 @@ end
 
 function AIDriver.Remove(ai: AI)
 	ai.alive = false
+	local anti = ai.state.root:FindFirstChild("AntiGravity") :: VectorForce?
+	if anti then
+		anti.Force = Vector3.zero
+	end
 	local idx = table.find(ais, ai)
 	if idx then
 		table.remove(ais, idx)
@@ -1557,7 +1597,13 @@ function AIDriver.DriveTo(ai: AI, goal: Vector3, aggressive: boolean?)
 	local root = ai.state.root
 	local pos = root.Position
 	local waypoint = goal
-	if AIDriver.ClearLine(pos, goal, 3.5) then
+	-- the spherecast is the expensive part: refresh it 5x a second instead of every frame
+	local now = os.clock()
+	if now >= (ai.data.losCheckAt or 0) then
+		ai.data.losCheckAt = now + 0.2
+		ai.data.losClear = AIDriver.ClearLine(pos, goal, 3.5)
+	end
+	if ai.data.losClear then
 		ai.nav = nil
 	else
 		local nav = ai.nav
@@ -1606,7 +1652,8 @@ local function uprightAt(ai: AI, pos: Vector3, look: Vector3)
 		flat = -Vector3.zAxis
 	end
 	local root = ai.state.root
-	local target = Vector3.new(pos.X, Grid.RoadY + root.Size.Y / 2 + 0.5, pos.Z)
+	local hover = ai.model:GetAttribute("HoverCenter")
+	local target = Vector3.new(pos.X, Grid.RoadY + (if type(hover) == "number" then hover else root.Size.Y / 2) + 0.2, pos.Z)
 	ai.model:PivotTo(CFrame.lookAt(target, target + flat.Unit))
 	root.AssemblyLinearVelocity = Vector3.zero
 	root.AssemblyAngularVelocity = Vector3.zero
@@ -1912,7 +1959,7 @@ local function glassTower(center: Vector3, sx: number, sz: number, h: number, ou
 		local tier = core(cx, cz, tsx, tsz, y, y + th, glass, Enum.Material.Glass)
 		tier.Reflectance = 0.28
 		lightAtNight(tier, lit, night)
-		facade(cx, cz, tsx, tsz, y, y + th, { floorH = 13, bandH = 0.9, bay = 11, pierW = 0.6, depth = 0.3, color = metal, material = Enum.Material.Metal })
+		facade(cx, cz, tsx, tsz, y, y + th, { floorH = 16, bandH = 1, bay = 15, pierW = 0.7, depth = 0.3, color = metal, material = Enum.Material.Metal })
 		parapet(cx, cz, tsx, tsz, y + th, metal, Enum.Material.Metal)
 		y += th
 	end
@@ -2006,7 +2053,7 @@ local function brickBlock(center: Vector3, sx: number, sz: number, h: number, ou
 	local upper = core(cx, cz, sx, sz, SURFACE + shopH, SURFACE + h, rgb(30, 34, 40), Enum.Material.Glass)
 	upper.Reflectance = 0.15
 	lightAtNight(upper, rng:NextNumber() < 0.8, pick(WARM_NIGHT))
-	facade(cx, cz, sx, sz, SURFACE + shopH, SURFACE + h, { floorH = 10, bandH = 6, bay = 8, pierW = 4.4, depth = 0.6, color = brick, material = Enum.Material.Brick })
+	facade(cx, cz, sx, sz, SURFACE + shopH, SURFACE + h, { floorH = 10, bandH = 6, bay = 11, pierW = 6.6, depth = 0.6, color = brick, material = Enum.Material.Brick })
 	deco({ Name = "Cornice", Size = Vector3.new(sx + 2.4, 2, sz + 2.4), CFrame = CFrame.new(cx, SURFACE + h, cz), Color = trim, Material = Enum.Material.Limestone })
 	parapet(cx, cz, sx, sz, SURFACE + h + 1, brick, Enum.Material.Brick)
 	-- fire escape on a street side
@@ -2031,7 +2078,7 @@ local function shops(center: Vector3, sx: number, sz: number, h: number, outward
 	storefronts(center, sx, sz, outward, shopH)
 	local upper = core(cx, cz, sx, sz, SURFACE + shopH, SURFACE + h, rgb(34, 38, 44), Enum.Material.Glass)
 	lightAtNight(upper, rng:NextNumber() < 0.6, pick(WARM_NIGHT))
-	facade(cx, cz, sx, sz, SURFACE + shopH, SURFACE + h, { floorH = 9, bandH = 5, bay = 9, pierW = 5, depth = 0.5, color = wall, material = Enum.Material.Plaster })
+	facade(cx, cz, sx, sz, SURFACE + shopH, SURFACE + h, { floorH = 9, bandH = 5, bay = 12, pierW = 7, depth = 0.5, color = wall, material = Enum.Material.Plaster })
 	deco({ Name = "Band", Size = Vector3.new(sx + 1.2, 1.2, sz + 1.2), CFrame = CFrame.new(cx, SURFACE + shopH, cz), Color = wall:Lerp(rgb(80, 80, 80), 0.3), Material = Enum.Material.Concrete })
 	parapet(cx, cz, sx, sz, SURFACE + h, wall, Enum.Material.Plaster)
 	hvac(cx, cz, sx, sz, SURFACE + h, rng:NextInteger(1, 3))
@@ -2317,7 +2364,7 @@ local function warehouse(center: Vector3, sx: number, sz: number, outward: Vecto
 	local body = core(center.X, center.Z, sx, sz, SURFACE, SURFACE + h, pick({ rgb(150, 155, 160), rgb(120, 130, 140), rgb(170, 160, 140), rgb(90, 100, 110) }), Enum.Material.CorrodedMetal)
 	local _ = body
 	-- corrugated look: vertical ribs
-	facade(center.X, center.Z, sx, sz, SURFACE, SURFACE + h, { floorH = 999, bandH = 0, bay = 4, pierW = 0.4, depth = 0.25, color = rgb(110, 115, 120), material = Enum.Material.Metal, noBands = true })
+	facade(center.X, center.Z, sx, sz, SURFACE, SURFACE + h, { floorH = 999, bandH = 0, bay = 12, pierW = 0.6, depth = 0.25, color = rgb(110, 115, 120), material = Enum.Material.Metal, noBands = true })
 	-- shallow pitched roof
 	local ridgeAxisX = sx >= sz
 	local rw = if ridgeAxisX then sx else sz
@@ -2416,6 +2463,7 @@ export type BuildOptions = {
 	glow: Color3?, -- underglow colour (nil = off)
 	ride: number?, -- -2..2 ride height
 	weapon: string?, -- roof mount style from Config.Weapons (nil = none)
+	lowDetail: boolean?, -- traffic / police: about half the parts (no interior, spokes, plates...)
 	weaponColor: Color3?,
 }
 
@@ -2556,6 +2604,9 @@ local function buildWheel(ctx: Ctx, d: Dims, x: number, z: number, front: boolea
 	local barrelR = if style == 4 then 0.5 else 0.64
 	cylinder(ctx, "RimLip", Vector3.new(0.06, r * 2 * lipR, r * 2 * lipR), hubCF * CFrame.new(outer - side * 0.02, 0, 0), rimColor, Enum.Material.Metal, hub).Reflectance = 0.35
 	cylinder(ctx, "RimBarrel", Vector3.new(0.06, r * 2 * barrelR, r * 2 * barrelR), hubCF * CFrame.new(outer - side * 0.01, 0, 0), Color3.fromRGB(40, 40, 44), Enum.Material.Metal, hub)
+	if opts.lowDetail then
+		return
+	end
 	-- brake disc visible through the spokes
 	cylinder(ctx, "Disc", Vector3.new(0.04, r * 1.05, r * 1.05), hubCF * CFrame.new(outer, 0, 0), Color3.fromRGB(95, 95, 100), Enum.Material.Metal, hub)
 
@@ -2609,7 +2660,9 @@ function CarBuilder.Build(opts: BuildOptions): Model
 	model.Name = opts.name
 
 	local W, L, r = d.W, d.L, d.r
-	local chassisH = 1.4
+	-- The collision box floats above the road (hover suspension): bottom at 1 stud, centre at CY.
+	local chassisH = 1.0
+	local CY = 1.5
 	local chassis = Instance.new("Part")
 	chassis.Name = "Chassis"
 	chassis.Size = Vector3.new(W, chassisH, L)
@@ -2618,7 +2671,7 @@ function CarBuilder.Build(opts: BuildOptions): Model
 	chassis.Anchored = false
 	chassis.CustomPhysicalProperties = PhysicalProperties.new(if opts.heavy then 1.6 else 0.9, 0, 0, 100, 1)
 	chassis.RootPriority = 10
-	chassis.CFrame = CFrame.new(0, chassisH / 2, 0)
+	chassis.CFrame = CFrame.new(0, CY, 0)
 	chassis.Parent = model
 	model.PrimaryPart = chassis
 	-- The body root is joined with a Weld whose C0 the client animates for body roll and pitch.
@@ -2651,9 +2704,21 @@ function CarBuilder.Build(opts: BuildOptions): Model
 	align.AlignType = Enum.AlignType.PrimaryAxisParallel
 	align.PrimaryAxis = Vector3.yAxis
 	align.Attachment0 = att
-	align.Responsiveness = 25
-	align.MaxTorque = 5e6
+	align.Responsiveness = 24
+	align.MaxTorque = 1e7
 	align.Parent = chassis
+	model:SetAttribute("HoverCenter", CY)
+	-- cancels gravity while the hover suspension holds the car up
+	local centerAtt = Instance.new("Attachment")
+	centerAtt.Name = "CenterAttachment"
+	centerAtt.Parent = chassis
+	local anti = Instance.new("VectorForce")
+	anti.Name = "AntiGravity"
+	anti.Attachment0 = centerAtt
+	anti.RelativeTo = Enum.ActuatorRelativeTo.World
+	anti.ApplyAtCenterOfMass = true
+	anti.Force = Vector3.zero
+	anti.Parent = chassis
 
 	local rideOff = (opts.ride or 0) * 0.15
 	local bottom = d.c + rideOff
@@ -2724,27 +2789,38 @@ function CarBuilder.Build(opts: BuildOptions): Model
 		box(ctx, "BPillar", Vector3.new(0.06, roofH - 0.18, 0.35), CFrame.new(s * (cabW / 2), top + (roofH - 0.18) / 2, roofMid + roofLen * 0.1), DARK)
 	end
 
+	local detail = not opts.lowDetail
 	-- Interior (visible through lighter tints)
-	for _, s in { -1, 1 } do
-		box(ctx, "Seat", Vector3.new(1.3, 1.5, 0.35), CFrame.new(s * cabW / 4, top + 0.35, roofMid + 0.6) * CFrame.Angles(math.rad(-12), 0, 0), Color3.fromRGB(30, 30, 34), Enum.Material.Fabric)
+	if detail then
+		for _, s in { -1, 1 } do
+			box(ctx, "Seat", Vector3.new(1.3, 1.5, 0.35), CFrame.new(s * cabW / 4, top + 0.35, roofMid + 0.6) * CFrame.Angles(math.rad(-12), 0, 0), Color3.fromRGB(30, 30, 34), Enum.Material.Fabric)
+		end
+		box(ctx, "Dash", Vector3.new(cabW - 0.2, 0.35, 0.9), CFrame.new(0, top + 0.1, cabS + d.ws * 0.65), Color3.fromRGB(25, 25, 28))
+		cylinder(ctx, "SteeringWheel", Vector3.new(0.12, 0.9, 0.9), CFrame.new(-cabW / 4, top + 0.45, cabS + d.ws * 0.95) * CFrame.Angles(0, math.rad(90), math.rad(20)), DARK)
 	end
-	box(ctx, "Dash", Vector3.new(cabW - 0.2, 0.35, 0.9), CFrame.new(0, top + 0.1, cabS + d.ws * 0.65), Color3.fromRGB(25, 25, 28))
-	cylinder(ctx, "SteeringWheel", Vector3.new(0.12, 0.9, 0.9), CFrame.new(-cabW / 4, top + 0.45, cabS + d.ws * 0.95) * CFrame.Angles(0, math.rad(90), math.rad(20)), DARK)
 
 	-- Front end
 	box(ctx, "Bumper", Vector3.new(W - 0.3, 0.4, 0.35), CFrame.new(0, bottom + 0.2, front - 0.12), TRIM)
 	box(ctx, "Grille", Vector3.new(W * 0.42, H * 0.35, 0.1), CFrame.new(0, bottom + H * 0.42, front - 0.04), DARK)
-	for _, s in { -1, 1 } do
+	for _, s in (if detail then { -1, 1 } else {}) :: { number } do
 		box(ctx, "Intake", Vector3.new(0.9, 0.3, 0.1), CFrame.new(s * (W / 2 - 1), bottom + 0.55, front - 0.04), DARK)
 	end
 	for idx, s in { -1, 1 } do
 		local x = s * (W / 2 - 0.85)
 		local y = top - 0.28
 		local head = box(ctx, "Headlight", Vector3.new(1.15, 0.26, 0.1), CFrame.new(x, y, front - 0.06), Color3.fromRGB(255, 250, 235), Enum.Material.Neon)
-		local lens = box(ctx, "HeadlightLens", Vector3.new(1.35, 0.4, 0.12), CFrame.new(x, y, front - 0.03), Color3.fromRGB(200, 210, 220), Enum.Material.Glass)
-		lens.Transparency = 0.6
-		box(ctx, "DRL", Vector3.new(1.2, 0.06, 0.1), CFrame.new(x, y - 0.26, front - 0.06), Color3.fromRGB(220, 240, 255), Enum.Material.Neon)
+		if detail then
+			local lens = box(ctx, "HeadlightLens", Vector3.new(1.35, 0.4, 0.12), CFrame.new(x, y, front - 0.03), Color3.fromRGB(200, 210, 220), Enum.Material.Glass)
+			lens.Transparency = 0.6
+			box(ctx, "DRL", Vector3.new(1.2, 0.06, 0.1), CFrame.new(x, y - 0.26, front - 0.06), Color3.fromRGB(220, 240, 255), Enum.Material.Neon)
+		end
+		-- one beam per car is plenty (two lights per car x dozens of cars is a big GPU cost);
+		-- the client switches it on at night and only for cars near the camera
+		if idx ~= 1 then
+			continue
+		end
 		local spot = Instance.new("SpotLight")
+		spot.Enabled = false
 		spot.Name = "Beam"
 		spot.Face = Enum.NormalId.Front
 		spot.Range = 90
@@ -2763,6 +2839,9 @@ function CarBuilder.Build(opts: BuildOptions): Model
 	end
 	for _, s in { -1, 1 } do
 		box(ctx, "Taillight", Vector3.new(1.3, 0.32, 0.1), CFrame.new(s * (W / 2 - 0.85), tailY, rear + 0.05), Color3.fromRGB(230, 15, 30), Enum.Material.Neon)
+		if not detail then
+			continue
+		end
 		box(ctx, "ReverseLight", Vector3.new(0.35, 0.2, 0.1), CFrame.new(s * (W / 2 - 1.75), tailY - 0.05, rear + 0.05), Color3.fromRGB(235, 235, 235), Enum.Material.Glass)
 	end
 	local firstTail = model:FindFirstChild("Taillight") :: BasePart
@@ -2790,20 +2869,24 @@ function CarBuilder.Build(opts: BuildOptions): Model
 	end
 
 	-- Plates
+	if detail then
 	local plateF = box(ctx, "Plate", Vector3.new(1.8, 0.42, 0.05), CFrame.new(0, bottom + 0.45, front - 0.32), Color3.new(1, 1, 1))
 	surfaceText(plateF, Enum.NormalId.Front, "NEON BAY", Color3.fromRGB(20, 40, 120))
 	local plateR = box(ctx, "Plate", Vector3.new(1.8, 0.42, 0.05), CFrame.new(0, bottom + 0.62, rear + 0.32), Color3.new(1, 1, 1))
 	surfaceText(plateR, Enum.NormalId.Back, if opts.police then "POLICE" else "WNTD 22", Color3.fromRGB(20, 40, 120))
+	end
 
 	-- Sides: mirrors, door shut lines, handles
 	for _, s in { -1, 1 } do
 		local mx = s * (W / 2 + 0.25)
 		paint(box(ctx, "Mirror", Vector3.new(0.5, 0.32, 0.55), CFrame.new(mx, top + 0.3, cabS + 0.55), bodyColor))
-		box(ctx, "MirrorArm", Vector3.new(0.4, 0.08, 0.2), CFrame.new(s * (W / 2 + 0.02), top + 0.18, cabS + 0.6), DARK)
-		for _, z in { cabS + 0.2, roofMid + roofLen * 0.1, cabE - 0.4 } do
-			box(ctx, "DoorLine", Vector3.new(0.03, H - 0.35, 0.05), CFrame.new(s * (W / 2 + 0.005), midY + 0.05, z), DARK)
+		if detail then
+			box(ctx, "MirrorArm", Vector3.new(0.4, 0.08, 0.2), CFrame.new(s * (W / 2 + 0.02), top + 0.18, cabS + 0.6), DARK)
+			for _, z in { cabS + 0.2, roofMid + roofLen * 0.1, cabE - 0.4 } do
+				box(ctx, "DoorLine", Vector3.new(0.03, H - 0.35, 0.05), CFrame.new(s * (W / 2 + 0.005), midY + 0.05, z), DARK)
+			end
+			box(ctx, "Handle", Vector3.new(0.05, 0.12, 0.5), CFrame.new(s * (W / 2 + 0.02), top - 0.4, roofMid + roofLen * 0.1 - 0.5), TRIM)
 		end
-		box(ctx, "Handle", Vector3.new(0.05, 0.12, 0.5), CFrame.new(s * (W / 2 + 0.02), top - 0.4, roofMid + roofLen * 0.1 - 0.5), TRIM)
 		box(ctx, "Sill", Vector3.new(0.08, 0.2, (rz - a) - (fz + a)), CFrame.new(s * (W / 2 + 0.02), bottom + 0.1, (fz + rz) / 2), TRIM)
 	end
 
@@ -2924,7 +3007,7 @@ function CarBuilder.Build(opts: BuildOptions): Model
 		end
 		local m = Instance.new("Attachment")
 		m.Name = "WeaponMuzzle"
-		m.Position = muzzleOffset - Vector3.new(0, chassisH / 2, 0)
+		m.Position = muzzleOffset - Vector3.new(0, CY, 0)
 		m.Parent = chassis
 		model:SetAttribute("Weapon", opts.weapon)
 	end
@@ -2946,7 +3029,7 @@ function CarBuilder.Build(opts: BuildOptions): Model
 	local effectColor = opts.effectColor or Color3.fromRGB(0, 255, 255)
 	local exhaust = Instance.new("Attachment")
 	exhaust.Name = "Exhaust"
-	exhaust.Position = Vector3.new(tips[1], bottom + 0.22 - chassisH / 2, rear + 0.7)
+	exhaust.Position = Vector3.new(tips[1], bottom + 0.22 - CY, rear + 0.7)
 	exhaust.Parent = chassis
 	local flame = Instance.new("ParticleEmitter")
 	flame.Name = "NitroFlame"
@@ -2962,10 +3045,10 @@ function CarBuilder.Build(opts: BuildOptions): Model
 
 	for _, s in { -1, 1 } do
 		local a0 = Instance.new("Attachment")
-		a0.Position = Vector3.new(s * W / 2, top - 0.3 - chassisH / 2, rear)
+		a0.Position = Vector3.new(s * W / 2, top - 0.3 - CY, rear)
 		a0.Parent = chassis
 		local a1 = Instance.new("Attachment")
-		a1.Position = Vector3.new(s * (W / 2 + 1.6), top + 1.3 - chassisH / 2, rear)
+		a1.Position = Vector3.new(s * (W / 2 + 1.6), top + 1.3 - CY, rear)
 		a1.Parent = chassis
 		local trail = Instance.new("Trail")
 		trail.Name = "EffectTrail"
@@ -2981,7 +3064,7 @@ function CarBuilder.Build(opts: BuildOptions): Model
 
 	local smokeAtt = Instance.new("Attachment")
 	smokeAtt.Name = "Smoke"
-	smokeAtt.Position = Vector3.new(0, -chassisH / 2 + 0.2, rz)
+	smokeAtt.Position = Vector3.new(0, -CY + 0.2, rz)
 	smokeAtt.Parent = chassis
 	local smoke = Instance.new("ParticleEmitter")
 	smoke.Name = "DriftSmoke"
@@ -4152,9 +4235,9 @@ local function streetLight(pos: Vector3, toRoad: Vector3, props: Folder)
 	}, props)
 	local light = Instance.new("SpotLight")
 	light.Face = Enum.NormalId.Bottom
-	light.Range = 58
+	light.Range = 52
 	light.Angle = 120
-	light.Brightness = 3
+	light.Brightness = 3.2
 	light.Color = Color3.fromRGB(255, 196, 130)
 	light.Parent = lamp
 	table.insert(nightLights, light)
@@ -4183,13 +4266,11 @@ local function cityBlock(bx: number, bz: number, ground: Folder, props: Folder)
 	if district == "suburb" then
 		Architecture.Suburb(c, BLOCK)
 		Architecture.Sidewalks(c, BLOCK, false, "suburb")
-		streetLight(c + Vector3.new(0, 0, -edge), -Vector3.zAxis, props)
-		streetLight(c + Vector3.new(0, 0, edge), Vector3.zAxis, props)
+		streetLight(c + Vector3.new(0, 0, if bx % 2 == 0 then -edge else edge), if bx % 2 == 0 then -Vector3.zAxis else Vector3.zAxis, props)
 		return
 	elseif district == "industrial" then
 		Architecture.Industrial(c, BLOCK, bx == Grid.Size - 1)
 		Architecture.Sidewalks(c, BLOCK, false, "industrial")
-		streetLight(c + Vector3.new(-edge, 0, 0), -Vector3.xAxis, props)
 		streetLight(c + Vector3.new(edge, 0, 0), Vector3.xAxis, props)
 		return
 	end
@@ -4202,10 +4283,14 @@ local function cityBlock(bx: number, bz: number, ground: Folder, props: Folder)
 		end
 	end
 	Architecture.Sidewalks(c, BLOCK, rng:NextNumber() < 0.3)
-	streetLight(c + Vector3.new(0, 0, -edge), -Vector3.zAxis, props)
-	streetLight(c + Vector3.new(0, 0, edge), Vector3.zAxis, props)
-	streetLight(c + Vector3.new(-edge, 0, 0), -Vector3.xAxis, props)
-	streetLight(c + Vector3.new(edge, 0, 0), Vector3.xAxis, props)
+	-- two lamps per block (on opposite sides) keeps every street lit without hundreds of lights
+	if (bx + bz) % 2 == 0 then
+		streetLight(c + Vector3.new(0, 0, -edge), -Vector3.zAxis, props)
+		streetLight(c + Vector3.new(0, 0, edge), Vector3.zAxis, props)
+	else
+		streetLight(c + Vector3.new(-edge, 0, 0), -Vector3.xAxis, props)
+		streetLight(c + Vector3.new(edge, 0, 0), Vector3.xAxis, props)
+	end
 end
 
 -- Terrain around the city: ocean and beaches to the east and south, hills and mountains to the
@@ -4617,11 +4702,6 @@ local function placeCollectibles(info: MapInfo, isSpecial: (number, number) -> s
 		l.Rotation = crng:NextNumber(-8, 8)
 		l.Parent = g
 		g.Parent = panel
-		local halo = Instance.new("PointLight")
-		halo.Color = color
-		halo.Range = 16
-		halo.Brightness = 2
-		halo.Parent = panel
 		table.insert(info.collectibles, { id = id, position = pos })
 	end
 end
@@ -5232,6 +5312,7 @@ local function spawnCop(pos: Vector3, look: Vector3, heavy: boolean, mode: strin
 		color = Color3.fromRGB(15, 15, 20),
 		name = if heavy then "PoliceHeavy" else "Police",
 		police = true,
+		lowDetail = true,
 		heavy = heavy,
 	})
 	model:SetAttribute("Siren", mode ~= "patrol")
@@ -5333,6 +5414,10 @@ wreck = function(ai: AIDriver.AI, by: Session.Session?)
 	local align = root:FindFirstChild("Upright") :: AlignOrientation?
 	if align then
 		align.Enabled = false
+	end
+	local anti = root:FindFirstChild("AntiGravity") :: VectorForce?
+	if anti then
+		anti.Force = Vector3.zero -- let the wreck fall
 	end
 	root.AssemblyLinearVelocity += Vector3.new(0, 30, 0)
 	root.AssemblyAngularVelocity = Vector3.new(math.random() * 4, math.random() * 2, math.random() * 4)
@@ -5496,10 +5581,11 @@ local function spawnRoadblock(s: Session.Session)
 	end
 	local counted = false
 	for _, off in { -24, -12, 12, 24 } do
-		local cop = CarBuilder.Build({ style = "coupe", color = Color3.fromRGB(15, 15, 20), name = "RoadblockCar", police = true })
+		local cop = CarBuilder.Build({ style = "coupe", color = Color3.fromRGB(15, 15, 20), name = "RoadblockCar", police = true, lowDetail = true })
 		cop:SetAttribute("Siren", true)
 		local croot = cop.PrimaryPart :: BasePart
-		local pos = center + across * off + Vector3.new(0, croot.Size.Y / 2 + 0.5, 0)
+		local hover = cop:GetAttribute("HoverCenter")
+		local pos = center + across * off + Vector3.new(0, (if type(hover) == "number" then hover else 1.5) + 0.05, 0)
 		cop:PivotTo(CFrame.lookAt(pos, pos + across))
 		croot.Anchored = true
 		cop.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
@@ -7073,6 +7159,7 @@ local function spawnOne()
 				heavy = false,
 				color = T.Colors[math.random(1, #T.Colors)],
 				name = "Civilian",
+				lowDetail = true,
 				rim = math.random(1, 2),
 				tint = 0.3,
 			})
@@ -7153,7 +7240,8 @@ end
 -- Chassis-centre CFrame for a car standing on the ground at `ground`.
 function Vehicles.GroundCFrame(ground: CFrame, car: Model): CFrame
 	local root = car.PrimaryPart :: BasePart
-	return ground + Vector3.new(0, root.Size.Y / 2 + 0.4, 0)
+	local hover = car:GetAttribute("HoverCenter")
+	return ground + Vector3.new(0, (if type(hover) == "number" then hover else root.Size.Y / 2) + 0.05, 0)
 end
 
 local function seatCharacter(s: Session.Session)
@@ -7176,6 +7264,10 @@ local function seatCharacter(s: Session.Session)
 		for _, d in character:GetDescendants() do
 			if d:IsA("BasePart") or d:IsA("Decal") then
 				(d :: any).Transparency = 1
+			end
+			-- a weightless driver: the avatar's mass high up in the cabin made the car wobble
+			if d:IsA("BasePart") then
+				d.Massless = true
 			end
 		end
 	end
@@ -7272,7 +7364,8 @@ function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 	end)
 	if s.inGarage then
 		-- parked on the showroom turntable while the garage menu is open
-		car:PivotTo(Showroom.CarCFrame + Vector3.new(0, root.Size.Y / 2, 0))
+		local hover = car:GetAttribute("HoverCenter")
+		car:PivotTo(Showroom.CarCFrame + Vector3.new(0, (if type(hover) == "number" then hover else 1.5) - 0.7, 0))
 		root.Anchored = true
 	else
 		car:PivotTo(Vehicles.GroundCFrame(ground :: CFrame, car))
@@ -7588,7 +7681,7 @@ function Weapons.Fire(s: Session.Session): boolean
 end
 
 return Weapons
-]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX00000000000000000000000000000029"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX00000000000000000000000000000024"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000023"><Properties><string name="Name">Client</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000015"><Properties><string name="Name">BlackMarket</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX0000000000000000000000000000002C"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX00000000000000000000000000000027"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000026"><Properties><string name="Name">Client</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000015"><Properties><string name="Name">BlackMarket</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Black Market window (buy / mount roof weapons) and the fire button (F / gamepad RB / touch).
 
 local ContextActionService = game:GetService("ContextActionService")
@@ -7603,6 +7696,8 @@ local FireWeapon = Remotes:WaitForChild("FireWeapon") :: RemoteEvent
 local HUD = require(script.Parent.HUD)
 local Sounds = require(script.Parent.Sounds)
 local Drive = require(script.Parent.DriveController)
+local Input = require(script.Parent.Input)
+local Scale = require(script.Parent.Scale)
 
 local player = Players.LocalPlayer
 local BlackMarket = {}
@@ -7641,6 +7736,7 @@ local window = new("Frame", {
 new("UICorner", { CornerRadius = UDim.new(0, 14) }, window)
 new("UIStroke", { Color = RED, Thickness = 3 }, window)
 new("UISizeConstraint", { MaxSize = Vector2.new(620, 520) }, window)
+Scale.Attach(window)
 text(window, { Position = UDim2.fromOffset(20, 12), Size = UDim2.new(0.7, 0, 0, 36), Text = "BLACK MARKET AUTO", Font = Enum.Font.GothamBlack, TextColor3 = RED })
 text(window, { Position = UDim2.fromOffset(20, 48), Size = UDim2.new(1, -40, 0, 18), Text = "Roof-mounted hardware. Works on cops and rivals only. One weapon at a time - fire with F.", Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(200, 180, 180) })
 local cashText = text(window, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -70, 0, 16), Size = UDim2.fromOffset(200, 26), Text = "", TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = Color3.fromRGB(120, 255, 150) })
@@ -7713,6 +7809,9 @@ function BlackMarket.Toggle(open: boolean?)
 			data = snap
 		end
 		render()
+		Input.Select(close)
+	else
+		Input.ClearSelection()
 	end
 end
 close.Activated:Connect(function()
@@ -7720,26 +7819,25 @@ close.Activated:Connect(function()
 end)
 
 -- fire the mounted weapon
-local function fire(_: string, state: Enum.UserInputState)
-	if state == Enum.UserInputState.Begin then
-		local w = player:GetAttribute("Weapon")
-		if type(w) == "string" and w ~= "" and Drive.Car then
-			local ready = player:GetAttribute("WeaponReadyAt")
-			if type(ready) ~= "number" or workspace:GetServerTimeNow() >= ready then
-				FireWeapon:FireServer()
-				Sounds.Play("rbxasset://sounds/impact_explosion_03.mp3", 0.35, 2.2)
-			else
-				Sounds.Tick(0.6, 0.3)
-			end
+function BlackMarket.Fire()
+	local w = player:GetAttribute("Weapon")
+	if type(w) == "string" and w ~= "" and Drive.Car then
+		local ready = player:GetAttribute("WeaponReadyAt")
+		if type(ready) ~= "number" or workspace:GetServerTimeNow() >= ready then
+			FireWeapon:FireServer()
+			Sounds.Play("rbxasset://sounds/impact_explosion_03.mp3", 0.35, 2.2)
+		else
+			Sounds.Tick(0.6, 0.3)
 		end
 	end
-	return Enum.ContextActionResult.Sink
 end
-ContextActionService:BindAction("WU_Fire", fire, true, Enum.KeyCode.F, Enum.KeyCode.ButtonR1)
-ContextActionService:SetTitle("WU_Fire", "FIRE")
-pcall(function()
-	ContextActionService:SetPosition("WU_Fire", UDim2.new(1, -250, 1, -120))
-end)
+
+ContextActionService:BindAction("WU_Fire", function(_: string, state: Enum.UserInputState)
+	if state == Enum.UserInputState.Begin then
+		BlackMarket.Fire()
+	end
+	return Enum.ContextActionResult.Sink
+end, false, Enum.KeyCode.F, Enum.KeyCode.ButtonR1)
 
 return BlackMarket
 ]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000016"><Properties><string name="Name">CarVisuals</string><ProtectedString name="Source"><![CDATA[--!strict
@@ -7773,6 +7871,8 @@ type Entry = {
 	rollVel: number,
 	pitchVel: number,
 	skidding: boolean?,
+	glows: { Light }, -- underglow + tail glow
+	lightsNear: boolean?,
 }
 
 local cache: { [Model]: Entry } = setmetatable({}, { __mode = "k" }) :: any
@@ -7780,7 +7880,7 @@ local TAIL = Color3.fromRGB(230, 15, 30)
 local BRAKE = Color3.fromRGB(255, 70, 70)
 
 local function build(model: Model): Entry
-	local e: Entry = { welds = {}, spin = 0, steer = 0, heads = {}, tails = {}, reverse = {}, skids = {}, roll = 0, pitch = 0, rollVel = 0, pitchVel = 0 }
+	local e: Entry = { welds = {}, spin = 0, steer = 0, heads = {}, tails = {}, reverse = {}, skids = {}, glows = {}, roll = 0, pitch = 0, rollVel = 0, pitchVel = 0 }
 	for _, d in model:GetDescendants() do
 		if d:IsA("Weld") and d.Name == "WheelWeld" then
 			table.insert(e.welds, d)
@@ -7792,6 +7892,9 @@ local function build(model: Model): Entry
 			table.insert(e.reverse, d)
 		elseif d:IsA("SurfaceLight") and d.Name == "TailGlow" then
 			e.tailGlow = d
+			table.insert(e.glows, d)
+		elseif d:IsA("PointLight") and d.Name == "Underglow" and d.Brightness > 0 then
+			table.insert(e.glows, d)
 		elseif d:IsA("Weld") and d.Name == "BodyWeld" then
 			e.bodyWeld = d
 		elseif d:IsA("Trail") and d.Name == "SkidMark" then
@@ -7807,10 +7910,28 @@ local function animate(model: Model, dt: number, night: boolean, camPos: Vector3
 	if not root then
 		return
 	end
-	if (root.Position - camPos).Magnitude > 400 then
+	local dist = (root.Position - camPos).Magnitude
+	local e = cache[model]
+	-- lights are the most expensive thing on a car: only cars close to the camera get them
+	local lightsOn = dist < 230
+	if e and e.lightsNear ~= lightsOn then
+		e.lightsNear = lightsOn
+		e.night = nil -- force the headlight state to refresh
+		for _, l in e.glows do
+			l.Enabled = lightsOn
+		end
+		if not lightsOn then
+			for _, light in e.heads do
+				light.Enabled = false
+			end
+		end
+	end
+	if dist > 400 then
 		return
 	end
-	local e = cache[model] or build(model)
+	if not e then
+		e = build(model)
+	end
 	local cf = root.CFrame
 	local vel = root.AssemblyLinearVelocity
 	local fwd = vel:Dot(cf.LookVector)
@@ -7874,10 +7995,11 @@ local function animate(model: Model, dt: number, night: boolean, camPos: Vector3
 		end
 	end
 
-	if e.night ~= night then
-		e.night = night
+	local headsOn = night and dist < 230
+	if e.night ~= headsOn then
+		e.night = headsOn
 		for _, light in e.heads do
-			light.Enabled = night
+			light.Enabled = headsOn
 		end
 	end
 
@@ -8056,6 +8178,7 @@ return Collectibles
 -- nitro, drift smoke and the chase camera.
 
 local ContextActionService = game:GetService("ContextActionService")
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -8129,6 +8252,10 @@ local function setNitroVisual(on: boolean)
 end
 
 local function attach(newSeat: VehicleSeat?)
+	local old = Drive.State
+	if old and old.antiGravity then
+		old.antiGravity.Force = Vector3.zero
+	end
 	seat = nil
 	Drive.Car = nil
 	Drive.State = nil
@@ -8174,13 +8301,24 @@ end
 ---------------------------------------------------------------------------
 -- Input
 ---------------------------------------------------------------------------
+-- While a menu is being navigated with a gamepad, A / B / X belong to the menu.
+local function uiNavigating(): boolean
+	return GuiService.SelectedObject ~= nil
+end
+
 local function handleHandbrake(_name: string, inputState: Enum.UserInputState, _obj: InputObject)
+	if uiNavigating() then
+		return Enum.ContextActionResult.Pass
+	end
 	handbrake = inputState == Enum.UserInputState.Begin
 	return if Drive.Car then Enum.ContextActionResult.Sink else Enum.ContextActionResult.Pass
 end
 
 local burstRequested = false
 local function handleNitro(_name: string, inputState: Enum.UserInputState, _obj: InputObject)
+	if uiNavigating() then
+		return Enum.ContextActionResult.Pass
+	end
 	nitroHeld = inputState == Enum.UserInputState.Begin
 	if nitroHeld then
 		burstRequested = true -- burst nitrous fires on the press, not while held
@@ -8189,23 +8327,32 @@ local function handleNitro(_name: string, inputState: Enum.UserInputState, _obj:
 end
 
 local function handleReset(_name: string, inputState: Enum.UserInputState, _obj: InputObject)
+	if uiNavigating() then
+		return Enum.ContextActionResult.Pass
+	end
 	if inputState == Enum.UserInputState.Begin then
 		RespawnCar:FireServer()
 	end
 	return Enum.ContextActionResult.Sink
 end
 
-ContextActionService:BindActionAtPriority("WU_Handbrake", handleHandbrake, true, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Space, Enum.KeyCode.ButtonX)
-ContextActionService:BindActionAtPriority("WU_Nitro", handleNitro, true, Enum.ContextActionPriority.High.Value, Enum.KeyCode.LeftShift, Enum.KeyCode.ButtonA)
-ContextActionService:BindActionAtPriority("WU_Reset", handleReset, true, Enum.ContextActionPriority.High.Value, Enum.KeyCode.R, Enum.KeyCode.ButtonY)
-ContextActionService:SetTitle("WU_Handbrake", "DRIFT")
-ContextActionService:SetTitle("WU_Nitro", "NOS")
-ContextActionService:SetTitle("WU_Reset", "RESET")
-pcall(function()
-	ContextActionService:SetPosition("WU_Nitro", UDim2.new(1, -170, 1, -170))
-	ContextActionService:SetPosition("WU_Handbrake", UDim2.new(1, -95, 1, -230))
-	ContextActionService:SetPosition("WU_Reset", UDim2.new(1, -95, 0, 80))
-end)
+-- keyboard + gamepad (touch devices get their own layout in TouchControls)
+ContextActionService:BindActionAtPriority("WU_Handbrake", handleHandbrake, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Space, Enum.KeyCode.ButtonX)
+ContextActionService:BindActionAtPriority("WU_Nitro", handleNitro, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.LeftShift, Enum.KeyCode.ButtonA)
+ContextActionService:BindActionAtPriority("WU_Reset", handleReset, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.R, Enum.KeyCode.ButtonY)
+
+-- touch controls
+Drive.TouchThrottle = 0
+Drive.TouchSteer = 0
+function Drive.SetNitroHeld(on: boolean)
+	nitroHeld = on
+	if on then
+		burstRequested = true
+	end
+end
+function Drive.SetHandbrake(on: boolean)
+	handbrake = on
+end
 
 -- Fallback keyboard reading in case the default vehicle controls are disabled.
 local function readKeys()
@@ -8249,6 +8396,12 @@ RunService.PreSimulation:Connect(function(dt: number)
 	end
 	if math.abs(keySteer) > math.abs(steer) then
 		steer = keySteer
+	end
+	if math.abs(Drive.TouchThrottle) > math.abs(throttle) then
+		throttle = Drive.TouchThrottle
+	end
+	if math.abs(Drive.TouchSteer) > math.abs(steer) then
+		steer = Drive.TouchSteer
 	end
 	-- smooth the inputs: keyboard steering ramps in and recentres quickly, like a real rack
 	local steerRate = if math.abs(steer) < math.abs(smoothSteer) or steer * smoothSteer < 0 then 9 else 5.5
@@ -8846,6 +8999,7 @@ local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Co
 local MapDraw = require(script.Parent.MapDraw)
 local Drive = require(script.Parent.DriveController)
 local Sounds = require(script.Parent.Sounds)
+local Scale = require(script.Parent.Scale)
 
 local player = Players.LocalPlayer
 local FullMap = {}
@@ -8877,6 +9031,7 @@ new("UICorner", { CornerRadius = UDim.new(0, 14) }, panel)
 new("UIStroke", { Color = Color3.fromRGB(255, 40, 160), Thickness = 3 }, panel)
 new("UIAspectRatioConstraint", { AspectRatio = 1 }, panel)
 new("UISizeConstraint", { MaxSize = Vector2.new(PANEL, PANEL) }, panel)
+Scale.Attach(panel)
 
 local canvas: Frame = new("Frame", { Name = "Canvas", BackgroundTransparency = 1 }, panel)
 local total = MapDraw.WorldSize + MapDraw.Margin * 2
@@ -8933,7 +9088,7 @@ ContextActionService:BindAction("WU_Map", function(_, state)
 		FullMap.Toggle()
 	end
 	return Enum.ContextActionResult.Sink
-end, false, Enum.KeyCode.M)
+end, false, Enum.KeyCode.M, Enum.KeyCode.DPadUp)
 
 RunService.RenderStepped:Connect(function()
 	if not FullMap.Open then
@@ -8987,6 +9142,8 @@ local ChallengeRival = Remotes:WaitForChild("ChallengeRival") :: RemoteEvent
 local HUD = require(script.Parent.HUD)
 local Sounds = require(script.Parent.Sounds)
 local Drive = require(script.Parent.DriveController)
+local Input = require(script.Parent.Input)
+local Scale = require(script.Parent.Scale)
 local GarageEvent = Remotes:WaitForChild("Garage") :: RemoteEvent
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -9065,6 +9222,7 @@ local window = new("Frame", {
 corner(window, 16)
 new("UIStroke", { Color = PINK, Thickness = 3 }, window)
 new("UISizeConstraint", { MaxSize = Vector2.new(640, 680), MinSize = Vector2.new(320, 300) }, window)
+Scale.Attach(window)
 
 text(window, { Position = UDim2.fromOffset(20, 10), Size = UDim2.new(0.5, 0, 0, 36), Text = "SAFEHOUSE GARAGE", Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
 local cashText = text(window, { Position = UDim2.new(0.5, 0, 0, 14), Size = UDim2.new(0.5, -70, 0, 28), Text = "", TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = Color3.fromRGB(120, 255, 150) })
@@ -9518,6 +9676,9 @@ function Garage.Toggle(open: boolean?)
 		statusText.Text = ""
 		refresh()
 		render()
+		Input.Select(tabButtons.Cars)
+	else
+		Input.ClearSelection()
 	end
 end
 
@@ -9534,6 +9695,8 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
 local MapDraw = require(script.Parent.MapDraw)
 local Settings = require(script.Parent.Settings)
+local Input = require(script.Parent.Input)
+local Scale = require(script.Parent.Scale)
 
 local player = Players.LocalPlayer
 
@@ -9876,13 +10039,12 @@ end
 local controlsLabel = label({
 	AnchorPoint = Vector2.new(0, 1),
 	Position = UDim2.new(0, 16, 1, -250),
-	Size = UDim2.fromOffset(300, 16),
-	Text = "WASD drive  |  SPACE drift  |  SHIFT nitro  |  R reset  |  G garage",
+	Size = UDim2.fromOffset(640, 16),
+	Text = "",
 	Font = FONT2,
 	TextColor3 = Color3.fromRGB(200, 200, 220),
 	TextXAlignment = Enum.TextXAlignment.Left,
 }, gui)
-local _ = controlsLabel
 
 ---------------------------------------------------------------------------
 -- Minimap (bottom left)
@@ -10116,11 +10278,139 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	end
 end
 
+---------------------------------------------------------------------------
+-- Screen scaling + device layouts (keyboard / gamepad / touch)
+---------------------------------------------------------------------------
+for _, f in { speedo, heatFrame, money, repFrame, weaponFrame, racePanel, minimap, promptButton } :: { GuiObject } do
+	Scale.Attach(f)
+end
+
+local defaults: { [GuiObject]: { pos: UDim2, anchor: Vector2 } } = {}
+for _, f in { speedo, weaponFrame, minimap, racePanel, promptButton } :: { GuiObject } do
+	defaults[f] = { pos = f.Position, anchor = f.AnchorPoint }
+end
+local TOUCH: { [GuiObject]: { pos: UDim2, anchor: Vector2 } } = {
+	-- the pedals take the bottom right, the steering pad the bottom left
+	[speedo] = { pos = UDim2.new(0.5, 0, 1, -16), anchor = Vector2.new(0.5, 1) },
+	[weaponFrame] = { pos = UDim2.new(0.5, 0, 1, -160), anchor = Vector2.new(0.5, 1) },
+	[minimap] = { pos = UDim2.new(1, -16, 0, 112), anchor = Vector2.new(1, 0) },
+	[racePanel] = { pos = UDim2.new(1, -16, 0, 300), anchor = Vector2.new(1, 0) },
+	[promptButton] = { pos = UDim2.new(0.5, 0, 1, -210), anchor = Vector2.new(0.5, 1) },
+}
+
+function HUD.SetTouchLayout(on: boolean)
+	for f, d in defaults do
+		local t = if on then TOUCH[f] else d
+		if t then
+			f.Position = t.pos
+			f.AnchorPoint = t.anchor
+		end
+	end
+	controlsLabel.Visible = not on
+end
+
+local function refreshHint()
+	controlsLabel.Text = Input.ControlsHint()
+end
+Input.OnChanged(refreshHint)
+refreshHint()
+
 return HUD
-]]></ProtectedString></Properties></Item><Item class="LocalScript" referent="RBX0000000000000000000000000000001D"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001D"><Properties><string name="Name">Input</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Knows which device the player is using right now (keyboard, gamepad or touch) so prompts
+-- and hints can show the right button.
+
+local GuiService = game:GetService("GuiService")
+local UserInputService = game:GetService("UserInputService")
+
+local Input = {}
+
+local function classify(t: Enum.UserInputType): string?
+	if t == Enum.UserInputType.Touch then
+		return "touch"
+	elseif t.Name:match("^Gamepad") then
+		return "gamepad"
+	elseif t == Enum.UserInputType.Keyboard or t.Name:match("^Mouse") then
+		return "keyboard"
+	end
+	return nil
+end
+
+local initial = if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+	then "touch"
+	elseif GuiService:IsTenFootInterface() or (UserInputService.GamepadEnabled and not UserInputService.KeyboardEnabled)
+	then "gamepad"
+	else "keyboard"
+Input.Device = initial
+
+local listeners: { (string) -> () } = {}
+function Input.OnChanged(fn: (string) -> ())
+	table.insert(listeners, fn)
+end
+
+UserInputService.LastInputTypeChanged:Connect(function(t)
+	local d = classify(t)
+	if d and d ~= Input.Device then
+		Input.Device = d
+		for _, fn in listeners do
+			task.spawn(fn, d)
+		end
+	end
+end)
+
+local LABELS: { [string]: { keyboard: string, gamepad: string, touch: string } } = {
+	interact = { keyboard = "[E]", gamepad = "(B)", touch = "TAP" },
+	garage = { keyboard = "[G]", gamepad = "(D-pad ←)", touch = "TAP" },
+	map = { keyboard = "[M]", gamepad = "(D-pad ↑)", touch = "MAP" },
+	pause = { keyboard = "[P]", gamepad = "(D-pad ↓)", touch = "☰" },
+	fire = { keyboard = "[F]", gamepad = "(RB)", touch = "FIRE" },
+	nitro = { keyboard = "SHIFT", gamepad = "(A)", touch = "NOS" },
+	drift = { keyboard = "SPACE", gamepad = "(X)", touch = "DRIFT" },
+	reset = { keyboard = "[R]", gamepad = "(Y)", touch = "RESET" },
+}
+
+function Input.Label(action: string): string
+	local l = LABELS[action]
+	if not l then
+		return ""
+	end
+	return (l :: any)[Input.Device] or l.keyboard
+end
+
+function Input.ControlsHint(): string
+	if Input.Device == "gamepad" then
+		return "RT gas · LT brake · Left stick steer · X drift · A nitro · RB fire · Y reset · B interact · D-pad: ↑ map ↓ pause ← garage"
+	elseif Input.Device == "touch" then
+		return "Steer on the left · GAS / BRAKE on the right · DRIFT · NOS · FIRE"
+	end
+	return "WASD drive · SPACE drift · SHIFT nitro · F fire · R reset · E interact · G garage · M map · P pause"
+end
+
+function Input.IsTouch(): boolean
+	return Input.Device == "touch"
+end
+
+function Input.IsGamepad(): boolean
+	return Input.Device == "gamepad"
+end
+
+-- For gamepads: highlight a button so the D-pad / stick can navigate the menu.
+function Input.Select(obj: GuiObject?)
+	if Input.Device == "gamepad" then
+		GuiService.SelectedObject = obj
+	end
+end
+
+function Input.ClearSelection()
+	GuiService.SelectedObject = nil
+end
+
+return Input
+]]></ProtectedString></Properties></Item><Item class="LocalScript" referent="RBX0000000000000000000000000000001E"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
 -- WANTED: UNBOUND - client entry point.
 
 local ContextActionService = game:GetService("ContextActionService")
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -10140,6 +10430,8 @@ require(script.Parent.CarVisuals)
 require(script.Parent.Effects)
 require(script.Parent.Sounds)
 local BlackMarket = require(script.Parent.BlackMarket)
+local Input = require(script.Parent.Input)
+require(script.Parent.TouchControls)
 require(script.Parent.Collectibles)
 require(script.Parent.Weather)
 require(script.Parent.Menu)
@@ -10189,7 +10481,18 @@ end
 
 HUD.PromptButton.Activated:Connect(doPrompt)
 
-ContextActionService:BindAction("WU_Interact", function(_, inputState)
+ContextActionService:BindAction("WU_Interact", function(_, inputState, inputObject)
+	-- gamepad B inside a menu closes it instead of triggering the world prompt
+	if inputObject.KeyCode == Enum.KeyCode.ButtonB and GuiService.SelectedObject ~= nil then
+		if BlackMarket.Open then
+			BlackMarket.Toggle(false)
+		elseif Garage.InGarage() then
+			Garage.Exit()
+		else
+			return Enum.ContextActionResult.Pass
+		end
+		return Enum.ContextActionResult.Sink
+	end
 	if inputState == Enum.UserInputState.Begin then
 		doPrompt()
 	end
@@ -10207,7 +10510,7 @@ ContextActionService:BindAction("WU_Garage", function(_, inputState)
 		end
 	end
 	return Enum.ContextActionResult.Sink
-end, false, Enum.KeyCode.G)
+end, false, Enum.KeyCode.G, Enum.KeyCode.DPadLeft)
 
 local function updatePrompt(pos: Vector3?)
 	promptAction = nil
@@ -10218,7 +10521,7 @@ local function updatePrompt(pos: Vector3?)
 	local mode = player:GetAttribute("PursuitMode")
 	if player:GetAttribute("RaceActive") then
 		promptAction = { kind = "quit" }
-		HUD.SetPrompt("[E] Quit race")
+		HUD.SetPrompt(Input.Label("interact") .. " Quit race")
 		return
 	end
 	if mode ~= "idle" and mode ~= nil then
@@ -10227,12 +10530,12 @@ local function updatePrompt(pos: Vector3?)
 	end
 	if player:GetAttribute("AtBlackMarket") then
 		promptAction = { kind = "blackmarket" }
-		HUD.SetPrompt(if BlackMarket.Open then "[E] Close the Black Market" else "[E] Black Market  (roof weapons)")
+		HUD.SetPrompt(if BlackMarket.Open then Input.Label("interact") .. " Close the Black Market" else Input.Label("interact") .. " Black Market  (roof weapons)")
 		return
 	end
 	if player:GetAttribute("AtSafehouse") then
 		promptAction = { kind = "garage" }
-		HUD.SetPrompt(if Garage.InGarage() then "[E] Drive out of the garage" else "[E] Enter the garage  (cars, tuning, paint, Blacklist)")
+		HUD.SetPrompt(if Garage.InGarage() then Input.Label("interact") .. " Drive out of the garage" else Input.Label("interact") .. " Enter the garage  (cars, tuning, paint, Blacklist)")
 		return
 	end
 	local race = nearestRace(pos)
@@ -10243,7 +10546,7 @@ local function updatePrompt(pos: Vector3?)
 		local what = if race.kind == "drift"
 			then string.format("score %s in %ds", HUD.Commas(race.driftTarget or 0), race.duration or 60)
 			else string.format("win up to $%s", HUD.Commas((race.reward + race.buyIn) * mult))
-		HUD.SetPrompt(string.format("[E] %s  -  buy-in $%s  -  %s", race.name, HUD.Commas(race.buyIn), what))
+		HUD.SetPrompt(string.format("%s %s  -  buy-in $%s  -  %s", Input.Label("interact"), race.name, HUD.Commas(race.buyIn), what))
 		return
 	end
 	HUD.SetPrompt(nil)
@@ -10293,6 +10596,40 @@ end
 -- Police siren lights (animated locally)
 ---------------------------------------------------------------------------
 local sirenClock = 0
+local sirenParts: { [Model]: { BasePart } } = setmetatable({}, { __mode = "k" }) :: any
+local function sirensOf(m: Model): { BasePart }
+	local cached = sirenParts[m]
+	if cached then
+		return cached
+	end
+	local list: { BasePart } = {}
+	for _, name in { "SirenRed", "SirenBlue" } do
+		local p = m:FindFirstChild(name)
+		if p and p:IsA("BasePart") then
+			table.insert(list, p)
+		end
+	end
+	sirenParts[m] = list
+	return list
+end
+
+local function animateSirens(m: Model, phase: boolean, camPos: Vector3)
+	local root = m.PrimaryPart
+	if not root or not m:GetAttribute("Police") then
+		return
+	end
+	local near = (root.Position - camPos).Magnitude < 250
+	local on = m:GetAttribute("Siren") == true
+	for _, part in sirensOf(m) do
+		local lit = on and ((part.Name == "SirenRed") == phase)
+		part.Transparency = if lit then 0 else 0.6
+		local light = part:FindFirstChildOfClass("PointLight")
+		if light then
+			light.Enabled = lit and near
+		end
+	end
+end
+
 local function updateSirens(dt: number)
 	sirenClock += dt
 	local phase = math.floor(sirenClock * 6) % 2 == 0
@@ -10300,19 +10637,17 @@ local function updateSirens(dt: number)
 	if not police then
 		return
 	end
-	for _, m in police:GetDescendants() do
-		if m:IsA("Model") and m:GetAttribute("Police") then
-			local on = m:GetAttribute("Siren") == true
-			for _, name in { "SirenRed", "SirenBlue" } do
-				local part = m:FindFirstChild(name) :: BasePart?
-				if part then
-					local lit = on and ((name == "SirenRed") == phase)
-					part.Transparency = if lit then 0 else 0.6
-					local light = part:FindFirstChildOfClass("PointLight")
-					if light then
-						light.Enabled = lit
+	local camPos = workspace.CurrentCamera.CFrame.Position
+	for _, m in police:GetChildren() do
+		if m:IsA("Model") then
+			if m.Name == "Roadblock" then
+				for _, inner in m:GetChildren() do
+					if inner:IsA("Model") then
+						animateSirens(inner, phase, camPos)
 					end
 				end
+			else
+				animateSirens(m, phase, camPos)
 			end
 		end
 	end
@@ -10351,7 +10686,7 @@ RunService.RenderStepped:Connect(function(dt)
 end)
 
 print("[" .. Config.GameName .. "] client ready")
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001E"><Properties><string name="Name">MapDraw</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001F"><Properties><string name="Name">MapDraw</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Draws the city (districts, roads, coast and points of interest) into a GUI frame at any
 -- scale. Used by the radar minimap and the full-screen city map.
 
@@ -10486,7 +10821,7 @@ function MapDraw.Draw(canvas: Frame, scale: number, labels: boolean): (Vector3) 
 end
 
 return MapDraw
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001F"><Properties><string name="Name">Menu</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000020"><Properties><string name="Name">Menu</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Main menu and pause menu.
 -- Title screen: cinematic camera shots around the safehouse, animated menu buttons, a player card
 -- with your stats, settings, how to play, credits and a rotating tips bar.
@@ -10511,6 +10846,8 @@ local Sounds = require(script.Parent.Sounds)
 local Garage = require(script.Parent.Garage)
 local FullMap = require(script.Parent.FullMap)
 local HUD = require(script.Parent.HUD)
+local Input = require(script.Parent.Input)
+local Scale = require(script.Parent.Scale)
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -10607,6 +10944,8 @@ local function menuButton(label: string, order: number, onClick: () -> ()): Butt
 	}
 end
 
+Scale.Attach(left)
+
 -- right column: player card
 local card = new("Frame", {
 	AnchorPoint = Vector2.new(1, 0),
@@ -10617,6 +10956,7 @@ local card = new("Frame", {
 }, gui)
 new("UICorner", { CornerRadius = UDim.new(0, 12) }, card)
 new("UIStroke", { Color = CYAN, Thickness = 2, Transparency = 0.4 }, card)
+Scale.Attach(card)
 local avatar = new("ImageLabel", { Position = UDim2.fromOffset(16, 16), Size = UDim2.fromOffset(72, 72), BackgroundColor3 = Color3.fromRGB(30, 30, 40) }, card)
 new("UICorner", { CornerRadius = UDim.new(1, 0) }, avatar)
 task.spawn(function()
@@ -10689,6 +11029,7 @@ local panel = new("Frame", {
 }, gui)
 new("UICorner", { CornerRadius = UDim.new(0, 12) }, panel)
 new("UIStroke", { Color = PINK, Thickness = 2 }, panel)
+Scale.Attach(panel)
 local panelTitle = text(panel, { Position = UDim2.fromOffset(20, 14), Size = UDim2.new(1, -40, 0, 32), Text = "", Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
 local panelBody = new("Frame", { Position = UDim2.fromOffset(20, 60), Size = UDim2.new(1, -40, 1, -80), BackgroundTransparency = 1 }, panel)
 
@@ -10924,6 +11265,7 @@ local function closeMenu()
 	end
 	Menu.Mode = "closed"
 	Drive.MenuOpen = false
+	Input.ClearSelection()
 	TweenService:Create(fade, TweenInfo.new(0.25), { BackgroundTransparency = 0 }):Play()
 	task.delay(0.28, function()
 		gui.Enabled = false
@@ -10945,6 +11287,7 @@ local function openMenu(mode: string)
 	shade.BackgroundTransparency = if mode == "title" then 0.2 else 0.05
 	shotClock = 0
 	refreshCard()
+	Input.Select(playButton.frame)
 end
 Menu.Open = openMenu
 
@@ -10985,7 +11328,7 @@ ContextActionService:BindAction("WU_Pause", function(_, state)
 		end
 	end
 	return Enum.ContextActionResult.Sink
-end, false, Enum.KeyCode.P)
+end, false, Enum.KeyCode.P, Enum.KeyCode.DPadDown)
 
 local pauseButton = new("TextButton", {
 	AnchorPoint = Vector2.new(1, 0),
@@ -10999,6 +11342,23 @@ local pauseButton = new("TextButton", {
 	TextColor3 = Color3.new(1, 1, 1),
 }, HUD.Gui)
 new("UICorner", { CornerRadius = UDim.new(0, 10) }, pauseButton)
+local mapButton = new("TextButton", {
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -68, 0, 60),
+	Size = UDim2.fromOffset(60, 44),
+	BackgroundColor3 = Color3.fromRGB(12, 12, 20),
+	BackgroundTransparency = 0.25,
+	Text = "MAP",
+	TextScaled = true,
+	Font = Enum.Font.GothamBlack,
+	TextColor3 = Color3.new(1, 1, 1),
+}, HUD.Gui)
+new("UICorner", { CornerRadius = UDim.new(0, 10) }, mapButton)
+new("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10) }, mapButton)
+mapButton.Activated:Connect(function()
+	FullMap.Toggle()
+end)
+
 pauseButton.Activated:Connect(function()
 	Sounds.Tick(1, 0.4)
 	if Menu.Mode == "closed" then
@@ -11038,7 +11398,44 @@ end)
 
 openMenu("title")
 return Menu
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000020"><Properties><string name="Name">Settings</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000021"><Properties><string name="Name">Scale</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Scales fixed-size UI panels down on small screens (phones) and slightly up on big ones.
+-- Attach it to panels that are anchored to a screen edge; they shrink around their anchor.
+
+local Scale = {}
+
+local camera = workspace.CurrentCamera
+local scales: { UIScale } = {}
+
+local function current(): number
+	local vp = camera.ViewportSize
+	-- designed at 1280x720
+	return math.clamp(math.min(vp.X / 1280, vp.Y / 720), 0.55, 1.15)
+end
+
+function Scale.Value(): number
+	return current()
+end
+
+function Scale.Attach(obj: GuiObject, extra: number?)
+	local s = Instance.new("UIScale")
+	s.Scale = current() * (extra or 1)
+	s:SetAttribute("Extra", extra or 1)
+	s.Parent = obj
+	table.insert(scales, s)
+	return s
+end
+
+camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+	local v = current()
+	for _, s in scales do
+		local extra = s:GetAttribute("Extra")
+		s.Scale = v * (if type(extra) == "number" then extra else 1)
+	end
+end)
+
+return Scale
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000022"><Properties><string name="Name">Settings</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Player settings, saved in the player's profile on the server.
 
 local Lighting = game:GetService("Lighting")
@@ -11065,7 +11462,8 @@ Settings.Values = {
 	blur = true,
 	units = "mph",
 	volume = 0.8,
-	performance = false,
+	-- phones and tablets start in performance mode (they can switch it off in Settings)
+	performance = game:GetService("UserInputService").TouchEnabled and not game:GetService("UserInputService").KeyboardEnabled,
 } :: Values
 
 -- every sound in the game plays through this group so the volume setting affects all of it
@@ -11134,7 +11532,7 @@ Lighting.ChildAdded:Connect(function()
 end)
 
 return Settings
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000021"><Properties><string name="Name">Sounds</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000023"><Properties><string name="Name">Sounds</string><ProtectedString name="Source"><![CDATA[--!strict
 -- All game audio. Roblox only ships a handful of built-in sounds, so the engine and tyre sounds
 -- are synthesized from its wind-noise loop: pitched down, bass boosted, distorted and pulsed by a
 -- tremolo at the engine's firing rate (it follows the simulated RPM and gear shifts). If you put
@@ -11337,7 +11735,7 @@ end)
 -- Other cars nearby get a 3D engine (the closest few only)
 ---------------------------------------------------------------------------
 local others: { [Model]: Engine } = {}
-local MAX_OTHERS = 8
+local MAX_OTHERS = 5
 local scanTimer = 0
 
 local function scanOthers(camPos: Vector3)
@@ -11500,7 +11898,201 @@ RunService.RenderStepped:Connect(function(dt: number)
 end)
 
 return Sounds
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000022"><Properties><string name="Name">Weather</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000024"><Properties><string name="Name">TouchControls</string><ProtectedString name="Source"><![CDATA[--!strict
+-- Mobile driving controls: an analog steering pad on the left, GAS / BRAKE pedals on the right,
+-- and NOS, DRIFT, FIRE and RESET buttons. Shown only on touch devices while driving; the
+-- default thumbstick is switched off meanwhile.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local RespawnCar = Remotes:WaitForChild("RespawnCar") :: RemoteEvent
+
+local Drive = require(script.Parent.DriveController)
+local Input = require(script.Parent.Input)
+local Scale = require(script.Parent.Scale)
+local HUD = require(script.Parent.HUD)
+local BlackMarket = require(script.Parent.BlackMarket)
+local Garage = require(script.Parent.Garage)
+
+local player = Players.LocalPlayer
+local TouchControls = {}
+
+local function new(className: string, props: { [string]: any }, parent: Instance?): any
+	local inst = Instance.new(className)
+	for k, v in props do
+		(inst :: any)[k] = v
+	end
+	if parent then
+		inst.Parent = parent
+	end
+	return inst
+end
+
+local gui = new("ScreenGui", { Name = "WantedUnboundTouch", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 3, Enabled = false }, player:WaitForChild("PlayerGui"))
+
+---------------------------------------------------------------------------
+-- Steering pad (drag left / right, analog)
+---------------------------------------------------------------------------
+local pad = new("Frame", {
+	AnchorPoint = Vector2.new(0, 1),
+	Position = UDim2.new(0, 24, 1, -24),
+	Size = UDim2.fromOffset(300, 150),
+	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
+	BackgroundTransparency = 0.5,
+	Active = true,
+}, gui)
+new("UICorner", { CornerRadius = UDim.new(0, 75) }, pad)
+new("UIStroke", { Color = Color3.fromRGB(0, 230, 255), Thickness = 2, Transparency = 0.4 }, pad)
+Scale.Attach(pad)
+new("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "◀   STEER   ▶", TextScaled = false, TextSize = 18, Font = Enum.Font.GothamBlack, TextColor3 = Color3.fromRGB(200, 220, 235), TextTransparency = 0.4 }, pad)
+local knob = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(84, 84), BackgroundColor3 = Color3.fromRGB(0, 230, 255), BackgroundTransparency = 0.25 }, pad)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
+
+local steerTouch: InputObject? = nil
+local function updateSteer(pos: Vector3)
+	local absPos, absSize = pad.AbsolutePosition, pad.AbsoluteSize
+	local rel = (pos.X - (absPos.X + absSize.X / 2)) / (absSize.X / 2 - 30)
+	local s = math.clamp(rel, -1, 1)
+	if math.abs(s) < 0.08 then
+		s = 0
+	end
+	Drive.TouchSteer = s
+	knob.Position = UDim2.new(0.5 + s * 0.38, 0, 0.5, 0)
+end
+pad.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+		steerTouch = input
+		updateSteer(input.Position)
+	end
+end)
+pad.InputChanged:Connect(function(input)
+	if input == steerTouch or (steerTouch and input.UserInputType == Enum.UserInputType.MouseMovement) then
+		updateSteer(input.Position)
+	end
+end)
+local function releaseSteer(input: InputObject)
+	if input == steerTouch or (steerTouch and input.UserInputType == Enum.UserInputType.MouseButton1) then
+		steerTouch = nil
+		Drive.TouchSteer = 0
+		knob.Position = UDim2.fromScale(0.5, 0.5)
+	end
+end
+pad.InputEnded:Connect(releaseSteer)
+
+---------------------------------------------------------------------------
+-- Buttons (hold-to-press, multi-touch)
+---------------------------------------------------------------------------
+local right = new("Frame", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -20, 1, -20), Size = UDim2.fromOffset(330, 290), BackgroundTransparency = 1 }, gui)
+Scale.Attach(right)
+
+local function holdButton(text: string, color: Color3, pos: UDim2, size: UDim2, onDown: () -> (), onUp: () -> ()): TextButton
+	local b = new("TextButton", {
+		AnchorPoint = Vector2.new(1, 1),
+		Position = pos,
+		Size = size,
+		BackgroundColor3 = color,
+		BackgroundTransparency = 0.25,
+		Text = text,
+		TextScaled = true,
+		Font = Enum.Font.GothamBlack,
+		TextColor3 = Color3.new(1, 1, 1),
+		AutoButtonColor = false,
+	}, right)
+	new("UICorner", { CornerRadius = UDim.new(0, 18) }, b)
+	new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = 2, Transparency = 0.5 }, b)
+	new("UIPadding", { PaddingTop = UDim.new(0, 12), PaddingBottom = UDim.new(0, 12), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, b)
+	local down = 0
+	b.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			down += 1
+			b.BackgroundTransparency = 0.05
+			onDown()
+		end
+	end)
+	b.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			down = math.max(0, down - 1)
+			if down == 0 then
+				b.BackgroundTransparency = 0.25
+				onUp()
+			end
+		end
+	end)
+	return b
+end
+
+holdButton("GAS", Color3.fromRGB(40, 190, 90), UDim2.fromScale(1, 1), UDim2.fromOffset(120, 170), function()
+	Drive.TouchThrottle = 1
+end, function()
+	Drive.TouchThrottle = 0
+end)
+holdButton("BRAKE", Color3.fromRGB(200, 50, 50), UDim2.new(1, -132, 1, 0), UDim2.fromOffset(100, 120), function()
+	Drive.TouchThrottle = -1
+end, function()
+	Drive.TouchThrottle = 0
+end)
+holdButton("NOS", Color3.fromRGB(0, 170, 230), UDim2.new(1, 0, 1, -182), UDim2.fromOffset(96, 72), function()
+	Drive.SetNitroHeld(true)
+end, function()
+	Drive.SetNitroHeld(false)
+end)
+holdButton("DRIFT", Color3.fromRGB(230, 140, 20), UDim2.new(1, -108, 1, -132), UDim2.fromOffset(96, 72), function()
+	Drive.SetHandbrake(true)
+end, function()
+	Drive.SetHandbrake(false)
+end)
+local fireButton = holdButton("FIRE", Color3.fromRGB(200, 30, 60), UDim2.new(1, -212, 1, -132), UDim2.fromOffset(90, 64), function()
+	BlackMarket.Fire()
+end, function() end)
+holdButton("RESET", Color3.fromRGB(60, 60, 80), UDim2.new(1, -212, 1, -206), UDim2.fromOffset(90, 50), function()
+	RespawnCar:FireServer()
+end, function() end)
+
+---------------------------------------------------------------------------
+-- Show only while driving on a touch screen; switch the default thumbstick off meanwhile
+---------------------------------------------------------------------------
+local controls: any = nil
+task.spawn(function()
+	local ok, module = pcall(function()
+		return require(player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule") :: ModuleScript) :: any
+	end)
+	if ok and module then
+		controls = module:GetControls()
+	end
+end)
+
+local shown = false
+RunService.RenderStepped:Connect(function()
+	local want = Input.IsTouch() and Drive.Car ~= nil and not Drive.MenuOpen and not Garage.InGarage() and not BlackMarket.Open
+	if want ~= shown then
+		shown = want
+		gui.Enabled = want
+		HUD.SetTouchLayout(want)
+		if controls then
+			pcall(function()
+				if want then
+					controls:Disable()
+				else
+					controls:Enable()
+				end
+			end)
+		end
+		if not want then
+			Drive.TouchThrottle = 0
+			Drive.TouchSteer = 0
+			Drive.SetNitroHeld(false)
+			Drive.SetHandbrake(false)
+		end
+	end
+	local w = player:GetAttribute("Weapon")
+	fireButton.Visible = type(w) == "string" and w ~= ""
+end)
+
+return TouchControls
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000025"><Properties><string name="Name">Weather</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Rain showers (the server decides when it rains; see workspace attribute "Raining").
 -- Rain streaks follow the camera, the picture goes greyer, and you hear the rain.
 
@@ -11581,7 +12173,7 @@ RunService.RenderStepped:Connect(function()
 	local cf = camera.CFrame
 	emitterPart.CFrame = CFrame.new(cf.Position + cf.LookVector * 40 + Vector3.new(0, 45, 0))
 	emitterPart.Parent = if raining then camera else nil
-	rain.Rate = if raining then (if Settings.Values.performance then 250 else 700) else 0
+	rain.Rate = if raining then (if Settings.Values.performance then 150 else 400) else 0
 end)
 
 return Weather

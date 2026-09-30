@@ -201,7 +201,7 @@ end)
 -- Other cars nearby get a 3D engine (the closest few only)
 ---------------------------------------------------------------------------
 local others: { [Model]: Engine } = {}
-local MAX_OTHERS = 8
+local MAX_OTHERS = 5
 local scanTimer = 0
 
 local function scanOthers(camPos: Vector3)

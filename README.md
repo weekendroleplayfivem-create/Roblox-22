@@ -31,6 +31,40 @@ in code, so you don't need any models, meshes or assets.
 5. **Climb the Blacklist.** Earn total bounty and race wins, then challenge Blacklist rivals #5 → #1
    from the garage. Beat one and you win their car's **pink slip**.
 
+### Driving, performance, console & mobile update
+- **New driving physics (hover suspension):**
+  - The chassis floats on four wheel raycasts, with a critically damped spring and an
+    anti-gravity force, instead of a box sliding over the road. That removes the snagging and
+    bouncing on seams between road parts.
+  - The driver's avatar is weightless, so it no longer makes the car wobble.
+  - Brake-to-drift only triggers on a deliberate tap and turn.
+  - Cars no longer gain speed through corners.
+  - Ramps are climbed smoothly by the wheel rays.
+- **Performance:**
+  - ShadowMap lighting instead of Future.
+  - A smaller streaming radius (900) with opportunistic stream-out.
+  - Half the street lamps, one headlight beam per car, and car lights (headlight, underglow,
+    tail and siren) only within about 230 studs of the camera.
+  - Low-detail models for traffic and police (about half the parts).
+  - Fewer facade parts on buildings.
+  - AI line-of-sight checks 5x per second instead of every frame.
+  - A cheaper siren animation loop.
+  - Fewer traffic and patrol cars and fewer nearby engine sounds.
+  - Phones and tablets start in performance mode.
+- **Console (gamepad):**
+  - Driving: RT gas, LT brake, left stick steer, X drift, A nitro, RB fire, Y reset,
+    B interact / back.
+  - D-pad: ↑ map, ↓ pause, ← garage.
+  - All menus (main menu, pause, garage, Black Market) can be navigated with the D-pad and A.
+  - Prompts show the right button for your device.
+- **Mobile:**
+  - Dedicated touch controls: an analog steering pad, GAS and BRAKE pedals, and NOS, DRIFT,
+    FIRE and RESET buttons, all multi-touch.
+  - The default thumbstick is switched off while you drive.
+  - A MAP button next to ☰.
+  - The HUD rearranges itself for touch screens.
+  - Menus and panels scale down on small screens.
+
 ### Weapons, codes and Unbound update
 - **Codes:** open **CODES** in the main menu. Each code works once per player:
   | Code | Reward |
@@ -226,8 +260,9 @@ After you change anything under `src/`, rebuild the place file without Rojo:
 python3 tools/build.py
 ```
 
-> **Workspace.StreamingEnabled** is on (the place file and Rojo project set it, with a 1500-stud
-> target radius). The city is too big to send to every player at once.
+> **Workspace.StreamingEnabled** is on (the place file and Rojo project set it, with a 900-stud
+> target radius), and lighting uses **ShadowMap** for performance. The city is too big to send to
+> every player at once.
 
 ## Project layout
 ```
@@ -266,6 +301,9 @@ src/client/   (StarterPlayerScripts.Client)
   BlackMarket.lua   Black Market window + fire button
   Collectibles.lua  hides street art you already found
   Weather.lua       rain
+  Input.lua         device detection (keyboard / gamepad / touch) + button labels
+  Scale.lua         UI scaling for small screens
+  TouchControls.lua mobile driving controls
 ```
 
 You can change almost everything in `src/shared/Config.lua`, including car stats, prices, heat

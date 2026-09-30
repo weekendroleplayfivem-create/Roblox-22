@@ -79,7 +79,7 @@ RunService.RenderStepped:Connect(function()
 	local cf = camera.CFrame
 	emitterPart.CFrame = CFrame.new(cf.Position + cf.LookVector * 40 + Vector3.new(0, 45, 0))
 	emitterPart.Parent = if raining then camera else nil
-	rain.Rate = if raining then (if Settings.Values.performance then 250 else 700) else 0
+	rain.Rate = if raining then (if Settings.Values.performance then 150 else 400) else 0
 end)
 
 return Weather

@@ -23,6 +23,8 @@ local Sounds = require(script.Parent.Sounds)
 local Garage = require(script.Parent.Garage)
 local FullMap = require(script.Parent.FullMap)
 local HUD = require(script.Parent.HUD)
+local Input = require(script.Parent.Input)
+local Scale = require(script.Parent.Scale)
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -119,6 +121,8 @@ local function menuButton(label: string, order: number, onClick: () -> ()): Butt
 	}
 end
 
+Scale.Attach(left)
+
 -- right column: player card
 local card = new("Frame", {
 	AnchorPoint = Vector2.new(1, 0),
@@ -129,6 +133,7 @@ local card = new("Frame", {
 }, gui)
 new("UICorner", { CornerRadius = UDim.new(0, 12) }, card)
 new("UIStroke", { Color = CYAN, Thickness = 2, Transparency = 0.4 }, card)
+Scale.Attach(card)
 local avatar = new("ImageLabel", { Position = UDim2.fromOffset(16, 16), Size = UDim2.fromOffset(72, 72), BackgroundColor3 = Color3.fromRGB(30, 30, 40) }, card)
 new("UICorner", { CornerRadius = UDim.new(1, 0) }, avatar)
 task.spawn(function()
@@ -201,6 +206,7 @@ local panel = new("Frame", {
 }, gui)
 new("UICorner", { CornerRadius = UDim.new(0, 12) }, panel)
 new("UIStroke", { Color = PINK, Thickness = 2 }, panel)
+Scale.Attach(panel)
 local panelTitle = text(panel, { Position = UDim2.fromOffset(20, 14), Size = UDim2.new(1, -40, 0, 32), Text = "", Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
 local panelBody = new("Frame", { Position = UDim2.fromOffset(20, 60), Size = UDim2.new(1, -40, 1, -80), BackgroundTransparency = 1 }, panel)
 
@@ -436,6 +442,7 @@ local function closeMenu()
 	end
 	Menu.Mode = "closed"
 	Drive.MenuOpen = false
+	Input.ClearSelection()
 	TweenService:Create(fade, TweenInfo.new(0.25), { BackgroundTransparency = 0 }):Play()
 	task.delay(0.28, function()
 		gui.Enabled = false
@@ -457,6 +464,7 @@ local function openMenu(mode: string)
 	shade.BackgroundTransparency = if mode == "title" then 0.2 else 0.05
 	shotClock = 0
 	refreshCard()
+	Input.Select(playButton.frame)
 end
 Menu.Open = openMenu
 
@@ -497,7 +505,7 @@ ContextActionService:BindAction("WU_Pause", function(_, state)
 		end
 	end
 	return Enum.ContextActionResult.Sink
-end, false, Enum.KeyCode.P)
+end, false, Enum.KeyCode.P, Enum.KeyCode.DPadDown)
 
 local pauseButton = new("TextButton", {
 	AnchorPoint = Vector2.new(1, 0),
@@ -511,6 +519,23 @@ local pauseButton = new("TextButton", {
 	TextColor3 = Color3.new(1, 1, 1),
 }, HUD.Gui)
 new("UICorner", { CornerRadius = UDim.new(0, 10) }, pauseButton)
+local mapButton = new("TextButton", {
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -68, 0, 60),
+	Size = UDim2.fromOffset(60, 44),
+	BackgroundColor3 = Color3.fromRGB(12, 12, 20),
+	BackgroundTransparency = 0.25,
+	Text = "MAP",
+	TextScaled = true,
+	Font = Enum.Font.GothamBlack,
+	TextColor3 = Color3.new(1, 1, 1),
+}, HUD.Gui)
+new("UICorner", { CornerRadius = UDim.new(0, 10) }, mapButton)
+new("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10) }, mapButton)
+mapButton.Activated:Connect(function()
+	FullMap.Toggle()
+end)
+
 pauseButton.Activated:Connect(function()
 	Sounds.Tick(1, 0.4)
 	if Menu.Mode == "closed" then

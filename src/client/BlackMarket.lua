@@ -13,6 +13,8 @@ local FireWeapon = Remotes:WaitForChild("FireWeapon") :: RemoteEvent
 local HUD = require(script.Parent.HUD)
 local Sounds = require(script.Parent.Sounds)
 local Drive = require(script.Parent.DriveController)
+local Input = require(script.Parent.Input)
+local Scale = require(script.Parent.Scale)
 
 local player = Players.LocalPlayer
 local BlackMarket = {}
@@ -51,6 +53,7 @@ local window = new("Frame", {
 new("UICorner", { CornerRadius = UDim.new(0, 14) }, window)
 new("UIStroke", { Color = RED, Thickness = 3 }, window)
 new("UISizeConstraint", { MaxSize = Vector2.new(620, 520) }, window)
+Scale.Attach(window)
 text(window, { Position = UDim2.fromOffset(20, 12), Size = UDim2.new(0.7, 0, 0, 36), Text = "BLACK MARKET AUTO", Font = Enum.Font.GothamBlack, TextColor3 = RED })
 text(window, { Position = UDim2.fromOffset(20, 48), Size = UDim2.new(1, -40, 0, 18), Text = "Roof-mounted hardware. Works on cops and rivals only. One weapon at a time - fire with F.", Font = Enum.Font.Gotham, TextColor3 = Color3.fromRGB(200, 180, 180) })
 local cashText = text(window, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -70, 0, 16), Size = UDim2.fromOffset(200, 26), Text = "", TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = Color3.fromRGB(120, 255, 150) })
@@ -123,6 +126,9 @@ function BlackMarket.Toggle(open: boolean?)
 			data = snap
 		end
 		render()
+		Input.Select(close)
+	else
+		Input.ClearSelection()
 	end
 end
 close.Activated:Connect(function()
@@ -130,25 +136,24 @@ close.Activated:Connect(function()
 end)
 
 -- fire the mounted weapon
-local function fire(_: string, state: Enum.UserInputState)
-	if state == Enum.UserInputState.Begin then
-		local w = player:GetAttribute("Weapon")
-		if type(w) == "string" and w ~= "" and Drive.Car then
-			local ready = player:GetAttribute("WeaponReadyAt")
-			if type(ready) ~= "number" or workspace:GetServerTimeNow() >= ready then
-				FireWeapon:FireServer()
-				Sounds.Play("rbxasset://sounds/impact_explosion_03.mp3", 0.35, 2.2)
-			else
-				Sounds.Tick(0.6, 0.3)
-			end
+function BlackMarket.Fire()
+	local w = player:GetAttribute("Weapon")
+	if type(w) == "string" and w ~= "" and Drive.Car then
+		local ready = player:GetAttribute("WeaponReadyAt")
+		if type(ready) ~= "number" or workspace:GetServerTimeNow() >= ready then
+			FireWeapon:FireServer()
+			Sounds.Play("rbxasset://sounds/impact_explosion_03.mp3", 0.35, 2.2)
+		else
+			Sounds.Tick(0.6, 0.3)
 		end
 	end
-	return Enum.ContextActionResult.Sink
 end
-ContextActionService:BindAction("WU_Fire", fire, true, Enum.KeyCode.F, Enum.KeyCode.ButtonR1)
-ContextActionService:SetTitle("WU_Fire", "FIRE")
-pcall(function()
-	ContextActionService:SetPosition("WU_Fire", UDim2.new(1, -250, 1, -120))
-end)
+
+ContextActionService:BindAction("WU_Fire", function(_: string, state: Enum.UserInputState)
+	if state == Enum.UserInputState.Begin then
+		BlackMarket.Fire()
+	end
+	return Enum.ContextActionResult.Sink
+end, false, Enum.KeyCode.F, Enum.KeyCode.ButtonR1)
 
 return BlackMarket

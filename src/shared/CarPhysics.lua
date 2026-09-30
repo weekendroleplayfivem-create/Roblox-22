@@ -40,6 +40,9 @@ export type State = {
 	weight: number, -- -1 (on the rear) .. 1 (on the nose): weight transfer
 	brakeTap: number, -- os.clock() of the last brake, for brake-to-drift
 	lowSlip: number, -- time spent nearly straight while drifting
+	hoverCenter: number, -- rest height of the chassis centre above the ground
+	antiGravity: VectorForce?,
+	corners: { Vector3 },
 }
 
 function CarPhysics.NewState(model: Model): State
@@ -62,6 +65,12 @@ function CarPhysics.NewState(model: Model): State
 		weight = 0,
 		brakeTap = 0,
 		lowSlip = 0,
+		hoverCenter = (function(): number
+			local h = model:GetAttribute("HoverCenter")
+			return if type(h) == "number" then h else root.Size.Y / 2 + 0.6
+		end)(),
+		antiGravity = root:FindFirstChild("AntiGravity") :: VectorForce?,
+		corners = { Vector3.new(-1, 0, -1), Vector3.new(1, 0, -1), Vector3.new(-1, 0, 1), Vector3.new(1, 0, 1) },
 	}
 end
 
@@ -76,28 +85,55 @@ end
 
 local UP = Vector3.yAxis
 
+-- Raycast hover suspension: the chassis floats `hoverCenter` studs above the ground on four
+-- wheel rays, so it never scrapes over the seams between road parts.
+local HOVER_TRAVEL = 1.9 -- how far below rest height the rays still count as "on the ground"
+
 function CarPhysics.Step(state: State, input: Input, stats: Stats, dt: number)
 	local root = state.root
 	if root.Anchored then
 		return
 	end
 	local cf = root.CFrame
-	local halfHeight = root.Size.Y / 2
-	local hit = workspace:Raycast(cf.Position, Vector3.new(0, -(halfHeight + 2.2), 0), state.params)
-
-	local up = UP
-	if hit then
-		up = hit.Normal
-		if up.Y < 0.5 then
-			up = UP -- walls do not count as ground
-			hit = nil
+	local size = root.Size
+	local center = state.hoverCenter
+	local hx, hz = size.X / 2 - 0.5, size.Z / 2 - 1.4
+	local down = -cf.UpVector
+	local rayLen = center + HOVER_TRAVEL
+	local hits, sumDist, sumNormal = 0, 0, Vector3.zero
+	for _, o in state.corners do
+		local origin = cf:PointToWorldSpace(Vector3.new(o.X * hx, 0, o.Z * hz))
+		local result = workspace:Raycast(origin, down * rayLen, state.params)
+		if result and result.Normal.Y > 0.55 then
+			hits += 1
+			sumDist += result.Distance
+			sumNormal += result.Normal
 		end
 	end
-	state.grounded = hit ~= nil
+	state.grounded = hits >= 2
+	local up = if state.grounded then (sumNormal / hits).Unit else UP
 
 	local align = state.align
 	if align then
 		align.PrimaryAxis = up
+		align.Responsiveness = if state.grounded then 24 else 5
+	end
+
+	-- hover spring: steer the vertical speed towards the rest height (critically damped, no bounce)
+	local anti = state.antiGravity
+	if state.grounded then
+		local dist = sumDist / hits
+		local err = center - dist
+		local v = root.AssemblyLinearVelocity
+		local vUp = v:Dot(up)
+		local target = math.clamp(err * 14, -35, 35)
+		local newUp = vUp + (target - vUp) * math.min(1, dt * 18)
+		root.AssemblyLinearVelocity = v + up * (newUp - vUp)
+		if anti then
+			anti.Force = Vector3.new(0, root.AssemblyMass * workspace.Gravity, 0)
+		end
+	elseif anti then
+		anti.Force = Vector3.zero
 	end
 
 	local vel = root.AssemblyLinearVelocity
@@ -161,7 +197,7 @@ function CarPhysics.Step(state: State, input: Input, stats: Stats, dt: number)
 			if absFwd > 35 and steerAbs > 0.2 then
 				state.drifting = true
 			end
-		elseif throttle > 0.5 and steerAbs > 0.5 and absFwd > 60 and now - state.brakeTap < 0.45 then
+		elseif throttle > 0.6 and steerAbs > 0.85 and absFwd > 75 and now - state.brakeTap < 0.3 then
 			state.drifting = true
 		end
 		local slip = math.deg(math.atan2(math.abs(lat), math.max(absFwd, 1)))
@@ -195,7 +231,7 @@ function CarPhysics.Step(state: State, input: Input, stats: Stats, dt: number)
 		lat *= math.max(0, 1 - grip * dt)
 		-- carry part of the scrubbed sideways speed into forward speed so corners keep momentum
 		if fwd > 5 then
-			local carry = if state.drifting then 0.6 else 0.45
+			local carry = if state.drifting then 0.5 else 0.2
 			fwd = math.min(fwd + (oldLat - math.abs(lat)) * carry, maxSpeed * 1.05)
 		end
 

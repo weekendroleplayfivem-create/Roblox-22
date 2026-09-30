@@ -11,6 +11,7 @@ local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Co
 local MapDraw = require(script.Parent.MapDraw)
 local Drive = require(script.Parent.DriveController)
 local Sounds = require(script.Parent.Sounds)
+local Scale = require(script.Parent.Scale)
 
 local player = Players.LocalPlayer
 local FullMap = {}
@@ -42,6 +43,7 @@ new("UICorner", { CornerRadius = UDim.new(0, 14) }, panel)
 new("UIStroke", { Color = Color3.fromRGB(255, 40, 160), Thickness = 3 }, panel)
 new("UIAspectRatioConstraint", { AspectRatio = 1 }, panel)
 new("UISizeConstraint", { MaxSize = Vector2.new(PANEL, PANEL) }, panel)
+Scale.Attach(panel)
 
 local canvas: Frame = new("Frame", { Name = "Canvas", BackgroundTransparency = 1 }, panel)
 local total = MapDraw.WorldSize + MapDraw.Margin * 2
@@ -98,7 +100,7 @@ ContextActionService:BindAction("WU_Map", function(_, state)
 		FullMap.Toggle()
 	end
 	return Enum.ContextActionResult.Sink
-end, false, Enum.KeyCode.M)
+end, false, Enum.KeyCode.M, Enum.KeyCode.DPadUp)
 
 RunService.RenderStepped:Connect(function()
 	if not FullMap.Open then

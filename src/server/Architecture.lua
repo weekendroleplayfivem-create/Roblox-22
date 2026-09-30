@@ -233,7 +233,7 @@ local function glassTower(center: Vector3, sx: number, sz: number, h: number, ou
 		local tier = core(cx, cz, tsx, tsz, y, y + th, glass, Enum.Material.Glass)
 		tier.Reflectance = 0.28
 		lightAtNight(tier, lit, night)
-		facade(cx, cz, tsx, tsz, y, y + th, { floorH = 13, bandH = 0.9, bay = 11, pierW = 0.6, depth = 0.3, color = metal, material = Enum.Material.Metal })
+		facade(cx, cz, tsx, tsz, y, y + th, { floorH = 16, bandH = 1, bay = 15, pierW = 0.7, depth = 0.3, color = metal, material = Enum.Material.Metal })
 		parapet(cx, cz, tsx, tsz, y + th, metal, Enum.Material.Metal)
 		y += th
 	end
@@ -327,7 +327,7 @@ local function brickBlock(center: Vector3, sx: number, sz: number, h: number, ou
 	local upper = core(cx, cz, sx, sz, SURFACE + shopH, SURFACE + h, rgb(30, 34, 40), Enum.Material.Glass)
 	upper.Reflectance = 0.15
 	lightAtNight(upper, rng:NextNumber() < 0.8, pick(WARM_NIGHT))
-	facade(cx, cz, sx, sz, SURFACE + shopH, SURFACE + h, { floorH = 10, bandH = 6, bay = 8, pierW = 4.4, depth = 0.6, color = brick, material = Enum.Material.Brick })
+	facade(cx, cz, sx, sz, SURFACE + shopH, SURFACE + h, { floorH = 10, bandH = 6, bay = 11, pierW = 6.6, depth = 0.6, color = brick, material = Enum.Material.Brick })
 	deco({ Name = "Cornice", Size = Vector3.new(sx + 2.4, 2, sz + 2.4), CFrame = CFrame.new(cx, SURFACE + h, cz), Color = trim, Material = Enum.Material.Limestone })
 	parapet(cx, cz, sx, sz, SURFACE + h + 1, brick, Enum.Material.Brick)
 	-- fire escape on a street side
@@ -352,7 +352,7 @@ local function shops(center: Vector3, sx: number, sz: number, h: number, outward
 	storefronts(center, sx, sz, outward, shopH)
 	local upper = core(cx, cz, sx, sz, SURFACE + shopH, SURFACE + h, rgb(34, 38, 44), Enum.Material.Glass)
 	lightAtNight(upper, rng:NextNumber() < 0.6, pick(WARM_NIGHT))
-	facade(cx, cz, sx, sz, SURFACE + shopH, SURFACE + h, { floorH = 9, bandH = 5, bay = 9, pierW = 5, depth = 0.5, color = wall, material = Enum.Material.Plaster })
+	facade(cx, cz, sx, sz, SURFACE + shopH, SURFACE + h, { floorH = 9, bandH = 5, bay = 12, pierW = 7, depth = 0.5, color = wall, material = Enum.Material.Plaster })
 	deco({ Name = "Band", Size = Vector3.new(sx + 1.2, 1.2, sz + 1.2), CFrame = CFrame.new(cx, SURFACE + shopH, cz), Color = wall:Lerp(rgb(80, 80, 80), 0.3), Material = Enum.Material.Concrete })
 	parapet(cx, cz, sx, sz, SURFACE + h, wall, Enum.Material.Plaster)
 	hvac(cx, cz, sx, sz, SURFACE + h, rng:NextInteger(1, 3))
@@ -638,7 +638,7 @@ local function warehouse(center: Vector3, sx: number, sz: number, outward: Vecto
 	local body = core(center.X, center.Z, sx, sz, SURFACE, SURFACE + h, pick({ rgb(150, 155, 160), rgb(120, 130, 140), rgb(170, 160, 140), rgb(90, 100, 110) }), Enum.Material.CorrodedMetal)
 	local _ = body
 	-- corrugated look: vertical ribs
-	facade(center.X, center.Z, sx, sz, SURFACE, SURFACE + h, { floorH = 999, bandH = 0, bay = 4, pierW = 0.4, depth = 0.25, color = rgb(110, 115, 120), material = Enum.Material.Metal, noBands = true })
+	facade(center.X, center.Z, sx, sz, SURFACE, SURFACE + h, { floorH = 999, bandH = 0, bay = 12, pierW = 0.6, depth = 0.25, color = rgb(110, 115, 120), material = Enum.Material.Metal, noBands = true })
 	-- shallow pitched roof
 	local ridgeAxisX = sx >= sz
 	local rw = if ridgeAxisX then sx else sz

@@ -475,8 +475,8 @@ Config.Police = {
 	Accel = 50,
 	Turn = 2.4,
 	Grip = 6.5,
-	PatrolCount = 10, -- roaming patrols across the whole city (daytime)
-	NightExtraPatrols = 8, -- extra patrol cars out at night
+	PatrolCount = 7, -- roaming patrols across the whole city (daytime)
+	NightExtraPatrols = 5, -- extra patrol cars out at night
 	NightExtraCops = 2, -- extra units per pursuit at night
 	NightSpawnMult = 0.65, -- pursuit reinforcements arrive faster at night
 	SpeedLimit = 95, -- studs/s (~71 mph). Faster than this in front of a cop starts a pursuit.
@@ -744,7 +744,7 @@ Config.Ramps = {
 -- City traffic + near misses (Unbound)
 ---------------------------------------------------------------------------
 Config.Traffic = {
-	Count = 42, -- civilian cars driving around the city
+	Count = 26, -- civilian cars driving around the city
 	Speed = { 38, 55 }, -- studs/s cruising speed range
 	LaneOffset = 8, -- distance from the centre line (drive on the right)
 	NearMissMin = 6.8, -- closer than this (centre to centre) counts as a crash, not a near miss

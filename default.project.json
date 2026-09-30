@@ -5,13 +5,14 @@
     "Workspace": {
       "$properties": {
         "StreamingEnabled": true,
-        "StreamingTargetRadius": 1500,
-        "StreamingMinRadius": 400
+        "StreamingTargetRadius": 900,
+        "StreamingMinRadius": 280,
+        "StreamOutBehavior": "Opportunistic"
       }
     },
     "Lighting": {
       "$properties": {
-        "Technology": "Future"
+        "Technology": "ShadowMap"
       }
     },
     "ReplicatedStorage": {

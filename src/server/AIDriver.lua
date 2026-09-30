@@ -81,6 +81,10 @@ end
 
 function AIDriver.Remove(ai: AI)
 	ai.alive = false
+	local anti = ai.state.root:FindFirstChild("AntiGravity") :: VectorForce?
+	if anti then
+		anti.Force = Vector3.zero
+	end
 	local idx = table.find(ais, ai)
 	if idx then
 		table.remove(ais, idx)
@@ -140,7 +144,13 @@ function AIDriver.DriveTo(ai: AI, goal: Vector3, aggressive: boolean?)
 	local root = ai.state.root
 	local pos = root.Position
 	local waypoint = goal
-	if AIDriver.ClearLine(pos, goal, 3.5) then
+	-- the spherecast is the expensive part: refresh it 5x a second instead of every frame
+	local now = os.clock()
+	if now >= (ai.data.losCheckAt or 0) then
+		ai.data.losCheckAt = now + 0.2
+		ai.data.losClear = AIDriver.ClearLine(pos, goal, 3.5)
+	end
+	if ai.data.losClear then
 		ai.nav = nil
 	else
 		local nav = ai.nav
@@ -189,7 +199,8 @@ local function uprightAt(ai: AI, pos: Vector3, look: Vector3)
 		flat = -Vector3.zAxis
 	end
 	local root = ai.state.root
-	local target = Vector3.new(pos.X, Grid.RoadY + root.Size.Y / 2 + 0.5, pos.Z)
+	local hover = ai.model:GetAttribute("HoverCenter")
+	local target = Vector3.new(pos.X, Grid.RoadY + (if type(hover) == "number" then hover else root.Size.Y / 2) + 0.2, pos.Z)
 	ai.model:PivotTo(CFrame.lookAt(target, target + flat.Unit))
 	root.AssemblyLinearVelocity = Vector3.zero
 	root.AssemblyAngularVelocity = Vector3.zero

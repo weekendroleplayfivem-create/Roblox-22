@@ -23,6 +23,7 @@ export type BuildOptions = {
 	glow: Color3?, -- underglow colour (nil = off)
 	ride: number?, -- -2..2 ride height
 	weapon: string?, -- roof mount style from Config.Weapons (nil = none)
+	lowDetail: boolean?, -- traffic / police: about half the parts (no interior, spokes, plates...)
 	weaponColor: Color3?,
 }
 
@@ -163,6 +164,9 @@ local function buildWheel(ctx: Ctx, d: Dims, x: number, z: number, front: boolea
 	local barrelR = if style == 4 then 0.5 else 0.64
 	cylinder(ctx, "RimLip", Vector3.new(0.06, r * 2 * lipR, r * 2 * lipR), hubCF * CFrame.new(outer - side * 0.02, 0, 0), rimColor, Enum.Material.Metal, hub).Reflectance = 0.35
 	cylinder(ctx, "RimBarrel", Vector3.new(0.06, r * 2 * barrelR, r * 2 * barrelR), hubCF * CFrame.new(outer - side * 0.01, 0, 0), Color3.fromRGB(40, 40, 44), Enum.Material.Metal, hub)
+	if opts.lowDetail then
+		return
+	end
 	-- brake disc visible through the spokes
 	cylinder(ctx, "Disc", Vector3.new(0.04, r * 1.05, r * 1.05), hubCF * CFrame.new(outer, 0, 0), Color3.fromRGB(95, 95, 100), Enum.Material.Metal, hub)
 
@@ -216,7 +220,9 @@ function CarBuilder.Build(opts: BuildOptions): Model
 	model.Name = opts.name
 
 	local W, L, r = d.W, d.L, d.r
-	local chassisH = 1.4
+	-- The collision box floats above the road (hover suspension): bottom at 1 stud, centre at CY.
+	local chassisH = 1.0
+	local CY = 1.5
 	local chassis = Instance.new("Part")
 	chassis.Name = "Chassis"
 	chassis.Size = Vector3.new(W, chassisH, L)
@@ -225,7 +231,7 @@ function CarBuilder.Build(opts: BuildOptions): Model
 	chassis.Anchored = false
 	chassis.CustomPhysicalProperties = PhysicalProperties.new(if opts.heavy then 1.6 else 0.9, 0, 0, 100, 1)
 	chassis.RootPriority = 10
-	chassis.CFrame = CFrame.new(0, chassisH / 2, 0)
+	chassis.CFrame = CFrame.new(0, CY, 0)
 	chassis.Parent = model
 	model.PrimaryPart = chassis
 	-- The body root is joined with a Weld whose C0 the client animates for body roll and pitch.
@@ -258,9 +264,21 @@ function CarBuilder.Build(opts: BuildOptions): Model
 	align.AlignType = Enum.AlignType.PrimaryAxisParallel
 	align.PrimaryAxis = Vector3.yAxis
 	align.Attachment0 = att
-	align.Responsiveness = 25
-	align.MaxTorque = 5e6
+	align.Responsiveness = 24
+	align.MaxTorque = 1e7
 	align.Parent = chassis
+	model:SetAttribute("HoverCenter", CY)
+	-- cancels gravity while the hover suspension holds the car up
+	local centerAtt = Instance.new("Attachment")
+	centerAtt.Name = "CenterAttachment"
+	centerAtt.Parent = chassis
+	local anti = Instance.new("VectorForce")
+	anti.Name = "AntiGravity"
+	anti.Attachment0 = centerAtt
+	anti.RelativeTo = Enum.ActuatorRelativeTo.World
+	anti.ApplyAtCenterOfMass = true
+	anti.Force = Vector3.zero
+	anti.Parent = chassis
 
 	local rideOff = (opts.ride or 0) * 0.15
 	local bottom = d.c + rideOff
@@ -331,27 +349,38 @@ function CarBuilder.Build(opts: BuildOptions): Model
 		box(ctx, "BPillar", Vector3.new(0.06, roofH - 0.18, 0.35), CFrame.new(s * (cabW / 2), top + (roofH - 0.18) / 2, roofMid + roofLen * 0.1), DARK)
 	end
 
+	local detail = not opts.lowDetail
 	-- Interior (visible through lighter tints)
-	for _, s in { -1, 1 } do
-		box(ctx, "Seat", Vector3.new(1.3, 1.5, 0.35), CFrame.new(s * cabW / 4, top + 0.35, roofMid + 0.6) * CFrame.Angles(math.rad(-12), 0, 0), Color3.fromRGB(30, 30, 34), Enum.Material.Fabric)
+	if detail then
+		for _, s in { -1, 1 } do
+			box(ctx, "Seat", Vector3.new(1.3, 1.5, 0.35), CFrame.new(s * cabW / 4, top + 0.35, roofMid + 0.6) * CFrame.Angles(math.rad(-12), 0, 0), Color3.fromRGB(30, 30, 34), Enum.Material.Fabric)
+		end
+		box(ctx, "Dash", Vector3.new(cabW - 0.2, 0.35, 0.9), CFrame.new(0, top + 0.1, cabS + d.ws * 0.65), Color3.fromRGB(25, 25, 28))
+		cylinder(ctx, "SteeringWheel", Vector3.new(0.12, 0.9, 0.9), CFrame.new(-cabW / 4, top + 0.45, cabS + d.ws * 0.95) * CFrame.Angles(0, math.rad(90), math.rad(20)), DARK)
 	end
-	box(ctx, "Dash", Vector3.new(cabW - 0.2, 0.35, 0.9), CFrame.new(0, top + 0.1, cabS + d.ws * 0.65), Color3.fromRGB(25, 25, 28))
-	cylinder(ctx, "SteeringWheel", Vector3.new(0.12, 0.9, 0.9), CFrame.new(-cabW / 4, top + 0.45, cabS + d.ws * 0.95) * CFrame.Angles(0, math.rad(90), math.rad(20)), DARK)
 
 	-- Front end
 	box(ctx, "Bumper", Vector3.new(W - 0.3, 0.4, 0.35), CFrame.new(0, bottom + 0.2, front - 0.12), TRIM)
 	box(ctx, "Grille", Vector3.new(W * 0.42, H * 0.35, 0.1), CFrame.new(0, bottom + H * 0.42, front - 0.04), DARK)
-	for _, s in { -1, 1 } do
+	for _, s in (if detail then { -1, 1 } else {}) :: { number } do
 		box(ctx, "Intake", Vector3.new(0.9, 0.3, 0.1), CFrame.new(s * (W / 2 - 1), bottom + 0.55, front - 0.04), DARK)
 	end
 	for idx, s in { -1, 1 } do
 		local x = s * (W / 2 - 0.85)
 		local y = top - 0.28
 		local head = box(ctx, "Headlight", Vector3.new(1.15, 0.26, 0.1), CFrame.new(x, y, front - 0.06), Color3.fromRGB(255, 250, 235), Enum.Material.Neon)
-		local lens = box(ctx, "HeadlightLens", Vector3.new(1.35, 0.4, 0.12), CFrame.new(x, y, front - 0.03), Color3.fromRGB(200, 210, 220), Enum.Material.Glass)
-		lens.Transparency = 0.6
-		box(ctx, "DRL", Vector3.new(1.2, 0.06, 0.1), CFrame.new(x, y - 0.26, front - 0.06), Color3.fromRGB(220, 240, 255), Enum.Material.Neon)
+		if detail then
+			local lens = box(ctx, "HeadlightLens", Vector3.new(1.35, 0.4, 0.12), CFrame.new(x, y, front - 0.03), Color3.fromRGB(200, 210, 220), Enum.Material.Glass)
+			lens.Transparency = 0.6
+			box(ctx, "DRL", Vector3.new(1.2, 0.06, 0.1), CFrame.new(x, y - 0.26, front - 0.06), Color3.fromRGB(220, 240, 255), Enum.Material.Neon)
+		end
+		-- one beam per car is plenty (two lights per car x dozens of cars is a big GPU cost);
+		-- the client switches it on at night and only for cars near the camera
+		if idx ~= 1 then
+			continue
+		end
 		local spot = Instance.new("SpotLight")
+		spot.Enabled = false
 		spot.Name = "Beam"
 		spot.Face = Enum.NormalId.Front
 		spot.Range = 90
@@ -370,6 +399,9 @@ function CarBuilder.Build(opts: BuildOptions): Model
 	end
 	for _, s in { -1, 1 } do
 		box(ctx, "Taillight", Vector3.new(1.3, 0.32, 0.1), CFrame.new(s * (W / 2 - 0.85), tailY, rear + 0.05), Color3.fromRGB(230, 15, 30), Enum.Material.Neon)
+		if not detail then
+			continue
+		end
 		box(ctx, "ReverseLight", Vector3.new(0.35, 0.2, 0.1), CFrame.new(s * (W / 2 - 1.75), tailY - 0.05, rear + 0.05), Color3.fromRGB(235, 235, 235), Enum.Material.Glass)
 	end
 	local firstTail = model:FindFirstChild("Taillight") :: BasePart
@@ -397,20 +429,24 @@ function CarBuilder.Build(opts: BuildOptions): Model
 	end
 
 	-- Plates
+	if detail then
 	local plateF = box(ctx, "Plate", Vector3.new(1.8, 0.42, 0.05), CFrame.new(0, bottom + 0.45, front - 0.32), Color3.new(1, 1, 1))
 	surfaceText(plateF, Enum.NormalId.Front, "NEON BAY", Color3.fromRGB(20, 40, 120))
 	local plateR = box(ctx, "Plate", Vector3.new(1.8, 0.42, 0.05), CFrame.new(0, bottom + 0.62, rear + 0.32), Color3.new(1, 1, 1))
 	surfaceText(plateR, Enum.NormalId.Back, if opts.police then "POLICE" else "WNTD 22", Color3.fromRGB(20, 40, 120))
+	end
 
 	-- Sides: mirrors, door shut lines, handles
 	for _, s in { -1, 1 } do
 		local mx = s * (W / 2 + 0.25)
 		paint(box(ctx, "Mirror", Vector3.new(0.5, 0.32, 0.55), CFrame.new(mx, top + 0.3, cabS + 0.55), bodyColor))
-		box(ctx, "MirrorArm", Vector3.new(0.4, 0.08, 0.2), CFrame.new(s * (W / 2 + 0.02), top + 0.18, cabS + 0.6), DARK)
-		for _, z in { cabS + 0.2, roofMid + roofLen * 0.1, cabE - 0.4 } do
-			box(ctx, "DoorLine", Vector3.new(0.03, H - 0.35, 0.05), CFrame.new(s * (W / 2 + 0.005), midY + 0.05, z), DARK)
+		if detail then
+			box(ctx, "MirrorArm", Vector3.new(0.4, 0.08, 0.2), CFrame.new(s * (W / 2 + 0.02), top + 0.18, cabS + 0.6), DARK)
+			for _, z in { cabS + 0.2, roofMid + roofLen * 0.1, cabE - 0.4 } do
+				box(ctx, "DoorLine", Vector3.new(0.03, H - 0.35, 0.05), CFrame.new(s * (W / 2 + 0.005), midY + 0.05, z), DARK)
+			end
+			box(ctx, "Handle", Vector3.new(0.05, 0.12, 0.5), CFrame.new(s * (W / 2 + 0.02), top - 0.4, roofMid + roofLen * 0.1 - 0.5), TRIM)
 		end
-		box(ctx, "Handle", Vector3.new(0.05, 0.12, 0.5), CFrame.new(s * (W / 2 + 0.02), top - 0.4, roofMid + roofLen * 0.1 - 0.5), TRIM)
 		box(ctx, "Sill", Vector3.new(0.08, 0.2, (rz - a) - (fz + a)), CFrame.new(s * (W / 2 + 0.02), bottom + 0.1, (fz + rz) / 2), TRIM)
 	end
 
@@ -531,7 +567,7 @@ function CarBuilder.Build(opts: BuildOptions): Model
 		end
 		local m = Instance.new("Attachment")
 		m.Name = "WeaponMuzzle"
-		m.Position = muzzleOffset - Vector3.new(0, chassisH / 2, 0)
+		m.Position = muzzleOffset - Vector3.new(0, CY, 0)
 		m.Parent = chassis
 		model:SetAttribute("Weapon", opts.weapon)
 	end
@@ -553,7 +589,7 @@ function CarBuilder.Build(opts: BuildOptions): Model
 	local effectColor = opts.effectColor or Color3.fromRGB(0, 255, 255)
 	local exhaust = Instance.new("Attachment")
 	exhaust.Name = "Exhaust"
-	exhaust.Position = Vector3.new(tips[1], bottom + 0.22 - chassisH / 2, rear + 0.7)
+	exhaust.Position = Vector3.new(tips[1], bottom + 0.22 - CY, rear + 0.7)
 	exhaust.Parent = chassis
 	local flame = Instance.new("ParticleEmitter")
 	flame.Name = "NitroFlame"
@@ -569,10 +605,10 @@ function CarBuilder.Build(opts: BuildOptions): Model
 
 	for _, s in { -1, 1 } do
 		local a0 = Instance.new("Attachment")
-		a0.Position = Vector3.new(s * W / 2, top - 0.3 - chassisH / 2, rear)
+		a0.Position = Vector3.new(s * W / 2, top - 0.3 - CY, rear)
 		a0.Parent = chassis
 		local a1 = Instance.new("Attachment")
-		a1.Position = Vector3.new(s * (W / 2 + 1.6), top + 1.3 - chassisH / 2, rear)
+		a1.Position = Vector3.new(s * (W / 2 + 1.6), top + 1.3 - CY, rear)
 		a1.Parent = chassis
 		local trail = Instance.new("Trail")
 		trail.Name = "EffectTrail"
@@ -588,7 +624,7 @@ function CarBuilder.Build(opts: BuildOptions): Model
 
 	local smokeAtt = Instance.new("Attachment")
 	smokeAtt.Name = "Smoke"
-	smokeAtt.Position = Vector3.new(0, -chassisH / 2 + 0.2, rz)
+	smokeAtt.Position = Vector3.new(0, -CY + 0.2, rz)
 	smokeAtt.Parent = chassis
 	local smoke = Instance.new("ParticleEmitter")
 	smoke.Name = "DriftSmoke"

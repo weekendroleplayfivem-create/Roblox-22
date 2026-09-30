@@ -69,10 +69,11 @@ def build_rbxlx():
     # The city is ~50k parts, so clients stream in only what's around them.
     workspace_props = (
         '<bool name="StreamingEnabled">true</bool>'
-        '<int name="StreamingTargetRadius">1500</int>'
-        '<int name="StreamingMinRadius">400</int>'
+        '<int name="StreamingTargetRadius">900</int>'
+        '<int name="StreamingMinRadius">280</int>'
+        '<token name="StreamOutBehavior">2</token>'  # Opportunistic: unload far parts
     )
-    lighting_props = '<token name="Technology">4</token>'  # Future lighting for the neon look
+    lighting_props = '<token name="Technology">3</token>'  # ShadowMap: much cheaper than Future
     body = item("Workspace", "Workspace", extra_props=workspace_props)
     body += item("Lighting", "Lighting", extra_props=lighting_props)
     for service, kids in services.items():

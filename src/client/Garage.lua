@@ -13,6 +13,8 @@ local ChallengeRival = Remotes:WaitForChild("ChallengeRival") :: RemoteEvent
 local HUD = require(script.Parent.HUD)
 local Sounds = require(script.Parent.Sounds)
 local Drive = require(script.Parent.DriveController)
+local Input = require(script.Parent.Input)
+local Scale = require(script.Parent.Scale)
 local GarageEvent = Remotes:WaitForChild("Garage") :: RemoteEvent
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -91,6 +93,7 @@ local window = new("Frame", {
 corner(window, 16)
 new("UIStroke", { Color = PINK, Thickness = 3 }, window)
 new("UISizeConstraint", { MaxSize = Vector2.new(640, 680), MinSize = Vector2.new(320, 300) }, window)
+Scale.Attach(window)
 
 text(window, { Position = UDim2.fromOffset(20, 10), Size = UDim2.new(0.5, 0, 0, 36), Text = "SAFEHOUSE GARAGE", Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
 local cashText = text(window, { Position = UDim2.new(0.5, 0, 0, 14), Size = UDim2.new(0.5, -70, 0, 28), Text = "", TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = Color3.fromRGB(120, 255, 150) })
@@ -544,6 +547,9 @@ function Garage.Toggle(open: boolean?)
 		statusText.Text = ""
 		refresh()
 		render()
+		Input.Select(tabButtons.Cars)
+	else
+		Input.ClearSelection()
 	end
 end
 

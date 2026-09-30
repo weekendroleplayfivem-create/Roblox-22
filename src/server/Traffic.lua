@@ -172,6 +172,7 @@ local function spawnOne()
 				heavy = false,
 				color = T.Colors[math.random(1, #T.Colors)],
 				name = "Civilian",
+				lowDetail = true,
 				rim = math.random(1, 2),
 				tint = 0.3,
 			})

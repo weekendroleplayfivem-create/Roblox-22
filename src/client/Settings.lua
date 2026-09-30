@@ -25,7 +25,8 @@ Settings.Values = {
 	blur = true,
 	units = "mph",
 	volume = 0.8,
-	performance = false,
+	-- phones and tablets start in performance mode (they can switch it off in Settings)
+	performance = game:GetService("UserInputService").TouchEnabled and not game:GetService("UserInputService").KeyboardEnabled,
 } :: Values
 
 -- every sound in the game plays through this group so the volume setting affects all of it

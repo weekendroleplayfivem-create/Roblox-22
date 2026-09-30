@@ -33,7 +33,8 @@ end
 -- Chassis-centre CFrame for a car standing on the ground at `ground`.
 function Vehicles.GroundCFrame(ground: CFrame, car: Model): CFrame
 	local root = car.PrimaryPart :: BasePart
-	return ground + Vector3.new(0, root.Size.Y / 2 + 0.4, 0)
+	local hover = car:GetAttribute("HoverCenter")
+	return ground + Vector3.new(0, (if type(hover) == "number" then hover else root.Size.Y / 2) + 0.05, 0)
 end
 
 local function seatCharacter(s: Session.Session)
@@ -56,6 +57,10 @@ local function seatCharacter(s: Session.Session)
 		for _, d in character:GetDescendants() do
 			if d:IsA("BasePart") or d:IsA("Decal") then
 				(d :: any).Transparency = 1
+			end
+			-- a weightless driver: the avatar's mass high up in the cabin made the car wobble
+			if d:IsA("BasePart") then
+				d.Massless = true
 			end
 		end
 	end
@@ -152,7 +157,8 @@ function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 	end)
 	if s.inGarage then
 		-- parked on the showroom turntable while the garage menu is open
-		car:PivotTo(Showroom.CarCFrame + Vector3.new(0, root.Size.Y / 2, 0))
+		local hover = car:GetAttribute("HoverCenter")
+		car:PivotTo(Showroom.CarCFrame + Vector3.new(0, (if type(hover) == "number" then hover else 1.5) - 0.7, 0))
 		root.Anchored = true
 	else
 		car:PivotTo(Vehicles.GroundCFrame(ground :: CFrame, car))

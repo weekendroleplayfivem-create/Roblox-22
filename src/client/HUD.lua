@@ -10,6 +10,8 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
 local MapDraw = require(script.Parent.MapDraw)
 local Settings = require(script.Parent.Settings)
+local Input = require(script.Parent.Input)
+local Scale = require(script.Parent.Scale)
 
 local player = Players.LocalPlayer
 
@@ -352,13 +354,12 @@ end
 local controlsLabel = label({
 	AnchorPoint = Vector2.new(0, 1),
 	Position = UDim2.new(0, 16, 1, -250),
-	Size = UDim2.fromOffset(300, 16),
-	Text = "WASD drive  |  SPACE drift  |  SHIFT nitro  |  R reset  |  G garage",
+	Size = UDim2.fromOffset(640, 16),
+	Text = "",
 	Font = FONT2,
 	TextColor3 = Color3.fromRGB(200, 200, 220),
 	TextXAlignment = Enum.TextXAlignment.Left,
 }, gui)
-local _ = controlsLabel
 
 ---------------------------------------------------------------------------
 -- Minimap (bottom left)
@@ -591,5 +592,42 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 		arrow.Visible = false
 	end
 end
+
+---------------------------------------------------------------------------
+-- Screen scaling + device layouts (keyboard / gamepad / touch)
+---------------------------------------------------------------------------
+for _, f in { speedo, heatFrame, money, repFrame, weaponFrame, racePanel, minimap, promptButton } :: { GuiObject } do
+	Scale.Attach(f)
+end
+
+local defaults: { [GuiObject]: { pos: UDim2, anchor: Vector2 } } = {}
+for _, f in { speedo, weaponFrame, minimap, racePanel, promptButton } :: { GuiObject } do
+	defaults[f] = { pos = f.Position, anchor = f.AnchorPoint }
+end
+local TOUCH: { [GuiObject]: { pos: UDim2, anchor: Vector2 } } = {
+	-- the pedals take the bottom right, the steering pad the bottom left
+	[speedo] = { pos = UDim2.new(0.5, 0, 1, -16), anchor = Vector2.new(0.5, 1) },
+	[weaponFrame] = { pos = UDim2.new(0.5, 0, 1, -160), anchor = Vector2.new(0.5, 1) },
+	[minimap] = { pos = UDim2.new(1, -16, 0, 112), anchor = Vector2.new(1, 0) },
+	[racePanel] = { pos = UDim2.new(1, -16, 0, 300), anchor = Vector2.new(1, 0) },
+	[promptButton] = { pos = UDim2.new(0.5, 0, 1, -210), anchor = Vector2.new(0.5, 1) },
+}
+
+function HUD.SetTouchLayout(on: boolean)
+	for f, d in defaults do
+		local t = if on then TOUCH[f] else d
+		if t then
+			f.Position = t.pos
+			f.AnchorPoint = t.anchor
+		end
+	end
+	controlsLabel.Visible = not on
+end
+
+local function refreshHint()
+	controlsLabel.Text = Input.ControlsHint()
+end
+Input.OnChanged(refreshHint)
+refreshHint()
 
 return HUD

@@ -242,6 +242,7 @@ local function spawnCop(pos: Vector3, look: Vector3, heavy: boolean, mode: strin
 		color = Color3.fromRGB(15, 15, 20),
 		name = if heavy then "PoliceHeavy" else "Police",
 		police = true,
+		lowDetail = true,
 		heavy = heavy,
 	})
 	model:SetAttribute("Siren", mode ~= "patrol")
@@ -343,6 +344,10 @@ wreck = function(ai: AIDriver.AI, by: Session.Session?)
 	local align = root:FindFirstChild("Upright") :: AlignOrientation?
 	if align then
 		align.Enabled = false
+	end
+	local anti = root:FindFirstChild("AntiGravity") :: VectorForce?
+	if anti then
+		anti.Force = Vector3.zero -- let the wreck fall
 	end
 	root.AssemblyLinearVelocity += Vector3.new(0, 30, 0)
 	root.AssemblyAngularVelocity = Vector3.new(math.random() * 4, math.random() * 2, math.random() * 4)
@@ -506,10 +511,11 @@ local function spawnRoadblock(s: Session.Session)
 	end
 	local counted = false
 	for _, off in { -24, -12, 12, 24 } do
-		local cop = CarBuilder.Build({ style = "coupe", color = Color3.fromRGB(15, 15, 20), name = "RoadblockCar", police = true })
+		local cop = CarBuilder.Build({ style = "coupe", color = Color3.fromRGB(15, 15, 20), name = "RoadblockCar", police = true, lowDetail = true })
 		cop:SetAttribute("Siren", true)
 		local croot = cop.PrimaryPart :: BasePart
-		local pos = center + across * off + Vector3.new(0, croot.Size.Y / 2 + 0.5, 0)
+		local hover = cop:GetAttribute("HoverCenter")
+		local pos = center + across * off + Vector3.new(0, (if type(hover) == "number" then hover else 1.5) + 0.05, 0)
 		cop:PivotTo(CFrame.lookAt(pos, pos + across))
 		croot.Anchored = true
 		cop.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
