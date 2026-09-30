@@ -160,6 +160,8 @@ local function refreshCard()
 		return Shop:InvokeServer("Get")
 	end)
 	if not ok or type(snap) ~= "table" then
+		-- the server may still be loading the profile right after joining
+		task.delay(1.5, refreshCard)
 		return
 	end
 	Settings.Load(snap.settings)

@@ -152,27 +152,34 @@ function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 	-- streaming: the owner must always have their car, and the ground where it lands
 	car.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
 	local target = if s.inGarage then Showroom.CarCFrame.Position else (ground :: CFrame).Position
-	pcall(function()
-		s.player:RequestStreamAroundAsync(target, 4)
-	end)
+	-- The car is held in place until the area around it has streamed in for its owner, so it
+	-- can't drop through ground the client hasn't loaded yet. This never blocks the caller
+	-- (the police and world loops call Spawn too).
+	root.Anchored = true
 	if s.inGarage then
 		-- parked on the showroom turntable while the garage menu is open
 		local hover = car:GetAttribute("HoverCenter")
 		car:PivotTo(Showroom.CarCFrame + Vector3.new(0, (if type(hover) == "number" then hover else 1.5) - 0.7, 0))
-		root.Anchored = true
 	else
 		car:PivotTo(Vehicles.GroundCFrame(ground :: CFrame, car))
 	end
 	car.Parent = carsFolder
 	s.car = car
 	s.stats = stats
-
-	if not s.inGarage then
-		pcall(function()
-			root:SetNetworkOwner(s.player)
-		end)
-	end
 	seatCharacter(s)
+
+	task.spawn(function()
+		pcall(function()
+			s.player:RequestStreamAroundAsync(target, 3)
+		end)
+		-- a Freeze() (race countdown, busted) keeps it anchored until that runs out
+		if s.car == car and car.Parent and not s.inGarage and os.clock() >= s.frozenUntil then
+			root.Anchored = false
+			pcall(function()
+				root:SetNetworkOwner(s.player)
+			end)
+		end
+	end)
 	return car
 end
 

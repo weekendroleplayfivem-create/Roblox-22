@@ -576,15 +576,29 @@ end
 ---------------------------------------------------------------------------
 -- World loop: safehouse banking, drift combos, speed cameras, races, sync
 ---------------------------------------------------------------------------
+local worldTick: (s: Session.Session, dt: number) -> ()
 task.spawn(function()
 	while true do
 		local dt = task.wait(0.1)
 		for _, s in Session.All() do
+			-- one player's error must never stop the loop for everyone
+			local ok, err = pcall(function()
+				worldTick(s, dt)
+			end)
+			if not ok then
+				warn("[World] tick error:", err)
+			end
+		end
+	end
+end)
+
+worldTick = function(s: Session.Session, dt: number)
+	do
 			local car = s.car
 			local root = car and car.PrimaryPart
 			if not car or not root or not car.Parent then
 				Session.Sync(s)
-				continue
+				return
 			end
 			local pos = root.Position
 			local vel = root.AssemblyLinearVelocity
@@ -593,7 +607,7 @@ task.spawn(function()
 			-- fell out of the world (the garage interior is underground on purpose)
 			if pos.Y < -40 and not s.inGarage then
 				Vehicles.ResetToRoad(s)
-				continue
+				return
 			end
 
 			-- make sure the driver is seated
@@ -630,7 +644,7 @@ task.spawn(function()
 					s.profile.cash += amount
 					s.unbanked = 0
 					Session.Notify(s.player, "BANKED $" .. amount .. " at the safehouse", Color3.fromRGB(80, 255, 140))
-					PlayerData.Save(s.player)
+					task.spawn(PlayerData.Save, s.player) -- DataStore calls yield: never inside the loop
 				end
 				if s.heat > 0 then
 					s.heat = 0
@@ -683,8 +697,7 @@ task.spawn(function()
 				end
 			end
 			Session.Sync(s)
-		end
 	end
-end)
+end
 
 print("[" .. Config.GameName .. "] server ready")

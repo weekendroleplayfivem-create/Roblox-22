@@ -210,7 +210,12 @@ function Traffic.Init()
 				end
 			end
 			if #cars < T.Count then
-				spawnOne()
+				local ok, err = pcall(function()
+					spawnOne()
+				end)
+				if not ok then
+					warn("[Traffic] spawn error:", err)
+				end
 			end
 			task.wait(0.5)
 		end

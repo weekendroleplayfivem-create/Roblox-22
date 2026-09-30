@@ -290,9 +290,23 @@ local function buildTerrain()
 	terrain.WaterReflectance = 0.6
 	terrain.WaterWaveSize = 0.35
 	terrain.WaterWaveSpeed = 8
+	-- fill in 512-stud chunks: very large single terrain operations can be rejected
+	local CHUNK = 512
 	local function fill(minV: Vector3, maxV: Vector3, material: Enum.Material)
-		local size = maxV - minV
-		terrain:FillBlock(CFrame.new((minV + maxV) / 2), size, material)
+		local x = minV.X
+		while x < maxV.X do
+			local x2 = math.min(x + CHUNK, maxV.X)
+			local z = minV.Z
+			while z < maxV.Z do
+				local z2 = math.min(z + CHUNK, maxV.Z)
+				local lo = Vector3.new(x, minV.Y, z)
+				local hi = Vector3.new(x2, maxV.Y, z2)
+				terrain:FillBlock(CFrame.new((lo + hi) / 2), hi - lo, material)
+				z = z2
+			end
+			x = x2
+			task.wait()
+		end
 	end
 	-- land ring (north + west) with grass
 	fill(Vector3.new(-wall - far, -12, -wall - far), Vector3.new(wall + 170, 0, -wall), Enum.Material.Grass)
@@ -782,7 +796,13 @@ function MapBuilder.Build(): MapInfo
 		return nil
 	end
 
-	buildTerrain()
+	-- scenery only: if terrain fails for any reason the city still gets built
+	local terrainOk, terrainErr = pcall(function()
+		buildTerrain()
+	end)
+	if not terrainOk then
+		warn("[MapBuilder] terrain skipped:", terrainErr)
+	end
 	for bx = 0, Grid.Size - 1 do
 		task.wait() -- building ~50k parts: yield between rows so the server never times out
 		for bz = 0, Grid.Size - 1 do

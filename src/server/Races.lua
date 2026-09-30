@@ -148,13 +148,13 @@ local function finishPlayer(race: Race, place: number?)
 			Session.Notify(s.player, "Side bet lost to " .. bet.racer.name .. " (-$" .. bet.stake .. ")", Color3.fromRGB(255, 90, 90))
 		end
 	end
-	if scored(def.kind) then
+	if scored(def.kind) and place then
 		local target = def.driftTarget or 1
 		if race.driftScore >= target then
 			local ratio = math.min(race.driftScore / target, 2)
 			local payout = def.reward * ratio * night * heatMult
 			s.profile.racesWon += 1
-			Session.Banner(s.player, "DRIFT EVENT COMPLETE", "Score " .. math.floor(race.driftScore), GOLD)
+			Session.Banner(s.player, if def.kind == "takeover" then "TAKEOVER COMPLETE" else "DRIFT EVENT COMPLETE", "Score " .. math.floor(race.driftScore), GOLD)
 			Session.AddUnbanked(s, payout, def.name .. " winnings")
 			Session.AddRep(s, if def.kind == "takeover" then 500 else 400, "Event complete")
 			if def.kind == "takeover" then
@@ -195,7 +195,7 @@ local function finishPlayer(race: Race, place: number?)
 	else
 		Session.Notify(s.player, "Race abandoned", Color3.fromRGB(255, 90, 90))
 	end
-	if place or scored(def.kind) then
+	if place then
 		local before = Session.HeatLevel(s)
 		s.heat = math.min(5, s.heat + def.heat * night)
 		if Session.HeatLevel(s) > before then

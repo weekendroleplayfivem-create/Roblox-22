@@ -48,13 +48,20 @@ Collected.OnClientEvent:Connect(function(id: string)
 end)
 
 task.spawn(function()
-	local ok, _, snap = pcall(function()
-		return Shop:InvokeServer("Get")
-	end)
-	if ok and type(snap) == "table" and type(snap.collected) == "table" then
-		for id in snap.collected do
-			found[id] = true
+	-- retry until the server has loaded the profile (it can take a moment after joining)
+	for _ = 1, 20 do
+		local ok, _, snap = pcall(function()
+			return Shop:InvokeServer("Get")
+		end)
+		if ok and type(snap) == "table" then
+			if type(snap.collected) == "table" then
+				for id in snap.collected do
+					found[id] = true
+				end
+			end
+			break
 		end
+		task.wait(1.5)
 	end
 	while not folder do
 		hookFolder()

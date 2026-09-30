@@ -892,7 +892,12 @@ function Police.Init(info: MapBuilder.MapInfo)
 					warn("[Police] update error:", err)
 				end
 			end
-			maintainPatrols()
+			local ok, err = pcall(function()
+				maintainPatrols()
+			end)
+			if not ok then
+				warn("[Police] patrol error:", err)
+			end
 		end
 	end)
 end

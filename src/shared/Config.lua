@@ -883,7 +883,7 @@ table.insert(Config.Races, {
 	id = "beltway_blitz",
 	name = "Beltway Blitz",
 	kind = "circuit",
-	route = { { 0, 0 }, { 8, 0 }, { 16, 0 }, { 16, 8 }, { 16, 16 }, { 8, 16 }, { 0, 16 }, { 0, 8 } },
+	route = { { 8, 0 }, { 16, 0 }, { 16, 8 }, { 16, 16 }, { 8, 16 }, { 0, 16 }, { 0, 8 }, { 0, 0 } },
 	laps = 1,
 	buyIn = 10000,
 	reward = 60000,

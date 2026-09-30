@@ -1168,7 +1168,7 @@ table.insert(Config.Races, {
 	id = "beltway_blitz",
 	name = "Beltway Blitz",
 	kind = "circuit",
-	route = { { 0, 0 }, { 8, 0 }, { 16, 0 }, { 16, 8 }, { 16, 16 }, { 8, 16 }, { 0, 16 }, { 0, 8 } },
+	route = { { 8, 0 }, { 16, 0 }, { 16, 8 }, { 16, 16 }, { 8, 16 }, { 0, 16 }, { 0, 8 }, { 0, 0 } },
 	laps = 1,
 	buyIn = 10000,
 	reward = 60000,
@@ -3901,15 +3901,29 @@ end
 ---------------------------------------------------------------------------
 -- World loop: safehouse banking, drift combos, speed cameras, races, sync
 ---------------------------------------------------------------------------
+local worldTick: (s: Session.Session, dt: number) -> ()
 task.spawn(function()
 	while true do
 		local dt = task.wait(0.1)
 		for _, s in Session.All() do
+			-- one player's error must never stop the loop for everyone
+			local ok, err = pcall(function()
+				worldTick(s, dt)
+			end)
+			if not ok then
+				warn("[World] tick error:", err)
+			end
+		end
+	end
+end)
+
+worldTick = function(s: Session.Session, dt: number)
+	do
 			local car = s.car
 			local root = car and car.PrimaryPart
 			if not car or not root or not car.Parent then
 				Session.Sync(s)
-				continue
+				return
 			end
 			local pos = root.Position
 			local vel = root.AssemblyLinearVelocity
@@ -3918,7 +3932,7 @@ task.spawn(function()
 			-- fell out of the world (the garage interior is underground on purpose)
 			if pos.Y < -40 and not s.inGarage then
 				Vehicles.ResetToRoad(s)
-				continue
+				return
 			end
 
 			-- make sure the driver is seated
@@ -3955,7 +3969,7 @@ task.spawn(function()
 					s.profile.cash += amount
 					s.unbanked = 0
 					Session.Notify(s.player, "BANKED $" .. amount .. " at the safehouse", Color3.fromRGB(80, 255, 140))
-					PlayerData.Save(s.player)
+					task.spawn(PlayerData.Save, s.player) -- DataStore calls yield: never inside the loop
 				end
 				if s.heat > 0 then
 					s.heat = 0
@@ -4008,9 +4022,8 @@ task.spawn(function()
 				end
 			end
 			Session.Sync(s)
-		end
 	end
-end)
+end
 
 print("[" .. Config.GameName .. "] server ready")
 ]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000000B"><Properties><string name="Name">MapBuilder</string><ProtectedString name="Source"><![CDATA[--!strict
@@ -4305,9 +4318,23 @@ local function buildTerrain()
 	terrain.WaterReflectance = 0.6
 	terrain.WaterWaveSize = 0.35
 	terrain.WaterWaveSpeed = 8
+	-- fill in 512-stud chunks: very large single terrain operations can be rejected
+	local CHUNK = 512
 	local function fill(minV: Vector3, maxV: Vector3, material: Enum.Material)
-		local size = maxV - minV
-		terrain:FillBlock(CFrame.new((minV + maxV) / 2), size, material)
+		local x = minV.X
+		while x < maxV.X do
+			local x2 = math.min(x + CHUNK, maxV.X)
+			local z = minV.Z
+			while z < maxV.Z do
+				local z2 = math.min(z + CHUNK, maxV.Z)
+				local lo = Vector3.new(x, minV.Y, z)
+				local hi = Vector3.new(x2, maxV.Y, z2)
+				terrain:FillBlock(CFrame.new((lo + hi) / 2), hi - lo, material)
+				z = z2
+			end
+			x = x2
+			task.wait()
+		end
 	end
 	-- land ring (north + west) with grass
 	fill(Vector3.new(-wall - far, -12, -wall - far), Vector3.new(wall + 170, 0, -wall), Enum.Material.Grass)
@@ -4797,7 +4824,13 @@ function MapBuilder.Build(): MapInfo
 		return nil
 	end
 
-	buildTerrain()
+	-- scenery only: if terrain fails for any reason the city still gets built
+	local terrainOk, terrainErr = pcall(function()
+		buildTerrain()
+	end)
+	if not terrainOk then
+		warn("[MapBuilder] terrain skipped:", terrainErr)
+	end
 	for bx = 0, Grid.Size - 1 do
 		task.wait() -- building ~50k parts: yield between rows so the server never times out
 		for bz = 0, Grid.Size - 1 do
@@ -5962,7 +5995,12 @@ function Police.Init(info: MapBuilder.MapInfo)
 					warn("[Police] update error:", err)
 				end
 			end
-			maintainPatrols()
+			local ok, err = pcall(function()
+				maintainPatrols()
+			end)
+			if not ok then
+				warn("[Police] patrol error:", err)
+			end
 		end
 	end)
 end
@@ -6148,13 +6186,13 @@ local function finishPlayer(race: Race, place: number?)
 			Session.Notify(s.player, "Side bet lost to " .. bet.racer.name .. " (-$" .. bet.stake .. ")", Color3.fromRGB(255, 90, 90))
 		end
 	end
-	if scored(def.kind) then
+	if scored(def.kind) and place then
 		local target = def.driftTarget or 1
 		if race.driftScore >= target then
 			local ratio = math.min(race.driftScore / target, 2)
 			local payout = def.reward * ratio * night * heatMult
 			s.profile.racesWon += 1
-			Session.Banner(s.player, "DRIFT EVENT COMPLETE", "Score " .. math.floor(race.driftScore), GOLD)
+			Session.Banner(s.player, if def.kind == "takeover" then "TAKEOVER COMPLETE" else "DRIFT EVENT COMPLETE", "Score " .. math.floor(race.driftScore), GOLD)
 			Session.AddUnbanked(s, payout, def.name .. " winnings")
 			Session.AddRep(s, if def.kind == "takeover" then 500 else 400, "Event complete")
 			if def.kind == "takeover" then
@@ -6195,7 +6233,7 @@ local function finishPlayer(race: Race, place: number?)
 	else
 		Session.Notify(s.player, "Race abandoned", Color3.fromRGB(255, 90, 90))
 	end
-	if place or scored(def.kind) then
+	if place then
 		local before = Session.HeatLevel(s)
 		s.heat = math.min(5, s.heat + def.heat * night)
 		if Session.HeatLevel(s) > before then
@@ -7197,7 +7235,12 @@ function Traffic.Init()
 				end
 			end
 			if #cars < T.Count then
-				spawnOne()
+				local ok, err = pcall(function()
+					spawnOne()
+				end)
+				if not ok then
+					warn("[Traffic] spawn error:", err)
+				end
 			end
 			task.wait(0.5)
 		end
@@ -7359,27 +7402,34 @@ function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 	-- streaming: the owner must always have their car, and the ground where it lands
 	car.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
 	local target = if s.inGarage then Showroom.CarCFrame.Position else (ground :: CFrame).Position
-	pcall(function()
-		s.player:RequestStreamAroundAsync(target, 4)
-	end)
+	-- The car is held in place until the area around it has streamed in for its owner, so it
+	-- can't drop through ground the client hasn't loaded yet. This never blocks the caller
+	-- (the police and world loops call Spawn too).
+	root.Anchored = true
 	if s.inGarage then
 		-- parked on the showroom turntable while the garage menu is open
 		local hover = car:GetAttribute("HoverCenter")
 		car:PivotTo(Showroom.CarCFrame + Vector3.new(0, (if type(hover) == "number" then hover else 1.5) - 0.7, 0))
-		root.Anchored = true
 	else
 		car:PivotTo(Vehicles.GroundCFrame(ground :: CFrame, car))
 	end
 	car.Parent = carsFolder
 	s.car = car
 	s.stats = stats
-
-	if not s.inGarage then
-		pcall(function()
-			root:SetNetworkOwner(s.player)
-		end)
-	end
 	seatCharacter(s)
+
+	task.spawn(function()
+		pcall(function()
+			s.player:RequestStreamAroundAsync(target, 3)
+		end)
+		-- a Freeze() (race countdown, busted) keeps it anchored until that runs out
+		if s.car == car and car.Parent and not s.inGarage and os.clock() >= s.frozenUntil then
+			root.Anchored = false
+			pcall(function()
+				root:SetNetworkOwner(s.player)
+			end)
+		end
+	end)
 	return car
 end
 
@@ -8150,13 +8200,20 @@ Collected.OnClientEvent:Connect(function(id: string)
 end)
 
 task.spawn(function()
-	local ok, _, snap = pcall(function()
-		return Shop:InvokeServer("Get")
-	end)
-	if ok and type(snap) == "table" and type(snap.collected) == "table" then
-		for id in snap.collected do
-			found[id] = true
+	-- retry until the server has loaded the profile (it can take a moment after joining)
+	for _ = 1, 20 do
+		local ok, _, snap = pcall(function()
+			return Shop:InvokeServer("Get")
+		end)
+		if ok and type(snap) == "table" then
+			if type(snap.collected) == "table" then
+				for id in snap.collected do
+					found[id] = true
+				end
+			end
+			break
 		end
+		task.wait(1.5)
 	end
 	while not folder do
 		hookFolder()
@@ -10983,6 +11040,8 @@ local function refreshCard()
 		return Shop:InvokeServer("Get")
 	end)
 	if not ok or type(snap) ~= "table" then
+		-- the server may still be loading the profile right after joining
+		task.delay(1.5, refreshCard)
 		return
 	end
 	Settings.Load(snap.settings)
