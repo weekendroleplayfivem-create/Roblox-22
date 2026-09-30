@@ -1,1 +1,5 @@
 sourcemap.json
+
+# exported bundles for sharing (generated)
+WantedUnbound_scripts.zip
+WantedUnbound_all_scripts.txt
