@@ -57,7 +57,23 @@ function Showroom.Build(parent: Instance)
 	part(folder, { Name = "Ceiling", Size = Vector3.new(W, 1, D), CFrame = CFrame.new(o + Vector3.new(0, H + 0.5, 0)), Color = rgb(40, 40, 44), Material = Enum.Material.Metal })
 	local wallColor = rgb(150, 150, 152)
 	part(folder, { Name = "Wall", Size = Vector3.new(W, H, 1), CFrame = CFrame.new(o + Vector3.new(0, H / 2, -D / 2)), Color = wallColor, Material = Enum.Material.Concrete })
-	part(folder, { Name = "Wall", Size = Vector3.new(W, H, 1), CFrame = CFrame.new(o + Vector3.new(0, H / 2, D / 2)), Color = wallColor, Material = Enum.Material.Brick })
+	-- front wall with a door opening (34 x 20) and a short exit tunnel behind the roll-up door
+	local sideW = (W - 34) / 2
+	for _, sx in { -1, 1 } do
+		part(folder, { Name = "Wall", Size = Vector3.new(sideW, H, 1), CFrame = CFrame.new(o + Vector3.new(sx * (17 + sideW / 2), H / 2, D / 2)), Color = wallColor, Material = Enum.Material.Brick })
+	end
+	part(folder, { Name = "Wall", Size = Vector3.new(34, H - 20, 1), CFrame = CFrame.new(o + Vector3.new(0, 20 + (H - 20) / 2, D / 2)), Color = wallColor, Material = Enum.Material.Brick })
+	local tunnelLen = 30
+	local tz = D / 2 + tunnelLen / 2
+	part(folder, { Name = "TunnelFloor", Size = Vector3.new(34, 1, tunnelLen), CFrame = CFrame.new(o + Vector3.new(0, -0.5, tz)), Color = rgb(40, 40, 44), Material = Enum.Material.Concrete })
+	part(folder, { Name = "TunnelRoof", Size = Vector3.new(36, 1, tunnelLen), CFrame = CFrame.new(o + Vector3.new(0, 20.5, tz)), Color = rgb(30, 30, 34), Material = Enum.Material.Concrete })
+	for _, sx in { -1, 1 } do
+		part(folder, { Name = "TunnelWall", Size = Vector3.new(1, 20, tunnelLen), CFrame = CFrame.new(o + Vector3.new(sx * 17.5, 10, tz)), Color = rgb(36, 36, 40), Material = Enum.Material.Concrete })
+		for k = 0, 2 do
+			part(folder, { Name = "TunnelLight", Size = Vector3.new(0.3, 0.4, 4), CFrame = CFrame.new(o + Vector3.new(sx * 16.8, 17, D / 2 + 5 + k * 9)), Color = rgb(0, 230, 255), Material = Enum.Material.Neon, CanCollide = false })
+		end
+	end
+	part(folder, { Name = "TunnelEnd", Size = Vector3.new(34, 20, 1), CFrame = CFrame.new(o + Vector3.new(0, 10, D / 2 + tunnelLen)), Color = rgb(8, 8, 10), Material = Enum.Material.SmoothPlastic })
 	part(folder, { Name = "Wall", Size = Vector3.new(1, H, D), CFrame = CFrame.new(o + Vector3.new(-W / 2, H / 2, 0)), Color = wallColor, Material = Enum.Material.Concrete })
 	part(folder, { Name = "Wall", Size = Vector3.new(1, H, D), CFrame = CFrame.new(o + Vector3.new(W / 2, H / 2, 0)), Color = wallColor, Material = Enum.Material.Concrete })
 	-- painted safety stripe along the walls

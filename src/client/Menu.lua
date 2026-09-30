@@ -416,15 +416,17 @@ end
 local activePanel = ""
 local function togglePanel(name: string, show: () -> ())
 	if activePanel == name and panel.Visible then
-		panel.Visible = false
-		card.Visible = true
+		Theme.Show(panel, false, UDim2.fromOffset(640, 0))
+		Theme.Show(card, true, UDim2.fromOffset(460, 0))
 		activePanel = ""
 		return
 	end
 	activePanel = name
 	show()
-	panel.Visible = true
-	card.Visible = false
+	-- slide the new panel in (again, when switching between panels)
+	panel:SetAttribute("Shown", false)
+	Theme.Show(panel, true, UDim2.fromOffset(640, 0))
+	Theme.Show(card, false, UDim2.fromOffset(460, 0))
 end
 
 -- tips bar
@@ -468,6 +470,8 @@ local playButton: Button
 local menuToken = 0
 local LEFT_HOME = left.Position
 local CARD_HOME = card.Position
+card:SetAttribute("Home", CARD_HOME)
+panel:SetAttribute("Home", CARD_HOME)
 local function closeMenu()
 	if Menu.Mode == "closed" then
 		return
@@ -494,6 +498,7 @@ local function closeMenu()
 		end
 		gui.Enabled = false
 		fade.BackgroundTransparency = 1
+		HUD.Intro()
 	end)
 end
 
@@ -504,11 +509,15 @@ local function openMenu(mode: string)
 	Theme.Blur("menu", mode == "pause")
 	-- animate in: columns slide from the sides, buttons cascade, shade fades up
 	left.Position = LEFT_HOME - UDim2.fromOffset(560, 0)
-	card.Position = CARD_HOME + UDim2.fromOffset(460, 0)
-	panel.Position = CARD_HOME
 	local back = TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 	TweenService:Create(left, back, { Position = LEFT_HOME }):Play()
-	TweenService:Create(card, TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out, 0, false, 0.08), { Position = CARD_HOME }):Play()
+	card:SetAttribute("Shown", false)
+	Theme.Show(card, true, UDim2.fromOffset(460, 0))
+	if panel:GetAttribute("Shown") == true then
+		Theme.Show(panel, false, UDim2.fromOffset(640, 0))
+	else
+		panel.Visible = false
+	end
 	for k, btn in buttons do
 		btn.slide.PaddingLeft = UDim.new(0, -120)
 		btn.frame.BackgroundTransparency = 1
@@ -518,8 +527,6 @@ local function openMenu(mode: string)
 	end
 	logoShine.Offset = Vector2.new(-1, 0)
 	TweenService:Create(logoShine, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.Out, 0, false, 0.3), { Offset = Vector2.new(1, 0) }):Play()
-	panel.Visible = false
-	card.Visible = true
 	activePanel = ""
 	Drive.MenuOpen = mode == "title"
 	playButton.setLabel(if mode == "title" then "PLAY" else "RESUME")

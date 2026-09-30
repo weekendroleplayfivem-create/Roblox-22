@@ -16,9 +16,11 @@ local Drive = require(script.Parent.DriveController)
 local Input = require(script.Parent.Input)
 local Scale = require(script.Parent.Scale)
 local Theme = require(script.Parent.Theme)
+local GarageCinematic = require(script.Parent.GarageCinematic)
 local GarageEvent = Remotes:WaitForChild("Garage") :: RemoteEvent
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local player = Players.LocalPlayer
 
 local Garage = {}
@@ -499,20 +501,58 @@ render = function()
 	TAB_RENDER[currentTab]()
 end
 
+-- cards cascade in one after another (tab switches and opening the garage)
+local function cascade()
+	local cards = {}
+	for _, c in content:GetChildren() do
+		if c:IsA("Frame") then
+			table.insert(cards, c)
+		end
+	end
+	table.sort(cards, function(a, b)
+		return a.LayoutOrder < b.LayoutOrder
+	end)
+	for k, c in cards do
+		local pad = new("UIPadding", { PaddingLeft = UDim.new(0, 60) }, c)
+		local bgT = c.BackgroundTransparency
+		c.BackgroundTransparency = 1
+		local info = TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out, 0, false, math.min(k, 10) * 0.035)
+		TweenService:Create(pad, info, { PaddingLeft = UDim.new(0, 0) }):Play()
+		TweenService:Create(c, info, { BackgroundTransparency = bgT }):Play()
+	end
+end
+
 for _, name in { "Cars", "Performance", "Handling", "Visual", "Effects", "Blacklist", "Milestones" } do
 	tabButtons[name] = button(tabs, { Size = UDim2.new(1 / 7, -7, 1, 0), Text = string.upper(name), BackgroundColor3 = Color3.fromRGB(45, 45, 65) }, function()
 		currentTab = name
 		render()
+		cascade()
+		Theme.Pop(tabButtons[name], 0.85)
 	end)
 end
 
 -- Enter / leave the garage interior (the server moves the car onto the turntable).
+-- Both play a cutscene: the roll-up door opens and the car drives in / out.
 function Garage.Enter()
-	GarageEvent:FireServer("enter")
+	local fire = function()
+		GarageEvent:FireServer("enter")
+	end
+	local ok = player:GetAttribute("AtSafehouse") == true and player:GetAttribute("PursuitMode") == "idle" and player:GetAttribute("RaceActive") ~= true
+	if not ok or Garage.InGarage() then
+		fire() -- the server explains why not
+		return
+	end
+	task.spawn(GarageCinematic.Enter, fire)
 end
 
 function Garage.Exit()
-	GarageEvent:FireServer("exit")
+	if not Garage.InGarage() then
+		return
+	end
+	Garage.Toggle(false)
+	task.spawn(GarageCinematic.Exit, function()
+		GarageEvent:FireServer("exit")
+	end)
 end
 
 function Garage.InGarage(): boolean
@@ -529,8 +569,15 @@ end)
 
 -- Showroom camera: slow orbit around the car, framed to the left of the menu
 local orbit = 0.8
+local intro = 0 -- 0..1: sweeping in from wide after arriving
+player:GetAttributeChangedSignal("InGarage"):Connect(function()
+	if Garage.InGarage() then
+		intro = 0
+		orbit = 0.8
+	end
+end)
 RunService:BindToRenderStep("WU_GarageCam", Enum.RenderPriority.Camera.Value + 2, function(dt: number)
-	if not Garage.InGarage() then
+	if not Garage.InGarage() or Drive.Cinematic then
 		return
 	end
 	local car = Drive.Car
@@ -540,9 +587,12 @@ RunService:BindToRenderStep("WU_GarageCam", Enum.RenderPriority.Camera.Value + 2
 	end
 	local camera = workspace.CurrentCamera
 	camera.CameraType = Enum.CameraType.Scriptable
-	orbit += dt * 0.22
+	intro = math.min(1, intro + dt / 2.2)
+	local e = 1 - (1 - intro) ^ 3
+	orbit += dt * (0.22 + (1 - e) * 1.1)
 	local center = root.Position + Vector3.new(0, 1.2, 0)
-	local pos = center + Vector3.new(math.cos(orbit) * 21, 5.5, math.sin(orbit) * 21)
+	local radius = 21 + (1 - e) * 16
+	local pos = center + Vector3.new(math.cos(orbit) * radius, 5.5 + (1 - e) * 9, math.sin(orbit) * radius)
 	local cf = CFrame.lookAt(pos, center)
 	-- shift the aim right so the car sits in the left half of the screen
 	camera.CFrame = CFrame.lookAt(pos, center + cf.RightVector * 6)
@@ -550,13 +600,14 @@ RunService:BindToRenderStep("WU_GarageCam", Enum.RenderPriority.Camera.Value + 2
 end)
 
 function Garage.Toggle(open: boolean?)
-	local want = if open == nil then not window.Visible else open
-	window.Visible = want
+	local want = if open == nil then not Garage.Open else open
 	Garage.Open = want
+	Theme.Show(window, want, UDim2.fromOffset(760, 0))
 	if want then
 		statusText.Text = ""
 		refresh()
 		render()
+		cascade()
 		Input.Select(tabButtons.Cars)
 	else
 		Input.ClearSelection()

@@ -53,7 +53,7 @@ end
 
 local function doPrompt()
 	local action = promptAction
-	if not action then
+	if not action or Drive.Cinematic then
 		return
 	end
 	if action.kind == "race" and action.id then
@@ -92,7 +92,7 @@ ContextActionService:BindAction("WU_Interact", function(_, inputState, inputObje
 end, false, Enum.KeyCode.E, Enum.KeyCode.ButtonB)
 
 ContextActionService:BindAction("WU_Garage", function(_, inputState)
-	if inputState == Enum.UserInputState.Begin then
+	if inputState == Enum.UserInputState.Begin and not Drive.Cinematic then
 		if Garage.InGarage() then
 			Garage.Exit()
 		elseif player:GetAttribute("AtSafehouse") then
@@ -252,7 +252,7 @@ local promptTimer = 0
 local sirenTimer = 0
 RunService.RenderStepped:Connect(function(dt)
 	local car = Drive.Car
-	HUD.Gui.Enabled = not Drive.MenuOpen
+	HUD.Gui.Enabled = not Drive.MenuOpen and not Drive.Cinematic
 	HUD.Update(dt, Drive.Speed, Drive.Nitro, Drive.NitroCapacity, Drive.NitroOn, car)
 	local st = Drive.State
 	HUD.SetEngine(Drive.Gear, Drive.Rpm, st ~= nil and st.speed < -1)

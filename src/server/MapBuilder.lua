@@ -345,14 +345,29 @@ local function safehouse(bx: number, bz: number, buildings: Folder, props: Folde
 		Color = Color3.fromRGB(30, 30, 36),
 		Material = Enum.Material.Asphalt,
 	}, ground)
-	-- garage building at the back (+Z)
-	local garage = anchored({
-		Name = "Garage",
-		Size = Vector3.new(180, 40, 60),
-		CFrame = CFrame.new(c.X, SURFACE + 20, c.Z + 85),
-		Color = Color3.fromRGB(96, 58, 46),
-		Material = Enum.Material.Brick,
-	}, buildings)
+	-- garage building at the back (+Z), built around a real door opening so cars can drive in
+	local brick = Color3.fromRGB(96, 58, 46)
+	local gz = c.Z + 85
+	for _, sx in { -1, 1 } do
+		anchored({ Name = "Garage", Size = Vector3.new(60, 40, 60), CFrame = CFrame.new(c.X + sx * 60, SURFACE + 20, gz), Color = brick, Material = Enum.Material.Brick }, buildings)
+	end
+	anchored({ Name = "Garage", Size = Vector3.new(60, 16, 60), CFrame = CFrame.new(c.X, SURFACE + 32, gz), Color = brick, Material = Enum.Material.Brick }, buildings)
+	-- dim workshop inside the opening
+	anchored({ Name = "GarageBack", Size = Vector3.new(60, 24, 2), CFrame = CFrame.new(c.X, SURFACE + 12, gz + 29), Color = Color3.fromRGB(28, 28, 32), Material = Enum.Material.Concrete }, buildings)
+	anchored({ Name = "GarageFloor", Size = Vector3.new(60, 0.2, 60), CFrame = CFrame.new(c.X, SURFACE + 0.1, gz), Color = Color3.fromRGB(46, 46, 50), Material = Enum.Material.Concrete, CanCollide = false }, props)
+	local innerLamp = anchored({ Name = "GarageLamp", Size = Vector3.new(20, 0.3, 2), CFrame = CFrame.new(c.X, SURFACE + 23.6, gz + 5), Color = Color3.fromRGB(255, 240, 210), Material = Enum.Material.Neon, CanCollide = false }, props)
+	local innerLight = Instance.new("SurfaceLight")
+	innerLight.Face = Enum.NormalId.Bottom
+	innerLight.Range = 30
+	innerLight.Brightness = 1.5
+	innerLight.Color = Color3.fromRGB(255, 225, 180)
+	innerLight.Parent = innerLamp
+	-- neon frame around the opening
+	local frameColor = Color3.fromRGB(0, 255, 200)
+	for _, sx in { -1, 1 } do
+		anchored({ Name = "DoorFrame", Size = Vector3.new(0.8, 24.8, 0.8), CFrame = CFrame.new(c.X + sx * 30.4, SURFACE + 12.4, c.Z + 54.6), Color = frameColor, Material = Enum.Material.Neon, CanCollide = false }, props)
+	end
+	anchored({ Name = "DoorFrame", Size = Vector3.new(61.6, 0.8, 0.8), CFrame = CFrame.new(c.X, SURFACE + 24.4, c.Z + 54.6), Color = frameColor, Material = Enum.Material.Neon, CanCollide = false }, props)
 	local sign = anchored({
 		Name = "GarageSign",
 		Size = Vector3.new(120, 12, 1),
@@ -374,17 +389,23 @@ local function safehouse(bx: number, bz: number, buildings: Folder, props: Folde
 	t.Parent = gui
 	gui.Parent = sign
 	sign.CFrame = CFrame.lookAt(sign.Position, sign.Position - Vector3.zAxis)
+	-- roll-up door: a model so clients can animate it opening for the garage cutscene
+	local doorModel = Instance.new("Model")
+	doorModel.Name = "SafehouseGarageDoor"
 	local door = anchored({
-		Name = "GarageDoor",
-		Size = Vector3.new(60, 24, 1),
-		CFrame = CFrame.new(c.X, SURFACE + 12, c.Z + 54.6),
-		Color = Color3.fromRGB(0, 255, 200),
-		Material = Enum.Material.Neon,
-		Transparency = 0.4,
+		Name = "Door",
+		Size = Vector3.new(60, 24, 0.6),
+		CFrame = CFrame.new(c.X, SURFACE + 12, c.Z + 54.8),
+		Color = Color3.fromRGB(128, 132, 138),
+		Material = Enum.Material.Metal,
 		CanCollide = false,
-	}, props)
-	local _ = garage
-	local _ = door
+	}, doorModel)
+	for y = 1.5, 22.5, 1.5 do
+		anchored({ Name = "Slat", Size = Vector3.new(60, 0.18, 0.1), CFrame = CFrame.new(c.X, SURFACE + y, c.Z + 54.45), Color = Color3.fromRGB(92, 96, 102), Material = Enum.Material.Metal, CanCollide = false, CanQuery = false }, doorModel)
+	end
+	anchored({ Name = "Handle", Size = Vector3.new(6, 0.5, 0.3), CFrame = CFrame.new(c.X, SURFACE + 1.4, c.Z + 54.35), Color = Color3.fromRGB(40, 40, 44), Material = Enum.Material.Metal, CanCollide = false, CanQuery = false }, doorModel)
+	doorModel.PrimaryPart = door
+	doorModel.Parent = props
 
 	local pad = anchored({
 		Name = "SafehousePad",

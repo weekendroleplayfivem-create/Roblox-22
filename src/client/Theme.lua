@@ -163,4 +163,72 @@ function Theme.Popup(gui: ScreenGui, backdrop: GuiObject, holder: CanvasGroup, o
 	end
 end
 
+-- Slide a panel in / out when its visibility changes. Safe to call every frame: it only animates
+-- on a change. `offset` is where it slides from (relative to its home position).
+local showTokens: { [Instance]: number } = {}
+local function homeOf(obj: GuiObject): UDim2
+	local home = obj:GetAttribute("Home")
+	if typeof(home) ~= "UDim2" then
+		obj:SetAttribute("Home", obj.Position)
+		return obj.Position
+	end
+	return home
+end
+
+function Theme.SetHome(obj: GuiObject, pos: UDim2)
+	obj:SetAttribute("Home", pos)
+	if obj:GetAttribute("Shown") ~= false then
+		obj.Position = pos
+	end
+end
+
+function Theme.Show(obj: GuiObject, visible: boolean, offset: UDim2?)
+	local shown = obj:GetAttribute("Shown")
+	if shown == nil then
+		shown = obj.Visible
+	end
+	if shown == visible then
+		return
+	end
+	obj:SetAttribute("Shown", visible)
+	local home = homeOf(obj)
+	local off = offset or UDim2.fromOffset(0, 30)
+	local token = (showTokens[obj] or 0) + 1
+	showTokens[obj] = token
+	if visible then
+		obj.Visible = true
+		obj.Position = home + off
+		Theme.Tween(obj, 0.42, { Position = home }, Enum.EasingStyle.Back)
+	else
+		Theme.Tween(obj, 0.2, { Position = home + off }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		task.delay(0.2, function()
+			if showTokens[obj] == token then
+				obj.Visible = false
+			end
+		end)
+	end
+end
+
+-- Slide something in from an offset to its home position (entrances), with an optional delay.
+function Theme.SlideFrom(obj: GuiObject, offset: UDim2, delay: number?)
+	local home = homeOf(obj)
+	obj.Position = home + offset
+	local t = TweenService:Create(obj, TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out, 0, false, delay or 0), { Position = home })
+	t:Play()
+end
+
+-- Quick "pop" for buttons and chips: needs its own UIScale child named PopScale.
+function Theme.Pop(obj: GuiObject, from: number?)
+	local scale = obj:FindFirstChild("PopScale") :: UIScale?
+	if not scale then
+		local s = Instance.new("UIScale")
+		s.Name = "PopScale"
+		s.Parent = obj
+		scale = s
+	end
+	local sc = scale :: UIScale
+	sc.Scale = from or 0.8
+	Theme.Tween(sc, 0.35, { Scale = 1 }, Enum.EasingStyle.Back)
+end
+
 return Theme

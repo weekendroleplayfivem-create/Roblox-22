@@ -128,9 +128,13 @@ render = function()
 end
 
 function BlackMarket.Toggle(open: boolean?)
-	local want = if open == nil then not window.Visible else open
-	window.Visible = want
+	local want = if open == nil then not BlackMarket.Open else open
+	if want == BlackMarket.Open then
+		return
+	end
 	BlackMarket.Open = want
+	Theme.Show(window, want, UDim2.fromOffset(0, 700))
+	Sounds.Tick(if want then 1.1 else 0.85, 0.4)
 	if want then
 		status.Text = ""
 		local ok, _, snap = Shop:InvokeServer("Get")

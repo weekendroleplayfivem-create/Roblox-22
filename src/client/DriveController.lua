@@ -37,6 +37,8 @@ Drive.Flat = false
 Drive.BurstMode = false
 Drive.Bursting = false
 Drive.MenuOpen = false -- the title screen drives the camera while this is true
+Drive.Cinematic = false -- a cutscene owns the camera and the controls are locked
+Drive.CinematicRpm = nil :: number? -- engine sound override during cutscenes
 Drive.Shake = 0 -- camera shake impulse (crashes)
 Drive.NearMissCombo = 0
 Drive.OnNearMiss = {} :: { (combo: number) -> () }
@@ -228,6 +230,9 @@ RunService.PreSimulation:Connect(function(dt: number)
 	if math.abs(Drive.TouchSteer) > math.abs(steer) then
 		steer = Drive.TouchSteer
 	end
+	if Drive.Cinematic then
+		throttle, steer = 0, 0
+	end
 	-- smooth the inputs: keyboard steering ramps in and recentres quickly, like a real rack
 	local steerRate = if math.abs(steer) < math.abs(smoothSteer) or steer * smoothSteer < 0 then 9 else 5.5
 	smoothSteer += (steer - smoothSteer) * math.min(1, dt * steerRate)
@@ -411,7 +416,7 @@ end)
 -- Chase camera
 ---------------------------------------------------------------------------
 RunService:BindToRenderStep("WU_ChaseCam", Enum.RenderPriority.Camera.Value + 1, function(dt)
-	if Drive.MenuOpen or player:GetAttribute("InGarage") then
+	if Drive.MenuOpen or Drive.Cinematic or player:GetAttribute("InGarage") then
 		return
 	end
 	local car = Drive.Car

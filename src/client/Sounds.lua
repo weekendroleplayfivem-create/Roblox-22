@@ -307,7 +307,12 @@ RunService.RenderStepped:Connect(function(dt: number)
 	if e then
 		shiftDip = math.max(0, shiftDip - dt)
 		local load = math.max(Drive.Throttle, 0)
-		setEngine(e, Drive.Rpm, load, Drive.NitroOn)
+		local cutRpm = Drive.CinematicRpm
+		if cutRpm then
+			setEngine(e, cutRpm, 0.5, false)
+		else
+			setEngine(e, Drive.Rpm, load, Drive.NitroOn)
+		end
 		if shiftDip > 0 then
 			e.rumble.Volume *= 0.35
 		end

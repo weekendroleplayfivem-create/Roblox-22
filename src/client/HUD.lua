@@ -253,7 +253,7 @@ HUD.PromptButton = promptButton
 
 function HUD.SetPrompt(text: string?)
 	if not text then
-		promptButton.Visible = false
+		Theme.Show(promptButton, false, UDim2.fromOffset(0, 80))
 		return
 	end
 	-- split a leading key label like "[E]", "(B)" or "TAP" into the badge
@@ -269,7 +269,7 @@ function HUD.SetPrompt(text: string?)
 		promptText.Text = text
 		keyBadge.Visible = false
 	end
-	promptButton.Visible = true
+	Theme.Show(promptButton, true, UDim2.fromOffset(0, 80))
 end
 
 -- device hint, bottom centre, fades after a while
@@ -391,7 +391,7 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	local bust = num("Bust")
 	bustBack.Visible = bust > 0.01
 	bustFill.Size = UDim2.fromScale(bust, 1)
-	starPill.Visible = level > 0 or mode ~= "idle"
+	Theme.Show(starPill, level > 0 or mode ~= "idle", UDim2.fromOffset(0, -80))
 
 	-- wallet
 	cashLabel.Text = "$" .. commas(num("Cash"))
@@ -409,7 +409,7 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 	-- weapon
 	local weaponId = player:GetAttribute("Weapon")
 	local weaponDef = if type(weaponId) == "string" and weaponId ~= "" then Config.GetWeapon(weaponId) else nil
-	weaponFrame.Visible = weaponDef ~= nil
+	Theme.Show(weaponFrame, weaponDef ~= nil, UDim2.fromOffset(320, 0))
 	if weaponDef then
 		local left = num("WeaponReadyAt") - workspace:GetServerTimeNow()
 		local ready = left <= 0
@@ -420,11 +420,15 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 
 	-- drift combo
 	local combo = num("DriftCombo")
-	driftLabel.Text = if combo > 50 then "DRIFT  " .. commas(combo) else ""
+	local drifting = combo > 50
+	if drifting and driftLabel.Text == "" then
+		Theme.Pop(driftLabel, 1.6)
+	end
+	driftLabel.Text = if drifting then "DRIFT  " .. commas(combo) else ""
 
 	-- race
 	local racing = player:GetAttribute("RaceActive") == true
-	racePanel.Visible = racing
+	Theme.Show(racePanel, racing, UDim2.fromOffset(340, 0))
 	if racing then
 		raceName.Text = string.upper(tostring(player:GetAttribute("RaceName") or ""))
 		local kind = player:GetAttribute("RaceKind")
@@ -550,11 +554,19 @@ function HUD.SetTouchLayout(on: boolean)
 	for f, d in defaults do
 		local t = if on then TOUCH[f] else d
 		if t then
-			f.Position = t.pos
 			f.AnchorPoint = t.anchor
+			Theme.SetHome(f, t.pos)
 		end
 	end
 	controlsLabel.Visible = not on
+end
+
+-- Entrance: the HUD panels fly in from the screen edges (after the menu or a cutscene)
+function HUD.Intro()
+	Theme.SlideFrom(wallet, UDim2.fromOffset(-420, 0), 0)
+	Theme.SlideFrom(radarHolder, UDim2.fromOffset(-360, 0), 0.08)
+	Theme.SlideFrom(speedo, UDim2.fromOffset(0, 360), 0.12)
+	Theme.SlideFrom(heatFrame, UDim2.fromOffset(0, -160), 0.16)
 end
 
 local _ = promptStroke
