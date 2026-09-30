@@ -107,6 +107,48 @@ Config.Cars = {
 		style = "muscle",
 	},
 	{
+		id = "kitsune",
+		name = "Kitsune S15",
+		class = "C",
+		price = 22000,
+		maxSpeed = 150,
+		accel = 50,
+		brake = 95,
+		turn = 2.75,
+		grip = 5.4,
+		nitroMult = 1.33,
+		color = Color3.fromRGB(235, 235, 240),
+		style = "coupe",
+	},
+	{
+		id = "rally",
+		name = "Rally Hatch R",
+		class = "B",
+		price = 32000,
+		maxSpeed = 156,
+		accel = 62,
+		brake = 105,
+		turn = 2.6,
+		grip = 7.2,
+		nitroMult = 1.33,
+		color = Color3.fromRGB(30, 90, 200),
+		style = "hatch",
+	},
+	{
+		id = "veloce",
+		name = "Veloce V12",
+		class = "S",
+		price = 180000,
+		maxSpeed = 198,
+		accel = 70,
+		brake = 110,
+		turn = 2.45,
+		grip = 6.8,
+		nitroMult = 1.37,
+		color = Color3.fromRGB(200, 20, 30),
+		style = "hyper",
+	},
+	{
 		id = "apex",
 		name = "Apex Hyper X",
 		class = "S",
@@ -766,11 +808,20 @@ end
 -- audio id from the Creator Store (for example "rbxassetid://1234567890"). Empty = off.
 ---------------------------------------------------------------------------
 Config.Sounds = {
-	Engine = "", -- looped engine sound, pitch follows your speed
+	-- Optional audio ids ("rbxassetid://1234567890") from the Creator Store. When empty, the game
+	-- uses its synthesized engine / tyre sounds built from Roblox's built-in sounds.
+	Engine = "", -- looped engine recording (pitch follows RPM)
 	Siren = "", -- looped police siren
-	NearMiss = "rbxasset://sounds/swoosh.wav",
-	Checkpoint = "rbxasset://sounds/electronicpingshort.wav",
-	Banner = "rbxasset://sounds/electronicpingshort.wav",
+	Skid = "", -- looped tyre screech
+
+	-- Sounds that ship with every Roblox client (content/sounds)
+	Builtin = {
+		Wind = "rbxasset://sounds/action_falling.ogg", -- noise loop: wind, engine + tyre synth
+		Thud = "rbxasset://sounds/action_jump_land.mp3", -- impacts
+		Explosion = "rbxasset://sounds/impact_explosion_03.mp3", -- wrecks, backfires
+		Tick = "rbxasset://sounds/volume_slider.ogg", -- UI clicks, checkpoints
+		Rattle = "rbxasset://sounds/action_footsteps_plastic.mp3", -- flat tyre rattle
+	},
 }
 
 Config.StartingCash = 5000

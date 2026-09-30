@@ -11,10 +11,17 @@ local Shop = Remotes:WaitForChild("Shop") :: RemoteFunction
 local ChallengeRival = Remotes:WaitForChild("ChallengeRival") :: RemoteEvent
 
 local HUD = require(script.Parent.HUD)
+local Sounds = require(script.Parent.Sounds)
+local Drive = require(script.Parent.DriveController)
+local GarageEvent = Remotes:WaitForChild("Garage") :: RemoteEvent
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local player = Players.LocalPlayer
 
 local Garage = {}
 Garage.Open = false
 Garage.Toggle = function(_open: boolean?) end
+Garage.Exit = function() end
 
 local PINK = Color3.fromRGB(255, 40, 160)
 local CYAN = Color3.fromRGB(0, 240, 255)
@@ -64,14 +71,18 @@ local function button(parent: Instance, props: { [string]: any }, onClick: () ->
 	local b = new("TextButton", base, parent)
 	corner(b, 8)
 	new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, b)
-	b.Activated:Connect(onClick)
+	b.Activated:Connect(function()
+		Sounds.Tick(1.2, 0.4)
+		onClick()
+	end)
 	return b
 end
 
 local window = new("Frame", {
-	AnchorPoint = Vector2.new(0.5, 0.5),
-	Position = UDim2.fromScale(0.5, 0.5),
-	Size = UDim2.new(0.8, 0, 0.75, 0),
+	-- menu on the right so the car on the turntable stays visible
+	AnchorPoint = Vector2.new(1, 0.5),
+	Position = UDim2.new(1, -20, 0.5, 0),
+	Size = UDim2.new(0.5, 0, 0.86, 0),
 	BackgroundColor3 = PANEL,
 	BackgroundTransparency = 0.05,
 	Visible = false,
@@ -79,12 +90,12 @@ local window = new("Frame", {
 }, HUD.Gui)
 corner(window, 16)
 new("UIStroke", { Color = PINK, Thickness = 3 }, window)
-new("UISizeConstraint", { MaxSize = Vector2.new(900, 600), MinSize = Vector2.new(320, 300) }, window)
+new("UISizeConstraint", { MaxSize = Vector2.new(640, 680), MinSize = Vector2.new(320, 300) }, window)
 
 text(window, { Position = UDim2.fromOffset(20, 10), Size = UDim2.new(0.5, 0, 0, 36), Text = "SAFEHOUSE GARAGE", Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
 local cashText = text(window, { Position = UDim2.new(0.5, 0, 0, 14), Size = UDim2.new(0.5, -70, 0, 28), Text = "", TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = Color3.fromRGB(120, 255, 150) })
 button(window, { Position = UDim2.new(1, -56, 0, 10), Size = UDim2.fromOffset(44, 36), Text = "X", BackgroundColor3 = Color3.fromRGB(80, 30, 50) }, function()
-	Garage.Toggle(false)
+	Garage.Exit()
 end)
 
 local tabs = new("Frame", { Position = UDim2.fromOffset(20, 56), Size = UDim2.new(1, -40, 0, 36), BackgroundTransparency = 1 }, window)
@@ -481,6 +492,49 @@ for _, name in { "Cars", "Performance", "Handling", "Visual", "Effects", "Blackl
 		render()
 	end)
 end
+
+-- Enter / leave the garage interior (the server moves the car onto the turntable).
+function Garage.Enter()
+	GarageEvent:FireServer("enter")
+end
+
+function Garage.Exit()
+	GarageEvent:FireServer("exit")
+end
+
+function Garage.InGarage(): boolean
+	return player:GetAttribute("InGarage") == true
+end
+
+player:GetAttributeChangedSignal("InGarage"):Connect(function()
+	local inside = Garage.InGarage()
+	Garage.Toggle(inside)
+	if inside then
+		Sounds.Play("rbxasset://sounds/action_jump_land.mp3", 0.5, 0.45)
+	end
+end)
+
+-- Showroom camera: slow orbit around the car, framed to the left of the menu
+local orbit = 0.8
+RunService:BindToRenderStep("WU_GarageCam", Enum.RenderPriority.Camera.Value + 2, function(dt: number)
+	if not Garage.InGarage() then
+		return
+	end
+	local car = Drive.Car
+	local root = car and car.PrimaryPart
+	if not root then
+		return
+	end
+	local camera = workspace.CurrentCamera
+	camera.CameraType = Enum.CameraType.Scriptable
+	orbit += dt * 0.22
+	local center = root.Position + Vector3.new(0, 1.2, 0)
+	local pos = center + Vector3.new(math.cos(orbit) * 21, 5.5, math.sin(orbit) * 21)
+	local cf = CFrame.lookAt(pos, center)
+	-- shift the aim right so the car sits in the left half of the screen
+	camera.CFrame = CFrame.lookAt(pos, center + cf.RightVector * 6)
+	camera.FieldOfView = 55
+end)
 
 function Garage.Toggle(open: boolean?)
 	local want = if open == nil then not window.Visible else open

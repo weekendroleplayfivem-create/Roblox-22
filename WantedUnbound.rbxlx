@@ -1,4 +1,4 @@
-<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4"><Item class="Workspace" referent="RBX0000000000000000000000000000001C"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">false</bool></Properties></Item><Item class="Lighting" referent="RBX0000000000000000000000000000001D"><Properties><string name="Name">Lighting</string><token name="Technology">4</token></Properties></Item><Item class="ReplicatedStorage" referent="RBX0000000000000000000000000000001E"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">Shared</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">CarPhysics</string><ProtectedString name="Source"><![CDATA[--!strict
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4"><Item class="Workspace" referent="RBX0000000000000000000000000000001E"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">false</bool></Properties></Item><Item class="Lighting" referent="RBX0000000000000000000000000000001F"><Properties><string name="Name">Lighting</string><token name="Technology">4</token></Properties></Item><Item class="ReplicatedStorage" referent="RBX00000000000000000000000000000020"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">Shared</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">CarPhysics</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Arcade driving model shared by the player's car (simulated on the client that owns it)
 -- and AI cars (police and rivals, simulated on the server).
 --
@@ -310,6 +310,48 @@ Config.Cars = {
 		nitroMult = 1.36,
 		color = Color3.fromRGB(30, 30, 35),
 		style = "muscle",
+	},
+	{
+		id = "kitsune",
+		name = "Kitsune S15",
+		class = "C",
+		price = 22000,
+		maxSpeed = 150,
+		accel = 50,
+		brake = 95,
+		turn = 2.75,
+		grip = 5.4,
+		nitroMult = 1.33,
+		color = Color3.fromRGB(235, 235, 240),
+		style = "coupe",
+	},
+	{
+		id = "rally",
+		name = "Rally Hatch R",
+		class = "B",
+		price = 32000,
+		maxSpeed = 156,
+		accel = 62,
+		brake = 105,
+		turn = 2.6,
+		grip = 7.2,
+		nitroMult = 1.33,
+		color = Color3.fromRGB(30, 90, 200),
+		style = "hatch",
+	},
+	{
+		id = "veloce",
+		name = "Veloce V12",
+		class = "S",
+		price = 180000,
+		maxSpeed = 198,
+		accel = 70,
+		brake = 110,
+		turn = 2.45,
+		grip = 6.8,
+		nitroMult = 1.37,
+		color = Color3.fromRGB(200, 20, 30),
+		style = "hyper",
 	},
 	{
 		id = "apex",
@@ -971,11 +1013,20 @@ end
 -- audio id from the Creator Store (for example "rbxassetid://1234567890"). Empty = off.
 ---------------------------------------------------------------------------
 Config.Sounds = {
-	Engine = "", -- looped engine sound, pitch follows your speed
+	-- Optional audio ids ("rbxassetid://1234567890") from the Creator Store. When empty, the game
+	-- uses its synthesized engine / tyre sounds built from Roblox's built-in sounds.
+	Engine = "", -- looped engine recording (pitch follows RPM)
 	Siren = "", -- looped police siren
-	NearMiss = "rbxasset://sounds/swoosh.wav",
-	Checkpoint = "rbxasset://sounds/electronicpingshort.wav",
-	Banner = "rbxasset://sounds/electronicpingshort.wav",
+	Skid = "", -- looped tyre screech
+
+	-- Sounds that ship with every Roblox client (content/sounds)
+	Builtin = {
+		Wind = "rbxasset://sounds/action_falling.ogg", -- noise loop: wind, engine + tyre synth
+		Thud = "rbxasset://sounds/action_jump_land.mp3", -- impacts
+		Explosion = "rbxasset://sounds/impact_explosion_03.mp3", -- wrecks, backfires
+		Tick = "rbxasset://sounds/volume_slider.ogg", -- UI clicks, checkpoints
+		Rattle = "rbxasset://sounds/action_footsteps_plastic.mp3", -- flat tyre rattle
+	},
 }
 
 Config.StartingCash = 5000
@@ -1091,7 +1142,7 @@ function Signals.Now(): number
 end
 
 return Signals
-]]></ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX0000000000000000000000000000001F"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000012"><Properties><string name="Name">Server</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000006"><Properties><string name="Name">AIDriver</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX00000000000000000000000000000021"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Folder" referent="RBX00000000000000000000000000000013"><Properties><string name="Name">Server</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000006"><Properties><string name="Name">AIDriver</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Server-side driver for AI cars (police and race rivals). Each AI has a `think` callback
 -- that picks a goal; AIDriver handles road-grid navigation, steering, unsticking and
 -- runs the shared arcade physics.
@@ -1905,6 +1956,7 @@ local STYLES: { [string]: Dims } = {
 	hyper = { W = 5.9, L = 13.4, c = 0.35, top = 1.95, roof = 3.25, r = 1.05, cabS = 0.3, cabE = 0.66, ws = 2.6, rw = 2.6, hood = 0.2, fAxle = 0.18, rAxle = 0.2, spoiler = 3, fullTail = true, exhausts = 2 },
 	muscle = { W = 5.9, L = 14, c = 0.5, top = 2.5, roof = 3.9, r = 1.05, cabS = 0.42, cabE = 0.8, ws = 2.2, rw = 1.8, hood = 0.25, fAxle = 0.18, rAxle = 0.17, spoiler = 2, fullTail = true, exhausts = 4 },
 	sedan = { W = 5.8, L = 14, c = 0.5, top = 2.45, roof = 4.1, r = 1.05, cabS = 0.31, cabE = 0.8, ws = 2.4, rw = 2.3, hood = 0.25, fAxle = 0.19, rAxle = 0.18, spoiler = 1, fullTail = false, exhausts = 1 },
+	hatch = { W = 5.6, L = 12, c = 0.5, top = 2.35, roof = 4.0, r = 1.0, cabS = 0.33, cabE = 0.93, ws = 2.3, rw = 0.9, hood = 0.25, fAxle = 0.17, rAxle = 0.15, spoiler = 1, fullTail = false, exhausts = 1 },
 	suv = { W = 6.2, L = 14.2, c = 0.85, top = 3.2, roof = 5.1, r = 1.25, cabS = 0.28, cabE = 0.93, ws = 2.0, rw = 0.8, hood = 0.2, fAxle = 0.18, rAxle = 0.17, spoiler = 1, fullTail = false, exhausts = 1 },
 }
 
@@ -1917,6 +1969,7 @@ local GLASS = Color3.fromRGB(20, 26, 36)
 type Ctx = {
 	model: Model,
 	chassis: BasePart,
+	body: BasePart, -- sprung body: everything except the wheels hangs off this
 }
 
 local function setup(p: BasePart, ctx: Ctx, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?)
@@ -1945,14 +1998,14 @@ end
 local function box(ctx: Ctx, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?, weldTarget: BasePart?): Part
 	local p = Instance.new("Part")
 	setup(p, ctx, name, size, cf, color, material)
-	weldTo(weldTarget or ctx.chassis, p)
+	weldTo(weldTarget or ctx.body, p)
 	return p
 end
 
 local function wedge(ctx: Ctx, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?): WedgePart
 	local p = Instance.new("WedgePart")
 	setup(p, ctx, name, size, cf, color, material)
-	weldTo(ctx.chassis, p)
+	weldTo(ctx.body, p)
 	return p
 end
 
@@ -1960,7 +2013,7 @@ local function cylinder(ctx: Ctx, name: string, size: Vector3, cf: CFrame, color
 	local p = Instance.new("Part")
 	p.Shape = Enum.PartType.Cylinder
 	setup(p, ctx, name, size, cf, color, material)
-	weldTo(weldTarget or ctx.chassis, p)
+	weldTo(weldTarget or ctx.body, p)
 	return p
 end
 
@@ -2009,7 +2062,7 @@ local function buildWheel(ctx: Ctx, d: Dims, x: number, z: number, front: boolea
 	local style = opts.rim or 1
 	local width = if opts.kit == 3 then 1.35 else 1.15
 
-	cylinder(ctx, "Tire", Vector3.new(width, r * 2, r * 2), hubCF, TIRE, Enum.Material.SmoothPlastic, hub)
+	cylinder(ctx, "Tire", Vector3.new(width, r * 2, r * 2), hubCF, TIRE, Enum.Material.Rubber, hub)
 	local outer = side * (width / 2)
 	local lipR = if style == 4 then 0.8 else 0.72
 	local barrelR = if style == 4 then 0.5 else 0.64
@@ -2034,7 +2087,31 @@ local function buildWheel(ctx: Ctx, d: Dims, x: number, z: number, front: boolea
 	cylinder(ctx, "Cap", Vector3.new(0.08, r * 0.28, r * 0.28), hubCF * CFrame.new(outer + side * 0.05, 0, 0), rimColor, Enum.Material.Metal, hub)
 
 	-- caliper stays still (welded to the chassis)
-	box(ctx, "Caliper", Vector3.new(0.08, r * 0.45, r * 0.32), hubCF * CFrame.new(outer + side * 0.015, r * 0.32, r * 0.18), Color3.fromRGB(200, 30, 35))
+	box(ctx, "Caliper", Vector3.new(0.08, r * 0.45, r * 0.32), hubCF * CFrame.new(outer + side * 0.015, r * 0.32, r * 0.18), Color3.fromRGB(200, 30, 35), nil, chassis)
+
+	-- skid marks: a flat trail under the rear tyres, switched on locally while sliding
+	if not front then
+		local a0 = Instance.new("Attachment")
+		a0.Name = "SkidA"
+		a0.CFrame = chassis.CFrame:ToObjectSpace(CFrame.new(x - 0.45, 0.06, z))
+		a0.Parent = chassis
+		local a1 = Instance.new("Attachment")
+		a1.Name = "SkidB"
+		a1.CFrame = chassis.CFrame:ToObjectSpace(CFrame.new(x + 0.45, 0.06, z))
+		a1.Parent = chassis
+		local trail = Instance.new("Trail")
+		trail.Name = "SkidMark"
+		trail.Attachment0 = a0
+		trail.Attachment1 = a1
+		trail.FaceCamera = false
+		trail.Color = ColorSequence.new(Color3.fromRGB(18, 18, 18))
+		trail.Transparency = NumberSequence.new(0.35, 1)
+		trail.Lifetime = 5
+		trail.MinLength = 0.2
+		trail.LightInfluence = 1
+		trail.Enabled = false
+		trail.Parent = chassis
+	end
 end
 
 function CarBuilder.Build(opts: BuildOptions): Model
@@ -2056,7 +2133,24 @@ function CarBuilder.Build(opts: BuildOptions): Model
 	chassis.CFrame = CFrame.new(0, chassisH / 2, 0)
 	chassis.Parent = model
 	model.PrimaryPart = chassis
-	local ctx: Ctx = { model = model, chassis = chassis }
+	-- The body root is joined with a Weld whose C0 the client animates for body roll and pitch.
+	local bodyRoot = Instance.new("Part")
+	bodyRoot.Name = "BodyRoot"
+	bodyRoot.Size = Vector3.new(0.2, 0.2, 0.2)
+	bodyRoot.Transparency = 1
+	bodyRoot.CanCollide = false
+	bodyRoot.CanQuery = false
+	bodyRoot.CanTouch = false
+	bodyRoot.Massless = true
+	bodyRoot.CFrame = chassis.CFrame
+	bodyRoot.Parent = model
+	local bodyWeld = Instance.new("Weld")
+	bodyWeld.Name = "BodyWeld"
+	bodyWeld.Part0 = chassis
+	bodyWeld.Part1 = bodyRoot
+	bodyWeld.C0 = CFrame.identity
+	bodyWeld.Parent = bodyRoot
+	local ctx: Ctx = { model = model, chassis = chassis, body = bodyRoot }
 
 	-- keep the car upright (primary axis = attachment X axis, pointed up)
 	local att = Instance.new("Attachment")
@@ -2629,6 +2723,7 @@ local Session = require(script.Parent.Session)
 local Vehicles = require(script.Parent.Vehicles)
 local Police = require(script.Parent.Police)
 local Traffic = require(script.Parent.Traffic)
+local Showroom = require(script.Parent.Showroom)
 local Races = require(script.Parent.Races)
 
 ---------------------------------------------------------------------------
@@ -2649,6 +2744,8 @@ local nitroEvent = remote("RemoteEvent", "NitroState") :: RemoteEvent
 local raceEvent = remote("RemoteEvent", "RequestRace") :: RemoteEvent
 local respawnEvent = remote("RemoteEvent", "RespawnCar") :: RemoteEvent
 local rivalEvent = remote("RemoteEvent", "ChallengeRival") :: RemoteEvent
+local garageEvent = remote("RemoteEvent", "Garage") :: RemoteEvent
+local exitGarage: (s: Session.Session, respawn: boolean) -> ()
 local quitEvent = remote("RemoteEvent", "QuitRace") :: RemoteEvent
 local shopFunction = remote("RemoteFunction", "Shop") :: RemoteFunction
 remotes.Parent = ReplicatedStorage
@@ -2661,6 +2758,7 @@ local mapInfo = MapBuilder.Build()
 Vehicles.SetSpawns(mapInfo.safehouseSpawns)
 Police.Init(mapInfo)
 Traffic.Init()
+Showroom.Build(workspace:WaitForChild("Map"))
 Police.SetBustedCallback(function(s)
 	Races.Cancel(s)
 end)
@@ -2835,6 +2933,42 @@ quitEvent.OnServerEvent:Connect(function(player)
 	end
 end)
 
+---------------------------------------------------------------------------
+-- Garage: press E at the safehouse to drive inside the workshop
+---------------------------------------------------------------------------
+exitGarage = function(s: Session.Session, respawn: boolean)
+	if not s.inGarage then
+		return
+	end
+	s.inGarage = false
+	s.player:SetAttribute("InGarage", false)
+	if respawn then
+		Vehicles.Spawn(s, Vehicles.NextSafehouseSpawn())
+		Vehicles.Freeze(s, 0.5)
+	end
+end
+
+garageEvent.OnServerEvent:Connect(function(player, action)
+	local s = Session.Get(player)
+	if not s then
+		return
+	end
+	if action == "enter" then
+		if s.inGarage then
+			return
+		end
+		if not s.atSafehouse or s.mode ~= "idle" or s.race then
+			Session.Notify(player, "Drive to the safehouse (without cops on you) to enter the garage", Color3.fromRGB(255, 90, 90))
+			return
+		end
+		s.inGarage = true
+		Vehicles.Spawn(s)
+		player:SetAttribute("InGarage", true)
+	elseif action == "exit" then
+		exitGarage(s, true)
+	end
+end)
+
 rivalEvent.OnServerEvent:Connect(function(player, rank)
 	local s = Session.Get(player)
 	if not s or type(rank) ~= "number" then
@@ -2857,6 +2991,7 @@ rivalEvent.OnServerEvent:Connect(function(player, rank)
 		Session.Notify(player, "Challenge the Blacklist from the safehouse", Color3.fromRGB(255, 90, 90))
 		return
 	end
+	exitGarage(s, false)
 	local ok, msg = Races.Start(s, Races.RivalDef(rival), rival)
 	if not ok then
 		Session.Notify(player, msg, Color3.fromRGB(255, 90, 90))
@@ -3033,8 +3168,8 @@ task.spawn(function()
 			local vel = root.AssemblyLinearVelocity
 			local speed = vel.Magnitude
 
-			-- fell out of the world
-			if pos.Y < -40 then
+			-- fell out of the world (the garage interior is underground on purpose)
+			if pos.Y < -40 and not s.inGarage then
 				Vehicles.ResetToRoad(s)
 				continue
 			end
@@ -3047,7 +3182,7 @@ task.spawn(function()
 
 			-- safehouse: bank unbanked cash and clear heat (Unbound)
 			local flat = Vector3.new(pos.X - mapInfo.safehouse.X, 0, pos.Z - mapInfo.safehouse.Z)
-			s.atSafehouse = flat.Magnitude < 70
+			s.atSafehouse = s.inGarage or flat.Magnitude < 70
 			if s.atSafehouse and s.mode == "idle" and not s.race then
 				if s.unbanked > 0 then
 					local amount = math.floor(s.unbanked)
@@ -5294,6 +5429,7 @@ export type Session = {
 	atSafehouse: boolean,
 	hiding: boolean,
 	frozenUntil: number,
+	inGarage: boolean,
 }
 
 local sessions: { [Player]: Session } = {}
@@ -5330,6 +5466,7 @@ function Session.Create(player: Player, profile: PlayerData.Profile): Session
 		atSafehouse = false,
 		hiding = false,
 		frozenUntil = 0,
+		inGarage = false,
 	}
 	sessions[player] = s
 	return s
@@ -5475,7 +5612,147 @@ function Session.CarPosition(s: Session): Vector3?
 end
 
 return Session
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000010"><Properties><string name="Name">Traffic</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000010"><Properties><string name="Name">Showroom</string><ProtectedString name="Source"><![CDATA[--!strict
+-- The garage interior you drive into from the safehouse: an enclosed workshop / showroom with a
+-- turntable, spotlights, tool chests, tyre racks and posters. It sits underground, below the
+-- city, so daylight never gets in.
+
+local Showroom = {}
+
+local ORIGIN = Vector3.new(0, -300, 0)
+local W, D, H = 96, 76, 30
+
+Showroom.Origin = ORIGIN
+-- where the car sits (on the turntable), facing the camera side
+Showroom.CarCFrame = CFrame.lookAt(ORIGIN + Vector3.new(0, 1.3, 0), ORIGIN + Vector3.new(-1, 1.3, 1))
+
+local function rgb(r: number, g: number, b: number): Color3
+	return Color3.fromRGB(r, g, b)
+end
+
+local function part(folder: Instance, props: { [string]: any }): BasePart
+	local p = Instance.new((props.ClassName or "Part") :: any) :: BasePart
+	props.ClassName = nil
+	p.Anchored = true
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	p.Material = Enum.Material.SmoothPlastic
+	for k, v in props do
+		(p :: any)[k] = v
+	end
+	p.Parent = folder
+	return p
+end
+
+local function text(target: BasePart, face: Enum.NormalId, str: string, color: Color3, bright: boolean)
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = face
+	gui.LightInfluence = if bright then 0 else 1
+	gui.Brightness = if bright then 2 else 1
+	local t = Instance.new("TextLabel")
+	t.BackgroundTransparency = 1
+	t.Size = UDim2.fromScale(1, 1)
+	t.Text = str
+	t.TextScaled = true
+	t.Font = Enum.Font.GothamBlack
+	t.TextColor3 = color
+	t.Parent = gui
+	gui.Parent = target
+end
+
+function Showroom.Build(parent: Instance)
+	local folder = Instance.new("Folder")
+	folder.Name = "GarageInterior"
+	local o = ORIGIN
+
+	-- shell
+	local floor = part(folder, { Name = "Floor", Size = Vector3.new(W, 1, D), CFrame = CFrame.new(o + Vector3.new(0, -0.5, 0)), Color = rgb(58, 60, 64), Material = Enum.Material.Concrete, Reflectance = 0.12 })
+	local _ = floor
+	part(folder, { Name = "Ceiling", Size = Vector3.new(W, 1, D), CFrame = CFrame.new(o + Vector3.new(0, H + 0.5, 0)), Color = rgb(40, 40, 44), Material = Enum.Material.Metal })
+	local wallColor = rgb(150, 150, 152)
+	part(folder, { Name = "Wall", Size = Vector3.new(W, H, 1), CFrame = CFrame.new(o + Vector3.new(0, H / 2, -D / 2)), Color = wallColor, Material = Enum.Material.Concrete })
+	part(folder, { Name = "Wall", Size = Vector3.new(W, H, 1), CFrame = CFrame.new(o + Vector3.new(0, H / 2, D / 2)), Color = wallColor, Material = Enum.Material.Brick })
+	part(folder, { Name = "Wall", Size = Vector3.new(1, H, D), CFrame = CFrame.new(o + Vector3.new(-W / 2, H / 2, 0)), Color = wallColor, Material = Enum.Material.Concrete })
+	part(folder, { Name = "Wall", Size = Vector3.new(1, H, D), CFrame = CFrame.new(o + Vector3.new(W / 2, H / 2, 0)), Color = wallColor, Material = Enum.Material.Concrete })
+	-- painted safety stripe along the walls
+	for _, z in { -D / 2 + 0.55, D / 2 - 0.55 } do
+		part(folder, { Name = "Stripe", Size = Vector3.new(W - 2, 1.2, 0.1), CFrame = CFrame.new(o + Vector3.new(0, 1.2, z)), Color = rgb(230, 180, 20), CanCollide = false })
+	end
+	-- floor markings around the bay
+	for _, s in { -1, 1 } do
+		part(folder, { Name = "BayLine", Size = Vector3.new(0.5, 0.05, 40), CFrame = CFrame.new(o + Vector3.new(s * 20, 0.03, 0)), Color = rgb(230, 180, 20), CanCollide = false })
+	end
+
+	-- turntable
+	part(folder, { Name = "Turntable", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.6, 30, 30), CFrame = CFrame.new(o + Vector3.new(0, 0.3, 0)) * CFrame.Angles(0, 0, math.rad(90)), Color = rgb(35, 35, 38), Material = Enum.Material.DiamondPlate, Reflectance = 0.1 })
+	part(folder, { Name = "TurntableRing", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.62, 31, 31), CFrame = CFrame.new(o + Vector3.new(0, 0.29, 0)) * CFrame.Angles(0, 0, math.rad(90)), Color = rgb(0, 220, 255), Material = Enum.Material.Neon, CanCollide = false })
+
+	-- ceiling light panels
+	for x = -30, 30, 20 do
+		for z = -20, 20, 20 do
+			local panel = part(folder, { Name = "LightPanel", Size = Vector3.new(14, 0.3, 3), CFrame = CFrame.new(o + Vector3.new(x, H - 0.2, z)), Color = rgb(255, 250, 240), Material = Enum.Material.Neon, CanCollide = false })
+			local light = Instance.new("SurfaceLight")
+			light.Face = Enum.NormalId.Bottom
+			light.Range = 34
+			light.Angle = 120
+			light.Brightness = 1.4
+			light.Color = rgb(255, 245, 230)
+			light.Parent = panel
+		end
+	end
+	-- key spotlights on the car
+	for _, off in { Vector3.new(14, 0, 14), Vector3.new(-14, 0, -8) } do
+		local lamp = part(folder, { Name = "Spot", Size = Vector3.new(1.5, 1.5, 1.5), CFrame = CFrame.lookAt(o + off + Vector3.new(0, H - 2, 0), o + Vector3.new(0, 1, 0)), Color = rgb(30, 30, 30), Material = Enum.Material.Metal, CanCollide = false })
+		local spot = Instance.new("SpotLight")
+		spot.Face = Enum.NormalId.Front
+		spot.Range = 60
+		spot.Angle = 45
+		spot.Brightness = 5
+		spot.Shadows = true
+		spot.Parent = lamp
+	end
+
+	-- back wall sign
+	local sign = part(folder, { Name = "Sign", Size = Vector3.new(50, 7, 0.4), CFrame = CFrame.new(o + Vector3.new(0, H - 8, -D / 2 + 0.8)), Color = rgb(15, 15, 18), CanCollide = false })
+	text(sign, Enum.NormalId.Front, "WANTED  UNBOUND  GARAGE", rgb(0, 230, 255), true)
+	sign.CFrame = CFrame.lookAt(sign.Position, sign.Position + Vector3.zAxis)
+	-- roll-up door on the front wall
+	local door = part(folder, { Name = "RollUpDoor", Size = Vector3.new(34, 20, 0.4), CFrame = CFrame.new(o + Vector3.new(0, 10, D / 2 - 0.8)), Color = rgb(120, 124, 128), Material = Enum.Material.CorrodedMetal, CanCollide = false })
+	local _ = door
+	for y = 2, 18, 2 do
+		part(folder, { Name = "DoorSlat", Size = Vector3.new(34, 0.15, 0.1), CFrame = CFrame.new(o + Vector3.new(0, y, D / 2 - 1.05)), Color = rgb(90, 92, 96), CanCollide = false })
+	end
+
+	-- tool chests
+	for k = 0, 3 do
+		local x = -W / 2 + 6 + k * 7
+		part(folder, { Name = "ToolChest", Size = Vector3.new(6, 6, 3), CFrame = CFrame.new(o + Vector3.new(x, 3, -D / 2 + 2.5)), Color = rgb(190, 25, 30), Material = Enum.Material.Metal, Reflectance = 0.15 })
+		for d = 1, 4 do
+			part(folder, { Name = "Drawer", Size = Vector3.new(5.4, 0.12, 0.1), CFrame = CFrame.new(o + Vector3.new(x, d * 1.3, -D / 2 + 4.05)), Color = rgb(200, 200, 205), CanCollide = false })
+		end
+	end
+	-- workbench + pegboard
+	part(folder, { Name = "Workbench", Size = Vector3.new(20, 0.6, 4), CFrame = CFrame.new(o + Vector3.new(W / 2 - 14, 4, -D / 2 + 3)), Color = rgb(120, 86, 56), Material = Enum.Material.WoodPlanks })
+	part(folder, { Name = "Pegboard", Size = Vector3.new(20, 8, 0.3), CFrame = CFrame.new(o + Vector3.new(W / 2 - 14, 10, -D / 2 + 0.8)), Color = rgb(170, 140, 100), Material = Enum.Material.Cardboard })
+	-- tyre racks
+	for k = 0, 5 do
+		part(folder, { Name = "Tyre", Shape = Enum.PartType.Cylinder, Size = Vector3.new(1.3, 3, 3), CFrame = CFrame.new(o + Vector3.new(-W / 2 + 2.5, 1.5 + (k % 3) * 3.1, -10 + math.floor(k / 3) * 4)), Color = rgb(25, 25, 27), Material = Enum.Material.Rubber })
+	end
+	-- car lift on the side
+	for _, z in { 12, 24 } do
+		part(folder, { Name = "LiftPost", Size = Vector3.new(1.4, 14, 1.4), CFrame = CFrame.new(o + Vector3.new(W / 2 - 6, 7, z)), Color = rgb(40, 90, 170), Material = Enum.Material.Metal })
+	end
+	-- posters
+	for k, str in { "NITRO", "NEON BAY 24H", "APEX MOTORS" } do
+		local poster = part(folder, { Name = "Poster", Size = Vector3.new(0.2, 8, 5.5), CFrame = CFrame.new(o + Vector3.new(-W / 2 + 0.7, 13, -18 + k * 9)), Color = rgb(20, 20, 30), CanCollide = false })
+		text(poster, Enum.NormalId.Right, str, rgb(255, 80 + k * 50, 120), false)
+	end
+
+	folder.Parent = parent
+end
+
+return Showroom
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000011"><Properties><string name="Name">Traffic</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Civilian traffic: cars that keep to the right-hand lane, turn at intersections and brake for
 -- whatever is in front of them. Players weave through them for near misses (Unbound).
 
@@ -5688,7 +5965,7 @@ function Traffic.Init()
 end
 
 return Traffic
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000011"><Properties><string name="Name">Vehicles</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000012"><Properties><string name="Name">Vehicles</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Spawns, refreshes and resets player cars.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -5699,6 +5976,7 @@ local Grid = require(Shared:WaitForChild("Grid"))
 local CarBuilder = require(script.Parent.CarBuilder)
 local PlayerData = require(script.Parent.PlayerData)
 local Session = require(script.Parent.Session)
+local Showroom = require(script.Parent.Showroom)
 
 local Vehicles = {}
 
@@ -5829,15 +6107,23 @@ function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 	car:SetAttribute("CarId", def.id)
 	car:SetAttribute("CarName", def.name)
 	Vehicles.WriteStats(car, stats)
-	car:PivotTo(Vehicles.GroundCFrame(ground :: CFrame, car))
+	local root = car.PrimaryPart :: BasePart
+	if s.inGarage then
+		-- parked on the showroom turntable while the garage menu is open
+		car:PivotTo(Showroom.CarCFrame + Vector3.new(0, root.Size.Y / 2, 0))
+		root.Anchored = true
+	else
+		car:PivotTo(Vehicles.GroundCFrame(ground :: CFrame, car))
+	end
 	car.Parent = carsFolder
 	s.car = car
 	s.stats = stats
 
-	local root = car.PrimaryPart :: BasePart
-	pcall(function()
-		root:SetNetworkOwner(s.player)
-	end)
+	if not s.inGarage then
+		pcall(function()
+			root:SetNetworkOwner(s.player)
+		end)
+	end
 	seatCharacter(s)
 	return car
 end
@@ -5889,7 +6175,7 @@ function Vehicles.Freeze(s: Session.Session, seconds: number)
 end
 
 return Vehicles
-]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX00000000000000000000000000000020"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX0000000000000000000000000000001B"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="Folder" referent="RBX0000000000000000000000000000001A"><Properties><string name="Name">Client</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000013"><Properties><string name="Name">CarVisuals</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX00000000000000000000000000000022"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX0000000000000000000000000000001D"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="Folder" referent="RBX0000000000000000000000000000001C"><Properties><string name="Name">Client</string></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000014"><Properties><string name="Name">CarVisuals</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Local visual effects for every car near the camera: spinning wheels, front wheels steering,
 -- headlights at night, and brake / reverse lights on your own car.
 
@@ -5912,6 +6198,14 @@ type Entry = {
 	tails: { BasePart },
 	reverse: { BasePart },
 	tailGlow: SurfaceLight?,
+	bodyWeld: Weld?,
+	skids: { Trail },
+	lastVel: Vector3?,
+	roll: number,
+	pitch: number,
+	rollVel: number,
+	pitchVel: number,
+	skidding: boolean?,
 }
 
 local cache: { [Model]: Entry } = setmetatable({}, { __mode = "k" }) :: any
@@ -5919,7 +6213,7 @@ local TAIL = Color3.fromRGB(230, 15, 30)
 local BRAKE = Color3.fromRGB(255, 70, 70)
 
 local function build(model: Model): Entry
-	local e: Entry = { welds = {}, spin = 0, steer = 0, heads = {}, tails = {}, reverse = {} }
+	local e: Entry = { welds = {}, spin = 0, steer = 0, heads = {}, tails = {}, reverse = {}, skids = {}, roll = 0, pitch = 0, rollVel = 0, pitchVel = 0 }
 	for _, d in model:GetDescendants() do
 		if d:IsA("Weld") and d.Name == "WheelWeld" then
 			table.insert(e.welds, d)
@@ -5931,6 +6225,10 @@ local function build(model: Model): Entry
 			table.insert(e.reverse, d)
 		elseif d:IsA("SurfaceLight") and d.Name == "TailGlow" then
 			e.tailGlow = d
+		elseif d:IsA("Weld") and d.Name == "BodyWeld" then
+			e.bodyWeld = d
+		elseif d:IsA("Trail") and d.Name == "SkidMark" then
+			table.insert(e.skids, d)
 		end
 	end
 	cache[model] = e
@@ -5977,6 +6275,37 @@ local function animate(model: Model, dt: number, night: boolean, camPos: Vector3
 		end
 	end
 	e.spin = (e.spin - fwd / r * dt) % (math.pi * 2)
+
+	-- suspension: body leans out of corners, squats under power and dives under braking
+	local lastVel = e.lastVel or vel
+	e.lastVel = vel
+	local accel = if dt > 0 then (vel - lastVel) / dt else Vector3.zero
+	local lat = accel:Dot(cf.RightVector)
+	local long = accel:Dot(cf.LookVector)
+	if root.Anchored then
+		lat, long = 0, 0
+	end
+	local rollTarget = math.clamp(lat * 0.0035, -0.075, 0.075)
+	local pitchTarget = math.clamp(long * 0.0022, -0.05, 0.05)
+	-- damped spring so the body bounces a little
+	e.rollVel += ((rollTarget - e.roll) * 90 - e.rollVel * 11) * dt
+	e.pitchVel += ((pitchTarget - e.pitch) * 90 - e.pitchVel * 11) * dt
+	e.roll += e.rollVel * dt
+	e.pitch += e.pitchVel * dt
+	if e.bodyWeld then
+		e.bodyWeld.C0 = CFrame.Angles(e.pitch, 0, e.roll)
+	end
+
+	-- skid marks while the rear is sliding (or spinning the tyres from a standstill)
+	local lateral = math.abs(vel:Dot(cf.RightVector))
+	local grounded = math.abs(vel.Y) < 15
+	local skidding = grounded and ((lateral > 11 and vel.Magnitude > 25) or (own and Drive.Handbrake and fwd > 20) or (own and model:GetAttribute("Flat") == true and fwd > 20))
+	if skidding ~= e.skidding then
+		e.skidding = skidding
+		for _, t in e.skids do
+			t.Enabled = skidding
+		end
+	end
 
 	if e.night ~= night then
 		e.night = night
@@ -6082,7 +6411,7 @@ RunService.RenderStepped:Connect(function(dt)
 end)
 
 return CarVisuals
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000014"><Properties><string name="Name">DriveController</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000015"><Properties><string name="Name">DriveController</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Drives the local player's car: input, arcade physics (we own the car's physics),
 -- nitro, drift smoke and the chase camera.
 
@@ -6121,6 +6450,12 @@ Drive.Shake = 0 -- camera shake impulse (crashes)
 Drive.NearMissCombo = 0
 Drive.OnNearMiss = {} :: { (combo: number) -> () }
 Drive.OnCrash = {} :: { (strength: number) -> () }
+Drive.OnBackfire = {} :: { () -> () }
+Drive.OnShift = {} :: { (gear: number) -> () }
+-- simulated drivetrain for the HUD tachometer and the engine sound
+Drive.Gear = 1
+Drive.Rpm = 0.2 -- 0..1
+Drive.Gears = 6
 
 local seat: VehicleSeat? = nil
 local handbrake = false
@@ -6130,6 +6465,7 @@ local keySteer = 0
 local sentNitro = false
 local camPos: Vector3? = nil
 local lastSpeed = 0
+local lastThrottle = 0
 local nearTrack: { [Model]: { min: number, rel: number, speed: number } } = setmetatable({}, { __mode = "k" }) :: any
 local lastNearMiss = 0
 local camLook: Vector3? = nil
@@ -6317,6 +6653,37 @@ RunService.PreSimulation:Connect(function(dt: number)
 		Drive.Nitro = math.min(capacity, Drive.Nitro + gain * dt)
 	end
 
+	-- drivetrain: pick a gear from road speed, rpm sweeps through each gear's band
+	local maxSpd = stats.maxSpeed * (if nitroOn then stats.nitroMult else 1)
+	local frac = math.clamp(math.abs(state.speed) / math.max(maxSpd, 1), 0, 1.05)
+	local gear = if state.speed < -1 then 1 else math.clamp(math.floor(frac * Drive.Gears) + 1, 1, Drive.Gears)
+	if gear ~= Drive.Gear then
+		local up = gear > Drive.Gear
+		Drive.Gear = gear
+		if up then
+			for _, fn in Drive.OnShift do
+				task.spawn(fn, gear)
+			end
+		end
+	end
+	local band = frac * Drive.Gears - (gear - 1)
+	local targetRpm = 0.22 + 0.72 * math.clamp(band, 0, 1)
+	if not state.grounded or (handbrake and throttle > 0) then
+		targetRpm = math.min(1, targetRpm + 0.25 * math.max(throttle, 0)) -- revving in the air / drifting
+	end
+	if math.abs(state.speed) < 3 then
+		targetRpm = 0.18 + 0.45 * math.max(throttle, 0)
+	end
+	local prevThrottle = lastThrottle
+	lastThrottle = throttle
+	Drive.Rpm += (targetRpm - Drive.Rpm) * math.min(1, dt * 8)
+	-- lifting off at high revs pops the exhaust
+	if prevThrottle > 0.6 and throttle < 0.1 and Drive.Rpm > 0.6 and speed > 60 then
+		for _, fn in Drive.OnBackfire do
+			task.spawn(fn)
+		end
+	end
+
 	-- crash detection (sudden loss of speed) for camera shake
 	if lastSpeed - speed > 35 then
 		local strength = math.clamp((lastSpeed - speed) / 80, 0.3, 1)
@@ -6385,7 +6752,7 @@ end)
 -- Chase camera
 ---------------------------------------------------------------------------
 RunService:BindToRenderStep("WU_ChaseCam", Enum.RenderPriority.Camera.Value + 1, function(dt)
-	if Drive.MenuOpen then
+	if Drive.MenuOpen or player:GetAttribute("InGarage") then
 		return
 	end
 	local car = Drive.Car
@@ -6453,16 +6820,14 @@ RunService:BindToRenderStep("WU_ChaseCam", Enum.RenderPriority.Camera.Value + 1,
 end)
 
 return Drive
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000015"><Properties><string name="Name">Effects</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000016"><Properties><string name="Name">Effects</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Screen and audio effects: big animated banners, speed lines, nitro blur / colour grading,
 -- near-miss popups, crash flashes, checkpoint pings, engine + siren loops and a GPS arrow
 -- that points to your next checkpoint, the nearest hiding spot or the safehouse.
 
-local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -6473,6 +6838,7 @@ local BannerEvent = Remotes:WaitForChild("Banner") :: RemoteEvent
 
 local Drive = require(script.Parent.DriveController)
 local HUD = require(script.Parent.HUD)
+local Sounds = require(script.Parent.Sounds)
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -6489,19 +6855,6 @@ local function new(className: string, props: { [string]: any }, parent: Instance
 	end
 	return inst
 end
-
----------------------------------------------------------------------------
--- Sounds
----------------------------------------------------------------------------
-local function play(id: string, volume: number?, pitch: number?)
-	if id == "" then
-		return
-	end
-	local s = new("Sound", { SoundId = id, Volume = volume or 0.6, PlaybackSpeed = pitch or 1 }, SoundService)
-	s:Play()
-	Debris:AddItem(s, 4)
-end
-Effects.Play = play
 
 ---------------------------------------------------------------------------
 -- Banners (BUSTED / ESCAPED / 1ST PLACE ...)
@@ -6577,7 +6930,8 @@ function Effects.Banner(title: string, subtitle: string, color: Color3)
 	TweenService:Create(bannerScale, info, { Scale = 1 }):Play()
 	TweenService:Create(bannerTitle, info, { TextTransparency = 0 }):Play()
 	TweenService:Create(bannerSub, TweenInfo.new(0.4), { TextTransparency = 0 }):Play()
-	play(Config.Sounds.Banner, 0.5, 0.8)
+	Sounds.Tick(0.7, 0.6)
+	task.delay(0.12, Sounds.Tick, 1.05, 0.6)
 	task.delay(2.6, function()
 		if token ~= bannerToken then
 			return
@@ -6618,7 +6972,6 @@ table.insert(Drive.OnNearMiss, function(combo: number)
 	nearLabel.TextTransparency = 0
 	nearScale.Scale = 1.5
 	TweenService:Create(nearScale, TweenInfo.new(0.2, Enum.EasingStyle.Back), { Scale = 1 }):Play()
-	play(Config.Sounds.NearMiss, 0.7, 1 + math.min(combo, 8) * 0.05)
 	local token = combo
 	task.delay(1.2, function()
 		if Drive.NearMissCombo == token then
@@ -6633,13 +6986,6 @@ table.insert(Drive.OnCrash, function(strength: number)
 	TweenService:Create(flash, TweenInfo.new(0.35), { BackgroundTransparency = 1 }):Play()
 end)
 
--- checkpoint ping
-player:GetAttributeChangedSignal("RaceCP"):Connect(function()
-	local cp = player:GetAttribute("RaceCP")
-	if type(cp) == "number" and cp > 0 then
-		play(Config.Sounds.Checkpoint, 0.6, 1.2)
-	end
-end)
 
 ---------------------------------------------------------------------------
 -- Speed lines
@@ -6662,66 +7008,6 @@ end
 ---------------------------------------------------------------------------
 local blur = new("BlurEffect", { Size = 0 }, camera)
 local grade = new("ColorCorrectionEffect", { Saturation = 0, Contrast = 0 }, camera)
-
----------------------------------------------------------------------------
--- Engine and siren loops (only when an audio id is configured)
----------------------------------------------------------------------------
-local engineSound: Sound? = nil
-local engineCar: Model? = nil
-local function updateEngine()
-	if Config.Sounds.Engine == "" then
-		return
-	end
-	local car = Drive.Car
-	if car ~= engineCar then
-		if engineSound then
-			engineSound:Destroy()
-			engineSound = nil
-		end
-		engineCar = car
-		if car and car.PrimaryPart then
-			local snd: Sound = new("Sound", { SoundId = Config.Sounds.Engine, Looped = true, Volume = 0.45 }, car.PrimaryPart)
-			snd:Play()
-			engineSound = snd
-		end
-	end
-	if engineSound and car then
-		local max = car:GetAttribute("maxSpeed")
-		local frac = Drive.Speed / (if type(max) == "number" then max else 150)
-		engineSound.PlaybackSpeed = 0.7 + frac * 1.1 + (if Drive.NitroOn then 0.15 else 0)
-	end
-end
-
-local sirenTimer = 0
-local function updateSirens(dt: number)
-	if Config.Sounds.Siren == "" then
-		return
-	end
-	sirenTimer += dt
-	if sirenTimer < 0.5 then
-		return
-	end
-	sirenTimer = 0
-	local police = workspace:FindFirstChild("Police")
-	if not police then
-		return
-	end
-	for _, m in police:GetChildren() do
-		if m:IsA("Model") and m.PrimaryPart and m:GetAttribute("Police") then
-			local snd = m.PrimaryPart:FindFirstChild("SirenLoop") :: Sound?
-			if not snd then
-				snd = new("Sound", { Name = "SirenLoop", SoundId = Config.Sounds.Siren, Looped = true, Volume = 0.35, RollOffMaxDistance = 350 }, m.PrimaryPart)
-			end
-			local s = snd :: Sound
-			local on = m:GetAttribute("Siren") == true
-			if on and not s.IsPlaying then
-				s:Play()
-			elseif not on and s.IsPlaying then
-				s:Stop()
-			end
-		end
-	end
-end
 
 ---------------------------------------------------------------------------
 -- GPS arrow
@@ -6859,12 +7145,10 @@ RunService.RenderStepped:Connect(function(dt: number)
 	grade.TintColor = (grade.TintColor :: Color3):Lerp(if Drive.Flat then Color3.fromRGB(255, 225, 215) elseif nitro then Color3.fromRGB(225, 245, 255) else Color3.new(1, 1, 1), math.min(1, dt * 5))
 
 	updateArrow()
-	updateEngine()
-	updateSirens(dt)
 end)
 
 return Effects
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000016"><Properties><string name="Name">Garage</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000017"><Properties><string name="Name">Garage</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Safehouse garage: buy / select cars, Unbound-style tuning (performance parts, handling,
 -- visuals), driving effects and the Blacklist.
 
@@ -6877,10 +7161,17 @@ local Shop = Remotes:WaitForChild("Shop") :: RemoteFunction
 local ChallengeRival = Remotes:WaitForChild("ChallengeRival") :: RemoteEvent
 
 local HUD = require(script.Parent.HUD)
+local Sounds = require(script.Parent.Sounds)
+local Drive = require(script.Parent.DriveController)
+local GarageEvent = Remotes:WaitForChild("Garage") :: RemoteEvent
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local player = Players.LocalPlayer
 
 local Garage = {}
 Garage.Open = false
 Garage.Toggle = function(_open: boolean?) end
+Garage.Exit = function() end
 
 local PINK = Color3.fromRGB(255, 40, 160)
 local CYAN = Color3.fromRGB(0, 240, 255)
@@ -6930,14 +7221,18 @@ local function button(parent: Instance, props: { [string]: any }, onClick: () ->
 	local b = new("TextButton", base, parent)
 	corner(b, 8)
 	new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, b)
-	b.Activated:Connect(onClick)
+	b.Activated:Connect(function()
+		Sounds.Tick(1.2, 0.4)
+		onClick()
+	end)
 	return b
 end
 
 local window = new("Frame", {
-	AnchorPoint = Vector2.new(0.5, 0.5),
-	Position = UDim2.fromScale(0.5, 0.5),
-	Size = UDim2.new(0.8, 0, 0.75, 0),
+	-- menu on the right so the car on the turntable stays visible
+	AnchorPoint = Vector2.new(1, 0.5),
+	Position = UDim2.new(1, -20, 0.5, 0),
+	Size = UDim2.new(0.5, 0, 0.86, 0),
 	BackgroundColor3 = PANEL,
 	BackgroundTransparency = 0.05,
 	Visible = false,
@@ -6945,12 +7240,12 @@ local window = new("Frame", {
 }, HUD.Gui)
 corner(window, 16)
 new("UIStroke", { Color = PINK, Thickness = 3 }, window)
-new("UISizeConstraint", { MaxSize = Vector2.new(900, 600), MinSize = Vector2.new(320, 300) }, window)
+new("UISizeConstraint", { MaxSize = Vector2.new(640, 680), MinSize = Vector2.new(320, 300) }, window)
 
 text(window, { Position = UDim2.fromOffset(20, 10), Size = UDim2.new(0.5, 0, 0, 36), Text = "SAFEHOUSE GARAGE", Font = Enum.Font.GothamBlack, TextColor3 = CYAN })
 local cashText = text(window, { Position = UDim2.new(0.5, 0, 0, 14), Size = UDim2.new(0.5, -70, 0, 28), Text = "", TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = Color3.fromRGB(120, 255, 150) })
 button(window, { Position = UDim2.new(1, -56, 0, 10), Size = UDim2.fromOffset(44, 36), Text = "X", BackgroundColor3 = Color3.fromRGB(80, 30, 50) }, function()
-	Garage.Toggle(false)
+	Garage.Exit()
 end)
 
 local tabs = new("Frame", { Position = UDim2.fromOffset(20, 56), Size = UDim2.new(1, -40, 0, 36), BackgroundTransparency = 1 }, window)
@@ -7348,6 +7643,49 @@ for _, name in { "Cars", "Performance", "Handling", "Visual", "Effects", "Blackl
 	end)
 end
 
+-- Enter / leave the garage interior (the server moves the car onto the turntable).
+function Garage.Enter()
+	GarageEvent:FireServer("enter")
+end
+
+function Garage.Exit()
+	GarageEvent:FireServer("exit")
+end
+
+function Garage.InGarage(): boolean
+	return player:GetAttribute("InGarage") == true
+end
+
+player:GetAttributeChangedSignal("InGarage"):Connect(function()
+	local inside = Garage.InGarage()
+	Garage.Toggle(inside)
+	if inside then
+		Sounds.Play("rbxasset://sounds/action_jump_land.mp3", 0.5, 0.45)
+	end
+end)
+
+-- Showroom camera: slow orbit around the car, framed to the left of the menu
+local orbit = 0.8
+RunService:BindToRenderStep("WU_GarageCam", Enum.RenderPriority.Camera.Value + 2, function(dt: number)
+	if not Garage.InGarage() then
+		return
+	end
+	local car = Drive.Car
+	local root = car and car.PrimaryPart
+	if not root then
+		return
+	end
+	local camera = workspace.CurrentCamera
+	camera.CameraType = Enum.CameraType.Scriptable
+	orbit += dt * 0.22
+	local center = root.Position + Vector3.new(0, 1.2, 0)
+	local pos = center + Vector3.new(math.cos(orbit) * 21, 5.5, math.sin(orbit) * 21)
+	local cf = CFrame.lookAt(pos, center)
+	-- shift the aim right so the car sits in the left half of the screen
+	camera.CFrame = CFrame.lookAt(pos, center + cf.RightVector * 6)
+	camera.FieldOfView = 55
+end)
+
 function Garage.Toggle(open: boolean?)
 	local want = if open == nil then not window.Visible else open
 	window.Visible = want
@@ -7360,7 +7698,7 @@ function Garage.Toggle(open: boolean?)
 end
 
 return Garage
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000017"><Properties><string name="Name">HUD</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000018"><Properties><string name="Name">HUD</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Heads-up display: speedometer + nitro, heat stars and pursuit meters, cash, race panel,
 -- drift combo, minimap, notifications and context prompts.
 
@@ -7445,6 +7783,31 @@ new("UIStroke", { Color = CYAN, Thickness = 2, Transparency = 0.3 }, speedo)
 local speedLabel = label({ Position = UDim2.fromOffset(10, 4), Size = UDim2.new(1, -80, 0, 70), Text = "0", TextXAlignment = Enum.TextXAlignment.Right }, speedo)
 label({ Position = UDim2.new(1, -68, 0, 34), Size = UDim2.fromOffset(60, 30), Text = "MPH", TextColor3 = CYAN, Font = FONT2 }, speedo)
 local carNameLabel = label({ Position = UDim2.fromOffset(12, 74), Size = UDim2.new(1, -24, 0, 16), Text = "", Font = FONT2, TextColor3 = Color3.fromRGB(190, 190, 210), TextXAlignment = Enum.TextXAlignment.Left }, speedo)
+-- tachometer + gear
+local gearLabel = label({ Position = UDim2.fromOffset(12, 10), Size = UDim2.fromOffset(44, 50), Text = "1", TextColor3 = Color3.fromRGB(255, 200, 60), TextXAlignment = Enum.TextXAlignment.Left }, speedo)
+local rpmBack = new("Frame", {
+	Position = UDim2.new(0, 0, 0, -16),
+	Size = UDim2.new(1, 0, 0, 10),
+	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
+	BackgroundTransparency = 0.35,
+}, speedo)
+corner(rpmBack, 5)
+local rpmFill = new("Frame", { Size = UDim2.fromScale(0.2, 1), BackgroundColor3 = Color3.fromRGB(80, 255, 140) }, rpmBack)
+corner(rpmFill, 5)
+new("UIGradient", {
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 255, 140)),
+		ColorSequenceKeypoint.new(0.7, Color3.fromRGB(255, 220, 60)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 50, 50)),
+	}),
+}, rpmFill)
+
+function HUD.SetEngine(gear: number, rpm: number, reversing: boolean)
+	gearLabel.Text = if reversing then "R" else tostring(gear)
+	rpmFill.Size = UDim2.fromScale(math.clamp(rpm, 0.02, 1), 1)
+	gearLabel.TextColor3 = if rpm > 0.9 then Color3.fromRGB(255, 60, 60) else Color3.fromRGB(255, 200, 60)
+end
+
 local nitroBack = new("Frame", {
 	Position = UDim2.fromOffset(12, 96),
 	Size = UDim2.new(1, -24, 0, 14),
@@ -7906,7 +8269,7 @@ function HUD.Update(dt: number, speed: number, nitro: number, capacity: number, 
 end
 
 return HUD
-]]></ProtectedString></Properties></Item><Item class="LocalScript" referent="RBX00000000000000000000000000000018"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="LocalScript" referent="RBX00000000000000000000000000000019"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[--!strict
 -- WANTED: UNBOUND - client entry point.
 
 local ContextActionService = game:GetService("ContextActionService")
@@ -7927,6 +8290,7 @@ local HUD = require(script.Parent.HUD)
 local Garage = require(script.Parent.Garage)
 require(script.Parent.CarVisuals)
 require(script.Parent.Effects)
+require(script.Parent.Sounds)
 require(script.Parent.Menu)
 
 local player = Players.LocalPlayer
@@ -7960,7 +8324,11 @@ local function doPrompt()
 	if action.kind == "race" and action.id then
 		RequestRace:FireServer(action.id)
 	elseif action.kind == "garage" then
-		Garage.Toggle()
+		if Garage.InGarage() then
+			Garage.Exit()
+		else
+			Garage.Enter()
+		end
 	elseif action.kind == "quit" then
 		QuitRace:FireServer()
 	end
@@ -7977,8 +8345,10 @@ end, false, Enum.KeyCode.E, Enum.KeyCode.ButtonB)
 
 ContextActionService:BindAction("WU_Garage", function(_, inputState)
 	if inputState == Enum.UserInputState.Begin then
-		if player:GetAttribute("AtSafehouse") or Garage.Open then
-			Garage.Toggle()
+		if Garage.InGarage() then
+			Garage.Exit()
+		elseif player:GetAttribute("AtSafehouse") then
+			Garage.Enter()
 		else
 			HUD.Notify("The garage is at the safehouse (green S on the map)", Color3.fromRGB(0, 255, 200))
 		end
@@ -8004,7 +8374,7 @@ local function updatePrompt(pos: Vector3?)
 	end
 	if player:GetAttribute("AtSafehouse") then
 		promptAction = { kind = "garage" }
-		HUD.SetPrompt(if Garage.Open then "[E] Close garage" else "[E] Open garage  (cars, tuning, paint, Blacklist)")
+		HUD.SetPrompt(if Garage.InGarage() then "[E] Drive out of the garage" else "[E] Enter the garage  (cars, tuning, paint, Blacklist)")
 		return
 	end
 	local race = nearestRace(pos)
@@ -8099,12 +8469,14 @@ RunService.RenderStepped:Connect(function(dt)
 	local car = Drive.Car
 	HUD.Gui.Enabled = not Drive.MenuOpen
 	HUD.Update(dt, Drive.Speed, Drive.Nitro, Drive.NitroCapacity, Drive.NitroOn, car)
+	local st = Drive.State
+	HUD.SetEngine(Drive.Gear, Drive.Rpm, st ~= nil and st.speed < -1)
 	promptTimer += dt
 	if promptTimer > 0.2 then
 		promptTimer = 0
 		local pos = car and car.PrimaryPart and car.PrimaryPart.Position
 		updatePrompt(pos)
-		if Garage.Open and not player:GetAttribute("AtSafehouse") then
+		if Garage.Open and not player:GetAttribute("AtSafehouse") and not Garage.InGarage() then
 			Garage.Toggle(false)
 		end
 	end
@@ -8117,7 +8489,7 @@ RunService.RenderStepped:Connect(function(dt)
 end)
 
 print("[" .. Config.GameName .. "] client ready")
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000000000000000000000000000019"><Properties><string name="Name">Menu</string><ProtectedString name="Source"><![CDATA[--!strict
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001A"><Properties><string name="Name">Menu</string><ProtectedString name="Source"><![CDATA[--!strict
 -- Title screen: a slow camera flight over Neon Bay with the logo, PLAY and HOW TO PLAY.
 
 local Players = game:GetService("Players")
@@ -8323,4 +8695,356 @@ playButton.Activated:Connect(function()
 end)
 
 return Menu
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000000000000000000000000001B"><Properties><string name="Name">Sounds</string><ProtectedString name="Source"><![CDATA[--!strict
+-- All game audio. Roblox only ships a handful of built-in sounds, so the engine and tyre sounds
+-- are synthesized from its wind-noise loop: pitched down, bass boosted, distorted and pulsed by a
+-- tremolo at the engine's firing rate (it follows the simulated RPM and gear shifts). If you put
+-- real audio ids in Config.Sounds (Engine / Skid / Siren), those are used instead.
+
+local Debris = game:GetService("Debris")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+local TweenService = game:GetService("TweenService")
+
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local Drive = require(script.Parent.DriveController)
+
+local player = Players.LocalPlayer
+local Sounds = {}
+local S = Config.Sounds
+local B = S.Builtin
+
+local function new(className: string, props: { [string]: any }, parent: Instance?): any
+	local inst = Instance.new(className)
+	for k, v in props do
+		(inst :: any)[k] = v
+	end
+	if parent then
+		inst.Parent = parent
+	end
+	return inst
+end
+
+-- One-shot sound. With a BasePart / Attachment parent it plays in 3D at that spot.
+function Sounds.Play(id: string, volume: number?, pitch: number?, parent: Instance?): Sound?
+	if id == "" then
+		return nil
+	end
+	local s: Sound = new("Sound", { SoundId = id, Volume = volume or 0.5, PlaybackSpeed = pitch or 1, RollOffMaxDistance = 400 }, parent or SoundService)
+	s:Play()
+	Debris:AddItem(s, 5)
+	return s
+end
+
+function Sounds.Tick(pitch: number?, volume: number?)
+	Sounds.Play(B.Tick, volume or 0.45, pitch or 1)
+end
+
+-- Short burst of pitched-up wind: a whoosh.
+function Sounds.Whoosh(pitch: number?, volume: number?)
+	local s = Sounds.Play(B.Wind, volume or 0.8, pitch or 2.2)
+	if s then
+		task.delay(0.25, function()
+			TweenService:Create(s, TweenInfo.new(0.3), { Volume = 0 }):Play()
+		end)
+	end
+end
+
+function Sounds.Explosion(position: Vector3, volume: number?, pitch: number?)
+	local att = new("Attachment", { WorldPosition = position }, workspace.Terrain)
+	Sounds.Play(B.Explosion, volume or 1, pitch or 1, att)
+	Debris:AddItem(att, 5)
+end
+
+---------------------------------------------------------------------------
+-- Engine synth
+---------------------------------------------------------------------------
+type Engine = {
+	rumble: Sound,
+	tremolo: TremoloSoundEffect?,
+	distortion: DistortionSoundEffect?,
+	whine: Sound?,
+	synth: boolean,
+}
+
+local function makeEngine(parent: Instance, volume: number, withWhine: boolean): Engine
+	local synth = S.Engine == ""
+	local rumble: Sound = new("Sound", {
+		Name = "EngineRumble",
+		SoundId = if synth then B.Wind else S.Engine,
+		Looped = true,
+		Volume = volume,
+		RollOffMaxDistance = 180,
+		RollOffMinDistance = 12,
+	}, parent)
+	local e: Engine = { rumble = rumble, synth = synth }
+	if synth then
+		new("EqualizerSoundEffect", { LowGain = 10, MidGain = -3, HighGain = -32, Priority = 1 }, rumble)
+		e.distortion = new("DistortionSoundEffect", { Level = 0.45, Priority = 2 }, rumble)
+		e.tremolo = new("TremoloSoundEffect", { Depth = 0.75, Duty = 0.45, Frequency = 8, Priority = 3 }, rumble)
+	end
+	if withWhine then
+		local whine: Sound = new("Sound", { Name = "EngineWhine", SoundId = B.Wind, Looped = true, Volume = 0, RollOffMaxDistance = 120 }, parent)
+		new("EqualizerSoundEffect", { LowGain = -35, MidGain = 6, HighGain = -8 }, whine)
+		e.whine = whine
+		whine:Play()
+	end
+	rumble:Play()
+	return e
+end
+
+local function setEngine(e: Engine, rpm: number, load: number, boost: boolean)
+	if e.synth then
+		e.rumble.PlaybackSpeed = 0.3 + rpm * 0.78
+		e.rumble.Volume = (0.5 + 0.35 * load) * (if boost then 1.15 else 1)
+		local trem = e.tremolo
+		if trem then
+			trem.Frequency = math.clamp(6 + rpm * 14, 0.1, 20)
+			trem.Depth = 0.55 + 0.3 * (1 - rpm)
+		end
+		local dist = e.distortion
+		if dist then
+			dist.Level = 0.35 + 0.35 * load + (if boost then 0.15 else 0)
+		end
+	else
+		e.rumble.PlaybackSpeed = 0.6 + rpm * 1.1
+		e.rumble.Volume = 0.35 + 0.35 * load
+	end
+	local whine = e.whine
+	if whine then
+		whine.PlaybackSpeed = 0.9 + rpm * 1.4
+		whine.Volume = 0.04 + 0.22 * rpm * load + (if boost then 0.15 else 0)
+	end
+end
+
+local own: Engine? = nil
+local ownCar: Model? = nil
+local shiftDip = 0
+
+-- wind, tyres and flat-tyre rattle are 2D (they belong to the listener's car)
+local wind: Sound = new("Sound", { Name = "Wind", SoundId = B.Wind, Looped = true, Volume = 0 }, SoundService)
+wind:Play()
+local skid: Sound = new("Sound", { Name = "Skid", SoundId = if S.Skid ~= "" then S.Skid else B.Wind, Looped = true, Volume = 0, PlaybackSpeed = if S.Skid ~= "" then 1 else 2.6 }, SoundService)
+if S.Skid == "" then
+	new("EqualizerSoundEffect", { LowGain = -40, MidGain = -4, HighGain = 9 }, skid)
+end
+skid:Play()
+local rattle: Sound = new("Sound", { Name = "FlatRattle", SoundId = B.Rattle, Looped = true, Volume = 0 }, SoundService)
+rattle:Play()
+
+table.insert(Drive.OnShift, function(_gear: number)
+	shiftDip = 0.14
+	Sounds.Play(B.Explosion, 0.06, 3.2)
+end)
+
+table.insert(Drive.OnBackfire, function()
+	local car = Drive.Car
+	local root = car and car.PrimaryPart
+	local exhaust = root and root:FindFirstChild("Exhaust")
+	for k = 1, math.random(1, 3) do
+		task.delay((k - 1) * 0.09, function()
+			Sounds.Play(B.Explosion, 0.14, 2.6 + math.random() * 0.8, exhaust)
+			local flame = exhaust and exhaust:FindFirstChild("NitroFlame")
+			if flame and flame:IsA("ParticleEmitter") then
+				flame:Emit(6)
+			end
+		end)
+	end
+end)
+
+table.insert(Drive.OnCrash, function(strength: number)
+	Sounds.Play(B.Thud, 0.6 + strength * 0.8, 0.55 + math.random() * 0.15)
+	if strength > 0.75 then
+		Sounds.Play(B.Explosion, 0.25, 1.8)
+	end
+end)
+
+table.insert(Drive.OnNearMiss, function(combo: number)
+	Sounds.Whoosh(2 + math.min(combo, 8) * 0.08, 0.9)
+end)
+
+-- wrecked cops, pursuit breakers: any explosion in the world makes a bang
+workspace.ChildAdded:Connect(function(child)
+	if child:IsA("Explosion") then
+		Sounds.Explosion(child.Position, 1, 0.9 + math.random() * 0.2)
+	end
+end)
+
+player:GetAttributeChangedSignal("RaceCP"):Connect(function()
+	local cp = player:GetAttribute("RaceCP")
+	if type(cp) == "number" and cp > 0 then
+		Sounds.Tick(1.6, 0.6)
+		task.delay(0.1, Sounds.Tick, 2, 0.6)
+	end
+end)
+
+---------------------------------------------------------------------------
+-- Other cars nearby get a 3D engine (the closest few only)
+---------------------------------------------------------------------------
+local others: { [Model]: Engine } = {}
+local MAX_OTHERS = 8
+local scanTimer = 0
+
+local function scanOthers(camPos: Vector3)
+	local list: { { model: Model, dist: number } } = {}
+	for _, folderName in { "Cars", "Police", "Traffic", "Races" } do
+		local folder = workspace:FindFirstChild(folderName)
+		if not folder then
+			continue
+		end
+		local function consider(m: Instance)
+			if m:IsA("Model") and m.PrimaryPart and m ~= Drive.Car and m:FindFirstChild("BodyRoot") then
+				local d = (m.PrimaryPart.Position - camPos).Magnitude
+				if d < 170 then
+					table.insert(list, { model = m, dist = d })
+				end
+			end
+		end
+		for _, m in folder:GetChildren() do
+			if m:IsA("Folder") then
+				for _, inner in m:GetChildren() do
+					consider(inner)
+				end
+			else
+				consider(m)
+			end
+		end
+	end
+	table.sort(list, function(a, b)
+		return a.dist < b.dist
+	end)
+	local keep: { [Model]: boolean } = {}
+	for k = 1, math.min(MAX_OTHERS, #list) do
+		keep[list[k].model] = true
+	end
+	for m, e in others do
+		if not keep[m] or not m.Parent then
+			e.rumble:Destroy()
+			others[m] = nil
+		end
+	end
+	for m in keep do
+		if not others[m] then
+			local root = m.PrimaryPart :: BasePart
+			others[m] = makeEngine(root, 0.3, false)
+		end
+	end
+end
+
+---------------------------------------------------------------------------
+-- Police sirens (only with a configured audio id)
+---------------------------------------------------------------------------
+local sirenTimer = 0
+local function updateSirens()
+	if S.Siren == "" then
+		return
+	end
+	local police = workspace:FindFirstChild("Police")
+	if not police then
+		return
+	end
+	for _, m in police:GetChildren() do
+		if m:IsA("Model") and m.PrimaryPart and m:GetAttribute("Police") then
+			local snd = m.PrimaryPart:FindFirstChild("SirenLoop") :: Sound?
+			if not snd then
+				snd = new("Sound", { Name = "SirenLoop", SoundId = S.Siren, Looped = true, Volume = 0.4, RollOffMaxDistance = 350 }, m.PrimaryPart)
+			end
+			local s = snd :: Sound
+			local on = m:GetAttribute("Siren") == true
+			if on and not s.IsPlaying then
+				s:Play()
+			elseif not on and s.IsPlaying then
+				s:Stop()
+			end
+		end
+	end
+end
+
+---------------------------------------------------------------------------
+-- Per frame
+---------------------------------------------------------------------------
+RunService.RenderStepped:Connect(function(dt: number)
+	local car = Drive.Car
+	local root = car and car.PrimaryPart
+	local inMenu = Drive.MenuOpen
+
+	-- own engine follows the car you're driving
+	if car ~= ownCar then
+		if own then
+			own.rumble:Destroy()
+			if own.whine then
+				(own.whine :: Sound):Destroy()
+			end
+			own = nil
+		end
+		ownCar = car
+		if root then
+			own = makeEngine(root, 0.6, true)
+		end
+	end
+
+	local speed = Drive.Speed
+	local e = own
+	if e then
+		shiftDip = math.max(0, shiftDip - dt)
+		local load = math.max(Drive.Throttle, 0)
+		setEngine(e, Drive.Rpm, load, Drive.NitroOn)
+		if shiftDip > 0 then
+			e.rumble.Volume *= 0.35
+		end
+		if inMenu then
+			e.rumble.Volume *= 0.3
+		end
+	end
+
+	-- wind rush grows with speed
+	local windTarget = if inMenu or not root then 0 else math.clamp((speed - 40) / 220, 0, 0.55) + (if Drive.NitroOn then 0.15 else 0)
+	wind.Volume += (windTarget - wind.Volume) * math.min(1, dt * 4)
+	wind.PlaybackSpeed = 0.8 + math.clamp(speed / 300, 0, 0.6)
+
+	-- tyre screech while sliding
+	local slip = 0
+	local state = Drive.State
+	if state and state.grounded and root then
+		slip = math.clamp((math.abs(state.lateral) - 10) / 30, 0, 1)
+		if Drive.Handbrake and speed > 25 then
+			slip = math.max(slip, 0.6)
+		end
+	end
+	local skidTarget = slip * 0.5
+	skid.Volume += (skidTarget - skid.Volume) * math.min(1, dt * 10)
+
+	-- flat tyres rattle
+	local flat = Drive.Flat and speed > 10
+	rattle.Volume = if flat then 0.5 else 0
+	rattle.PlaybackSpeed = 1 + math.clamp(speed / 60, 0, 3)
+
+	-- nearby cars
+	local camPos = workspace.CurrentCamera.CFrame.Position
+	scanTimer += dt
+	sirenTimer += dt
+	if scanTimer > 0.5 then
+		scanTimer = 0
+		scanOthers(camPos)
+	end
+	if sirenTimer > 0.5 then
+		sirenTimer = 0
+		updateSirens()
+	end
+	for m, oe in others do
+		local r = m.PrimaryPart
+		if r then
+			local spd = r.AssemblyLinearVelocity.Magnitude
+			local max = m:GetAttribute("maxSpeed")
+			local frac = math.clamp(spd / (if type(max) == "number" then max else 150), 0, 1)
+			local band = (frac * 6) % 1
+			setEngine(oe, 0.22 + 0.7 * band, if spd > 5 then 0.7 else 0.2, false)
+			oe.rumble.Volume *= 0.45
+		end
+	end
+end)
+
+return Sounds
 ]]></ProtectedString></Properties></Item></Item></Item></Item></roblox>

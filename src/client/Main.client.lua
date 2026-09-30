@@ -19,6 +19,7 @@ local HUD = require(script.Parent.HUD)
 local Garage = require(script.Parent.Garage)
 require(script.Parent.CarVisuals)
 require(script.Parent.Effects)
+require(script.Parent.Sounds)
 require(script.Parent.Menu)
 
 local player = Players.LocalPlayer
@@ -52,7 +53,11 @@ local function doPrompt()
 	if action.kind == "race" and action.id then
 		RequestRace:FireServer(action.id)
 	elseif action.kind == "garage" then
-		Garage.Toggle()
+		if Garage.InGarage() then
+			Garage.Exit()
+		else
+			Garage.Enter()
+		end
 	elseif action.kind == "quit" then
 		QuitRace:FireServer()
 	end
@@ -69,8 +74,10 @@ end, false, Enum.KeyCode.E, Enum.KeyCode.ButtonB)
 
 ContextActionService:BindAction("WU_Garage", function(_, inputState)
 	if inputState == Enum.UserInputState.Begin then
-		if player:GetAttribute("AtSafehouse") or Garage.Open then
-			Garage.Toggle()
+		if Garage.InGarage() then
+			Garage.Exit()
+		elseif player:GetAttribute("AtSafehouse") then
+			Garage.Enter()
 		else
 			HUD.Notify("The garage is at the safehouse (green S on the map)", Color3.fromRGB(0, 255, 200))
 		end
@@ -96,7 +103,7 @@ local function updatePrompt(pos: Vector3?)
 	end
 	if player:GetAttribute("AtSafehouse") then
 		promptAction = { kind = "garage" }
-		HUD.SetPrompt(if Garage.Open then "[E] Close garage" else "[E] Open garage  (cars, tuning, paint, Blacklist)")
+		HUD.SetPrompt(if Garage.InGarage() then "[E] Drive out of the garage" else "[E] Enter the garage  (cars, tuning, paint, Blacklist)")
 		return
 	end
 	local race = nearestRace(pos)
@@ -191,12 +198,14 @@ RunService.RenderStepped:Connect(function(dt)
 	local car = Drive.Car
 	HUD.Gui.Enabled = not Drive.MenuOpen
 	HUD.Update(dt, Drive.Speed, Drive.Nitro, Drive.NitroCapacity, Drive.NitroOn, car)
+	local st = Drive.State
+	HUD.SetEngine(Drive.Gear, Drive.Rpm, st ~= nil and st.speed < -1)
 	promptTimer += dt
 	if promptTimer > 0.2 then
 		promptTimer = 0
 		local pos = car and car.PrimaryPart and car.PrimaryPart.Position
 		updatePrompt(pos)
-		if Garage.Open and not player:GetAttribute("AtSafehouse") then
+		if Garage.Open and not player:GetAttribute("AtSafehouse") and not Garage.InGarage() then
 			Garage.Toggle(false)
 		end
 	end

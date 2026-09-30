@@ -3,11 +3,9 @@
 -- near-miss popups, crash flashes, checkpoint pings, engine + siren loops and a GPS arrow
 -- that points to your next checkpoint, the nearest hiding spot or the safehouse.
 
-local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -18,6 +16,7 @@ local BannerEvent = Remotes:WaitForChild("Banner") :: RemoteEvent
 
 local Drive = require(script.Parent.DriveController)
 local HUD = require(script.Parent.HUD)
+local Sounds = require(script.Parent.Sounds)
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -34,19 +33,6 @@ local function new(className: string, props: { [string]: any }, parent: Instance
 	end
 	return inst
 end
-
----------------------------------------------------------------------------
--- Sounds
----------------------------------------------------------------------------
-local function play(id: string, volume: number?, pitch: number?)
-	if id == "" then
-		return
-	end
-	local s = new("Sound", { SoundId = id, Volume = volume or 0.6, PlaybackSpeed = pitch or 1 }, SoundService)
-	s:Play()
-	Debris:AddItem(s, 4)
-end
-Effects.Play = play
 
 ---------------------------------------------------------------------------
 -- Banners (BUSTED / ESCAPED / 1ST PLACE ...)
@@ -122,7 +108,8 @@ function Effects.Banner(title: string, subtitle: string, color: Color3)
 	TweenService:Create(bannerScale, info, { Scale = 1 }):Play()
 	TweenService:Create(bannerTitle, info, { TextTransparency = 0 }):Play()
 	TweenService:Create(bannerSub, TweenInfo.new(0.4), { TextTransparency = 0 }):Play()
-	play(Config.Sounds.Banner, 0.5, 0.8)
+	Sounds.Tick(0.7, 0.6)
+	task.delay(0.12, Sounds.Tick, 1.05, 0.6)
 	task.delay(2.6, function()
 		if token ~= bannerToken then
 			return
@@ -163,7 +150,6 @@ table.insert(Drive.OnNearMiss, function(combo: number)
 	nearLabel.TextTransparency = 0
 	nearScale.Scale = 1.5
 	TweenService:Create(nearScale, TweenInfo.new(0.2, Enum.EasingStyle.Back), { Scale = 1 }):Play()
-	play(Config.Sounds.NearMiss, 0.7, 1 + math.min(combo, 8) * 0.05)
 	local token = combo
 	task.delay(1.2, function()
 		if Drive.NearMissCombo == token then
@@ -178,13 +164,6 @@ table.insert(Drive.OnCrash, function(strength: number)
 	TweenService:Create(flash, TweenInfo.new(0.35), { BackgroundTransparency = 1 }):Play()
 end)
 
--- checkpoint ping
-player:GetAttributeChangedSignal("RaceCP"):Connect(function()
-	local cp = player:GetAttribute("RaceCP")
-	if type(cp) == "number" and cp > 0 then
-		play(Config.Sounds.Checkpoint, 0.6, 1.2)
-	end
-end)
 
 ---------------------------------------------------------------------------
 -- Speed lines
@@ -207,66 +186,6 @@ end
 ---------------------------------------------------------------------------
 local blur = new("BlurEffect", { Size = 0 }, camera)
 local grade = new("ColorCorrectionEffect", { Saturation = 0, Contrast = 0 }, camera)
-
----------------------------------------------------------------------------
--- Engine and siren loops (only when an audio id is configured)
----------------------------------------------------------------------------
-local engineSound: Sound? = nil
-local engineCar: Model? = nil
-local function updateEngine()
-	if Config.Sounds.Engine == "" then
-		return
-	end
-	local car = Drive.Car
-	if car ~= engineCar then
-		if engineSound then
-			engineSound:Destroy()
-			engineSound = nil
-		end
-		engineCar = car
-		if car and car.PrimaryPart then
-			local snd: Sound = new("Sound", { SoundId = Config.Sounds.Engine, Looped = true, Volume = 0.45 }, car.PrimaryPart)
-			snd:Play()
-			engineSound = snd
-		end
-	end
-	if engineSound and car then
-		local max = car:GetAttribute("maxSpeed")
-		local frac = Drive.Speed / (if type(max) == "number" then max else 150)
-		engineSound.PlaybackSpeed = 0.7 + frac * 1.1 + (if Drive.NitroOn then 0.15 else 0)
-	end
-end
-
-local sirenTimer = 0
-local function updateSirens(dt: number)
-	if Config.Sounds.Siren == "" then
-		return
-	end
-	sirenTimer += dt
-	if sirenTimer < 0.5 then
-		return
-	end
-	sirenTimer = 0
-	local police = workspace:FindFirstChild("Police")
-	if not police then
-		return
-	end
-	for _, m in police:GetChildren() do
-		if m:IsA("Model") and m.PrimaryPart and m:GetAttribute("Police") then
-			local snd = m.PrimaryPart:FindFirstChild("SirenLoop") :: Sound?
-			if not snd then
-				snd = new("Sound", { Name = "SirenLoop", SoundId = Config.Sounds.Siren, Looped = true, Volume = 0.35, RollOffMaxDistance = 350 }, m.PrimaryPart)
-			end
-			local s = snd :: Sound
-			local on = m:GetAttribute("Siren") == true
-			if on and not s.IsPlaying then
-				s:Play()
-			elseif not on and s.IsPlaying then
-				s:Stop()
-			end
-		end
-	end
-end
 
 ---------------------------------------------------------------------------
 -- GPS arrow
@@ -404,8 +323,6 @@ RunService.RenderStepped:Connect(function(dt: number)
 	grade.TintColor = (grade.TintColor :: Color3):Lerp(if Drive.Flat then Color3.fromRGB(255, 225, 215) elseif nitro then Color3.fromRGB(225, 245, 255) else Color3.new(1, 1, 1), math.min(1, dt * 5))
 
 	updateArrow()
-	updateEngine()
-	updateSirens(dt)
 end)
 
 return Effects

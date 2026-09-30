@@ -21,6 +21,14 @@ type Entry = {
 	tails: { BasePart },
 	reverse: { BasePart },
 	tailGlow: SurfaceLight?,
+	bodyWeld: Weld?,
+	skids: { Trail },
+	lastVel: Vector3?,
+	roll: number,
+	pitch: number,
+	rollVel: number,
+	pitchVel: number,
+	skidding: boolean?,
 }
 
 local cache: { [Model]: Entry } = setmetatable({}, { __mode = "k" }) :: any
@@ -28,7 +36,7 @@ local TAIL = Color3.fromRGB(230, 15, 30)
 local BRAKE = Color3.fromRGB(255, 70, 70)
 
 local function build(model: Model): Entry
-	local e: Entry = { welds = {}, spin = 0, steer = 0, heads = {}, tails = {}, reverse = {} }
+	local e: Entry = { welds = {}, spin = 0, steer = 0, heads = {}, tails = {}, reverse = {}, skids = {}, roll = 0, pitch = 0, rollVel = 0, pitchVel = 0 }
 	for _, d in model:GetDescendants() do
 		if d:IsA("Weld") and d.Name == "WheelWeld" then
 			table.insert(e.welds, d)
@@ -40,6 +48,10 @@ local function build(model: Model): Entry
 			table.insert(e.reverse, d)
 		elseif d:IsA("SurfaceLight") and d.Name == "TailGlow" then
 			e.tailGlow = d
+		elseif d:IsA("Weld") and d.Name == "BodyWeld" then
+			e.bodyWeld = d
+		elseif d:IsA("Trail") and d.Name == "SkidMark" then
+			table.insert(e.skids, d)
 		end
 	end
 	cache[model] = e
@@ -86,6 +98,37 @@ local function animate(model: Model, dt: number, night: boolean, camPos: Vector3
 		end
 	end
 	e.spin = (e.spin - fwd / r * dt) % (math.pi * 2)
+
+	-- suspension: body leans out of corners, squats under power and dives under braking
+	local lastVel = e.lastVel or vel
+	e.lastVel = vel
+	local accel = if dt > 0 then (vel - lastVel) / dt else Vector3.zero
+	local lat = accel:Dot(cf.RightVector)
+	local long = accel:Dot(cf.LookVector)
+	if root.Anchored then
+		lat, long = 0, 0
+	end
+	local rollTarget = math.clamp(lat * 0.0035, -0.075, 0.075)
+	local pitchTarget = math.clamp(long * 0.0022, -0.05, 0.05)
+	-- damped spring so the body bounces a little
+	e.rollVel += ((rollTarget - e.roll) * 90 - e.rollVel * 11) * dt
+	e.pitchVel += ((pitchTarget - e.pitch) * 90 - e.pitchVel * 11) * dt
+	e.roll += e.rollVel * dt
+	e.pitch += e.pitchVel * dt
+	if e.bodyWeld then
+		e.bodyWeld.C0 = CFrame.Angles(e.pitch, 0, e.roll)
+	end
+
+	-- skid marks while the rear is sliding (or spinning the tyres from a standstill)
+	local lateral = math.abs(vel:Dot(cf.RightVector))
+	local grounded = math.abs(vel.Y) < 15
+	local skidding = grounded and ((lateral > 11 and vel.Magnitude > 25) or (own and Drive.Handbrake and fwd > 20) or (own and model:GetAttribute("Flat") == true and fwd > 20))
+	if skidding ~= e.skidding then
+		e.skidding = skidding
+		for _, t in e.skids do
+			t.Enabled = skidding
+		end
+	end
 
 	if e.night ~= night then
 		e.night = night

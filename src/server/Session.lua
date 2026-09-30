@@ -35,6 +35,7 @@ export type Session = {
 	atSafehouse: boolean,
 	hiding: boolean,
 	frozenUntil: number,
+	inGarage: boolean,
 }
 
 local sessions: { [Player]: Session } = {}
@@ -71,6 +72,7 @@ function Session.Create(player: Player, profile: PlayerData.Profile): Session
 		atSafehouse = false,
 		hiding = false,
 		frozenUntil = 0,
+		inGarage = false,
 	}
 	sessions[player] = s
 	return s

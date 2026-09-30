@@ -49,6 +49,7 @@ local STYLES: { [string]: Dims } = {
 	hyper = { W = 5.9, L = 13.4, c = 0.35, top = 1.95, roof = 3.25, r = 1.05, cabS = 0.3, cabE = 0.66, ws = 2.6, rw = 2.6, hood = 0.2, fAxle = 0.18, rAxle = 0.2, spoiler = 3, fullTail = true, exhausts = 2 },
 	muscle = { W = 5.9, L = 14, c = 0.5, top = 2.5, roof = 3.9, r = 1.05, cabS = 0.42, cabE = 0.8, ws = 2.2, rw = 1.8, hood = 0.25, fAxle = 0.18, rAxle = 0.17, spoiler = 2, fullTail = true, exhausts = 4 },
 	sedan = { W = 5.8, L = 14, c = 0.5, top = 2.45, roof = 4.1, r = 1.05, cabS = 0.31, cabE = 0.8, ws = 2.4, rw = 2.3, hood = 0.25, fAxle = 0.19, rAxle = 0.18, spoiler = 1, fullTail = false, exhausts = 1 },
+	hatch = { W = 5.6, L = 12, c = 0.5, top = 2.35, roof = 4.0, r = 1.0, cabS = 0.33, cabE = 0.93, ws = 2.3, rw = 0.9, hood = 0.25, fAxle = 0.17, rAxle = 0.15, spoiler = 1, fullTail = false, exhausts = 1 },
 	suv = { W = 6.2, L = 14.2, c = 0.85, top = 3.2, roof = 5.1, r = 1.25, cabS = 0.28, cabE = 0.93, ws = 2.0, rw = 0.8, hood = 0.2, fAxle = 0.18, rAxle = 0.17, spoiler = 1, fullTail = false, exhausts = 1 },
 }
 
@@ -61,6 +62,7 @@ local GLASS = Color3.fromRGB(20, 26, 36)
 type Ctx = {
 	model: Model,
 	chassis: BasePart,
+	body: BasePart, -- sprung body: everything except the wheels hangs off this
 }
 
 local function setup(p: BasePart, ctx: Ctx, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?)
@@ -89,14 +91,14 @@ end
 local function box(ctx: Ctx, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?, weldTarget: BasePart?): Part
 	local p = Instance.new("Part")
 	setup(p, ctx, name, size, cf, color, material)
-	weldTo(weldTarget or ctx.chassis, p)
+	weldTo(weldTarget or ctx.body, p)
 	return p
 end
 
 local function wedge(ctx: Ctx, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?): WedgePart
 	local p = Instance.new("WedgePart")
 	setup(p, ctx, name, size, cf, color, material)
-	weldTo(ctx.chassis, p)
+	weldTo(ctx.body, p)
 	return p
 end
 
@@ -104,7 +106,7 @@ local function cylinder(ctx: Ctx, name: string, size: Vector3, cf: CFrame, color
 	local p = Instance.new("Part")
 	p.Shape = Enum.PartType.Cylinder
 	setup(p, ctx, name, size, cf, color, material)
-	weldTo(weldTarget or ctx.chassis, p)
+	weldTo(weldTarget or ctx.body, p)
 	return p
 end
 
@@ -153,7 +155,7 @@ local function buildWheel(ctx: Ctx, d: Dims, x: number, z: number, front: boolea
 	local style = opts.rim or 1
 	local width = if opts.kit == 3 then 1.35 else 1.15
 
-	cylinder(ctx, "Tire", Vector3.new(width, r * 2, r * 2), hubCF, TIRE, Enum.Material.SmoothPlastic, hub)
+	cylinder(ctx, "Tire", Vector3.new(width, r * 2, r * 2), hubCF, TIRE, Enum.Material.Rubber, hub)
 	local outer = side * (width / 2)
 	local lipR = if style == 4 then 0.8 else 0.72
 	local barrelR = if style == 4 then 0.5 else 0.64
@@ -178,7 +180,31 @@ local function buildWheel(ctx: Ctx, d: Dims, x: number, z: number, front: boolea
 	cylinder(ctx, "Cap", Vector3.new(0.08, r * 0.28, r * 0.28), hubCF * CFrame.new(outer + side * 0.05, 0, 0), rimColor, Enum.Material.Metal, hub)
 
 	-- caliper stays still (welded to the chassis)
-	box(ctx, "Caliper", Vector3.new(0.08, r * 0.45, r * 0.32), hubCF * CFrame.new(outer + side * 0.015, r * 0.32, r * 0.18), Color3.fromRGB(200, 30, 35))
+	box(ctx, "Caliper", Vector3.new(0.08, r * 0.45, r * 0.32), hubCF * CFrame.new(outer + side * 0.015, r * 0.32, r * 0.18), Color3.fromRGB(200, 30, 35), nil, chassis)
+
+	-- skid marks: a flat trail under the rear tyres, switched on locally while sliding
+	if not front then
+		local a0 = Instance.new("Attachment")
+		a0.Name = "SkidA"
+		a0.CFrame = chassis.CFrame:ToObjectSpace(CFrame.new(x - 0.45, 0.06, z))
+		a0.Parent = chassis
+		local a1 = Instance.new("Attachment")
+		a1.Name = "SkidB"
+		a1.CFrame = chassis.CFrame:ToObjectSpace(CFrame.new(x + 0.45, 0.06, z))
+		a1.Parent = chassis
+		local trail = Instance.new("Trail")
+		trail.Name = "SkidMark"
+		trail.Attachment0 = a0
+		trail.Attachment1 = a1
+		trail.FaceCamera = false
+		trail.Color = ColorSequence.new(Color3.fromRGB(18, 18, 18))
+		trail.Transparency = NumberSequence.new(0.35, 1)
+		trail.Lifetime = 5
+		trail.MinLength = 0.2
+		trail.LightInfluence = 1
+		trail.Enabled = false
+		trail.Parent = chassis
+	end
 end
 
 function CarBuilder.Build(opts: BuildOptions): Model
@@ -200,7 +226,24 @@ function CarBuilder.Build(opts: BuildOptions): Model
 	chassis.CFrame = CFrame.new(0, chassisH / 2, 0)
 	chassis.Parent = model
 	model.PrimaryPart = chassis
-	local ctx: Ctx = { model = model, chassis = chassis }
+	-- The body root is joined with a Weld whose C0 the client animates for body roll and pitch.
+	local bodyRoot = Instance.new("Part")
+	bodyRoot.Name = "BodyRoot"
+	bodyRoot.Size = Vector3.new(0.2, 0.2, 0.2)
+	bodyRoot.Transparency = 1
+	bodyRoot.CanCollide = false
+	bodyRoot.CanQuery = false
+	bodyRoot.CanTouch = false
+	bodyRoot.Massless = true
+	bodyRoot.CFrame = chassis.CFrame
+	bodyRoot.Parent = model
+	local bodyWeld = Instance.new("Weld")
+	bodyWeld.Name = "BodyWeld"
+	bodyWeld.Part0 = chassis
+	bodyWeld.Part1 = bodyRoot
+	bodyWeld.C0 = CFrame.identity
+	bodyWeld.Parent = bodyRoot
+	local ctx: Ctx = { model = model, chassis = chassis, body = bodyRoot }
 
 	-- keep the car upright (primary axis = attachment X axis, pointed up)
 	local att = Instance.new("Attachment")

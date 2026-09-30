@@ -9,6 +9,7 @@ local Grid = require(Shared:WaitForChild("Grid"))
 local CarBuilder = require(script.Parent.CarBuilder)
 local PlayerData = require(script.Parent.PlayerData)
 local Session = require(script.Parent.Session)
+local Showroom = require(script.Parent.Showroom)
 
 local Vehicles = {}
 
@@ -139,15 +140,23 @@ function Vehicles.Spawn(s: Session.Session, groundCFrame: CFrame?)
 	car:SetAttribute("CarId", def.id)
 	car:SetAttribute("CarName", def.name)
 	Vehicles.WriteStats(car, stats)
-	car:PivotTo(Vehicles.GroundCFrame(ground :: CFrame, car))
+	local root = car.PrimaryPart :: BasePart
+	if s.inGarage then
+		-- parked on the showroom turntable while the garage menu is open
+		car:PivotTo(Showroom.CarCFrame + Vector3.new(0, root.Size.Y / 2, 0))
+		root.Anchored = true
+	else
+		car:PivotTo(Vehicles.GroundCFrame(ground :: CFrame, car))
+	end
 	car.Parent = carsFolder
 	s.car = car
 	s.stats = stats
 
-	local root = car.PrimaryPart :: BasePart
-	pcall(function()
-		root:SetNetworkOwner(s.player)
-	end)
+	if not s.inGarage then
+		pcall(function()
+			root:SetNetworkOwner(s.player)
+		end)
+	end
 	seatCharacter(s)
 	return car
 end

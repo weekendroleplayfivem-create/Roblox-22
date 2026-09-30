@@ -37,6 +37,12 @@ Drive.Shake = 0 -- camera shake impulse (crashes)
 Drive.NearMissCombo = 0
 Drive.OnNearMiss = {} :: { (combo: number) -> () }
 Drive.OnCrash = {} :: { (strength: number) -> () }
+Drive.OnBackfire = {} :: { () -> () }
+Drive.OnShift = {} :: { (gear: number) -> () }
+-- simulated drivetrain for the HUD tachometer and the engine sound
+Drive.Gear = 1
+Drive.Rpm = 0.2 -- 0..1
+Drive.Gears = 6
 
 local seat: VehicleSeat? = nil
 local handbrake = false
@@ -46,6 +52,7 @@ local keySteer = 0
 local sentNitro = false
 local camPos: Vector3? = nil
 local lastSpeed = 0
+local lastThrottle = 0
 local nearTrack: { [Model]: { min: number, rel: number, speed: number } } = setmetatable({}, { __mode = "k" }) :: any
 local lastNearMiss = 0
 local camLook: Vector3? = nil
@@ -233,6 +240,37 @@ RunService.PreSimulation:Connect(function(dt: number)
 		Drive.Nitro = math.min(capacity, Drive.Nitro + gain * dt)
 	end
 
+	-- drivetrain: pick a gear from road speed, rpm sweeps through each gear's band
+	local maxSpd = stats.maxSpeed * (if nitroOn then stats.nitroMult else 1)
+	local frac = math.clamp(math.abs(state.speed) / math.max(maxSpd, 1), 0, 1.05)
+	local gear = if state.speed < -1 then 1 else math.clamp(math.floor(frac * Drive.Gears) + 1, 1, Drive.Gears)
+	if gear ~= Drive.Gear then
+		local up = gear > Drive.Gear
+		Drive.Gear = gear
+		if up then
+			for _, fn in Drive.OnShift do
+				task.spawn(fn, gear)
+			end
+		end
+	end
+	local band = frac * Drive.Gears - (gear - 1)
+	local targetRpm = 0.22 + 0.72 * math.clamp(band, 0, 1)
+	if not state.grounded or (handbrake and throttle > 0) then
+		targetRpm = math.min(1, targetRpm + 0.25 * math.max(throttle, 0)) -- revving in the air / drifting
+	end
+	if math.abs(state.speed) < 3 then
+		targetRpm = 0.18 + 0.45 * math.max(throttle, 0)
+	end
+	local prevThrottle = lastThrottle
+	lastThrottle = throttle
+	Drive.Rpm += (targetRpm - Drive.Rpm) * math.min(1, dt * 8)
+	-- lifting off at high revs pops the exhaust
+	if prevThrottle > 0.6 and throttle < 0.1 and Drive.Rpm > 0.6 and speed > 60 then
+		for _, fn in Drive.OnBackfire do
+			task.spawn(fn)
+		end
+	end
+
 	-- crash detection (sudden loss of speed) for camera shake
 	if lastSpeed - speed > 35 then
 		local strength = math.clamp((lastSpeed - speed) / 80, 0.3, 1)
@@ -301,7 +339,7 @@ end)
 -- Chase camera
 ---------------------------------------------------------------------------
 RunService:BindToRenderStep("WU_ChaseCam", Enum.RenderPriority.Camera.Value + 1, function(dt)
-	if Drive.MenuOpen then
+	if Drive.MenuOpen or player:GetAttribute("InGarage") then
 		return
 	end
 	local car = Drive.Car

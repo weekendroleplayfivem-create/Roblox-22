@@ -16,6 +16,7 @@ local Session = require(script.Parent.Session)
 local Vehicles = require(script.Parent.Vehicles)
 local Police = require(script.Parent.Police)
 local Traffic = require(script.Parent.Traffic)
+local Showroom = require(script.Parent.Showroom)
 local Races = require(script.Parent.Races)
 
 ---------------------------------------------------------------------------
@@ -36,6 +37,8 @@ local nitroEvent = remote("RemoteEvent", "NitroState") :: RemoteEvent
 local raceEvent = remote("RemoteEvent", "RequestRace") :: RemoteEvent
 local respawnEvent = remote("RemoteEvent", "RespawnCar") :: RemoteEvent
 local rivalEvent = remote("RemoteEvent", "ChallengeRival") :: RemoteEvent
+local garageEvent = remote("RemoteEvent", "Garage") :: RemoteEvent
+local exitGarage: (s: Session.Session, respawn: boolean) -> ()
 local quitEvent = remote("RemoteEvent", "QuitRace") :: RemoteEvent
 local shopFunction = remote("RemoteFunction", "Shop") :: RemoteFunction
 remotes.Parent = ReplicatedStorage
@@ -48,6 +51,7 @@ local mapInfo = MapBuilder.Build()
 Vehicles.SetSpawns(mapInfo.safehouseSpawns)
 Police.Init(mapInfo)
 Traffic.Init()
+Showroom.Build(workspace:WaitForChild("Map"))
 Police.SetBustedCallback(function(s)
 	Races.Cancel(s)
 end)
@@ -222,6 +226,42 @@ quitEvent.OnServerEvent:Connect(function(player)
 	end
 end)
 
+---------------------------------------------------------------------------
+-- Garage: press E at the safehouse to drive inside the workshop
+---------------------------------------------------------------------------
+exitGarage = function(s: Session.Session, respawn: boolean)
+	if not s.inGarage then
+		return
+	end
+	s.inGarage = false
+	s.player:SetAttribute("InGarage", false)
+	if respawn then
+		Vehicles.Spawn(s, Vehicles.NextSafehouseSpawn())
+		Vehicles.Freeze(s, 0.5)
+	end
+end
+
+garageEvent.OnServerEvent:Connect(function(player, action)
+	local s = Session.Get(player)
+	if not s then
+		return
+	end
+	if action == "enter" then
+		if s.inGarage then
+			return
+		end
+		if not s.atSafehouse or s.mode ~= "idle" or s.race then
+			Session.Notify(player, "Drive to the safehouse (without cops on you) to enter the garage", Color3.fromRGB(255, 90, 90))
+			return
+		end
+		s.inGarage = true
+		Vehicles.Spawn(s)
+		player:SetAttribute("InGarage", true)
+	elseif action == "exit" then
+		exitGarage(s, true)
+	end
+end)
+
 rivalEvent.OnServerEvent:Connect(function(player, rank)
 	local s = Session.Get(player)
 	if not s or type(rank) ~= "number" then
@@ -244,6 +284,7 @@ rivalEvent.OnServerEvent:Connect(function(player, rank)
 		Session.Notify(player, "Challenge the Blacklist from the safehouse", Color3.fromRGB(255, 90, 90))
 		return
 	end
+	exitGarage(s, false)
 	local ok, msg = Races.Start(s, Races.RivalDef(rival), rival)
 	if not ok then
 		Session.Notify(player, msg, Color3.fromRGB(255, 90, 90))
@@ -420,8 +461,8 @@ task.spawn(function()
 			local vel = root.AssemblyLinearVelocity
 			local speed = vel.Magnitude
 
-			-- fell out of the world
-			if pos.Y < -40 then
+			-- fell out of the world (the garage interior is underground on purpose)
+			if pos.Y < -40 and not s.inGarage then
 				Vehicles.ResetToRoad(s)
 				continue
 			end
@@ -434,7 +475,7 @@ task.spawn(function()
 
 			-- safehouse: bank unbanked cash and clear heat (Unbound)
 			local flat = Vector3.new(pos.X - mapInfo.safehouse.X, 0, pos.Z - mapInfo.safehouse.Z)
-			s.atSafehouse = flat.Magnitude < 70
+			s.atSafehouse = s.inGarage or flat.Magnitude < 70
 			if s.atSafehouse and s.mode == "idle" and not s.race then
 				if s.unbanked > 0 then
 					local amount = math.floor(s.unbanked)

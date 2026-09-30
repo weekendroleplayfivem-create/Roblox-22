@@ -83,6 +83,31 @@ new("UIStroke", { Color = CYAN, Thickness = 2, Transparency = 0.3 }, speedo)
 local speedLabel = label({ Position = UDim2.fromOffset(10, 4), Size = UDim2.new(1, -80, 0, 70), Text = "0", TextXAlignment = Enum.TextXAlignment.Right }, speedo)
 label({ Position = UDim2.new(1, -68, 0, 34), Size = UDim2.fromOffset(60, 30), Text = "MPH", TextColor3 = CYAN, Font = FONT2 }, speedo)
 local carNameLabel = label({ Position = UDim2.fromOffset(12, 74), Size = UDim2.new(1, -24, 0, 16), Text = "", Font = FONT2, TextColor3 = Color3.fromRGB(190, 190, 210), TextXAlignment = Enum.TextXAlignment.Left }, speedo)
+-- tachometer + gear
+local gearLabel = label({ Position = UDim2.fromOffset(12, 10), Size = UDim2.fromOffset(44, 50), Text = "1", TextColor3 = Color3.fromRGB(255, 200, 60), TextXAlignment = Enum.TextXAlignment.Left }, speedo)
+local rpmBack = new("Frame", {
+	Position = UDim2.new(0, 0, 0, -16),
+	Size = UDim2.new(1, 0, 0, 10),
+	BackgroundColor3 = Color3.fromRGB(10, 10, 18),
+	BackgroundTransparency = 0.35,
+}, speedo)
+corner(rpmBack, 5)
+local rpmFill = new("Frame", { Size = UDim2.fromScale(0.2, 1), BackgroundColor3 = Color3.fromRGB(80, 255, 140) }, rpmBack)
+corner(rpmFill, 5)
+new("UIGradient", {
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 255, 140)),
+		ColorSequenceKeypoint.new(0.7, Color3.fromRGB(255, 220, 60)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 50, 50)),
+	}),
+}, rpmFill)
+
+function HUD.SetEngine(gear: number, rpm: number, reversing: boolean)
+	gearLabel.Text = if reversing then "R" else tostring(gear)
+	rpmFill.Size = UDim2.fromScale(math.clamp(rpm, 0.02, 1), 1)
+	gearLabel.TextColor3 = if rpm > 0.9 then Color3.fromRGB(255, 60, 60) else Color3.fromRGB(255, 200, 60)
+end
+
 local nitroBack = new("Frame", {
 	Position = UDim2.fromOffset(12, 96),
 	Size = UDim2.new(1, -24, 0, 14),

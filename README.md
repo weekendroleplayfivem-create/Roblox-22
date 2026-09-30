@@ -28,6 +28,31 @@ in code, so you don't need any models, meshes or assets.
 5. **Climb the Blacklist.** Earn total bounty and race wins, then challenge Blacklist rivals #5 → #1
    from the garage. Beat one and you win their car's **pink slip**.
 
+### Sound, better cars and the garage interior
+- **Sound:**
+  - A **synthesized engine** with no audio ids needed. It's built from Roblox's own wind-noise
+    sound: pitched down, bass-boosted, distorted and pulsed at the firing rate. It follows a
+    simulated RPM through 6 gears, with shift dips and a turbo/intake whine.
+  - Wind rush that grows with speed, a synthesized tyre screech while drifting and a flat-tyre
+    rattle.
+  - Exhaust backfire pops (with flames) when you lift off at high revs.
+  - Crash thuds, explosions when cops get wrecked, near-miss whooshes, checkpoint beeps and UI
+    clicks.
+  - Nearby cars (traffic, cops, rivals, other players) get 3D engine sounds.
+  - Only sounds that actually ship with the Roblox client are used (`content/sounds`). For a real
+    engine recording, siren or tyre screech, paste audio ids into `Config.Sounds.Engine / Siren /
+    Skid`.
+- **Better cars:**
+  - The body is sprung: it **leans in corners, squats when accelerating and dives when braking**,
+    with a little bounce.
+  - **Skid marks** are left on the road while sliding.
+  - Rubber tyres, and a **tachometer with gear indicator** on the speedometer.
+  - 3 new cars: **Kitsune S15** (drift), **Rally Hatch R** (new hatchback body) and **Veloce V12**.
+- **Enter the garage:** press **E** (or G) at the safehouse to drive into an underground workshop.
+  Your car sits on a lit turntable while the camera orbits it. The workshop has tool chests, a
+  workbench, tyre racks, a car lift and posters. The garage menu is on the right, so you watch
+  your car change as you tune it. Press E again to drive back out.
+
 ### Realistic city update
 - **Real architecture** (every building is made of parts, no meshes):
   - **Glass skyscrapers:** setbacks, curtain-wall mullions and floor bands, a marble lobby with an
@@ -143,6 +168,7 @@ src/server/   (ServerScriptService.Server)
   AIDriver.lua      road-grid navigation + unstick logic for AI cars
   Police.lua        heat, pursuits, cops, roadblocks, spike strips, helicopter, pursuit breakers, busts
   Traffic.lua       civilian traffic
+  Showroom.lua      the garage interior (underground workshop with turntable)
   Races.lua         races, drift events and Blacklist challenges
   Session.lua       per-player runtime state and money helpers
   PlayerData.lua    DataStore save / load
@@ -152,7 +178,8 @@ src/client/   (StarterPlayerScripts.Client)
   HUD.lua           all on-screen UI + minimap
   Garage.lua        garage: cars, performance parts, handling, visuals, Blacklist
   CarVisuals.lua    spinning / steering wheels, headlights at night, brake lights
-  Effects.lua       banners, speed lines, blur, near-miss popups, sounds, GPS arrow
+  Effects.lua       banners, speed lines, blur, near-miss popups, GPS arrow
+  Sounds.lua        engine synth, wind, tyres, backfires, crashes, explosions, UI sounds
   Menu.lua          title screen
 ```
 
