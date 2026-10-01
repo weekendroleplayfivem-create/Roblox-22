@@ -1,0 +1,141 @@
+{
+  "name": "VectorRush",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Shared": {
+        "$path": "src/ReplicatedStorage/Shared"
+      },
+      "Assets": {
+        "$path": "src/ReplicatedStorage/Assets"
+      }
+    },
+    "ServerScriptService": {
+      "Services": {
+        "$path": "src/ServerScriptService/Services"
+      },
+      "Tests": {
+        "$path": "src/ServerScriptService/Tests"
+      },
+      "ServerMain": {
+        "$path": "src/ServerScriptService/ServerMain.server.luau"
+      }
+    },
+    "ServerStorage": {
+      "Maps": {
+        "$path": "src/ServerStorage/Maps"
+      },
+      "Weapons": {
+        "$path": "src/ServerStorage/Weapons"
+      },
+      "ServerAssets": {
+        "$path": "src/ServerStorage/ServerAssets"
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "Controllers": {
+          "$path": "src/StarterPlayerScripts/Controllers"
+        },
+        "ClientMain": {
+          "$path": "src/StarterPlayerScripts/ClientMain.client.luau"
+        }
+      },
+      "$properties": {
+        "CameraMaxZoomDistance": 16,
+        "CameraMinZoomDistance": 0.5,
+        "CharacterUseJumpPower": true,
+        "CharacterJumpPower": 50,
+        "CharacterWalkSpeed": 16,
+        "EnableMouseLockOption": false
+      }
+    },
+    "StarterGui": {
+      "$properties": {
+        "ResetPlayerGuiOnSpawn": false
+      },
+      "MainMenu": {
+        "$className": "ScreenGui",
+        "$properties": {
+          "ResetOnSpawn": false,
+          "IgnoreGuiInset": true,
+          "DisplayOrder": 20,
+          "ZIndexBehavior": "Sibling"
+        }
+      },
+      "HUD": {
+        "$className": "ScreenGui",
+        "$properties": {
+          "ResetOnSpawn": false,
+          "IgnoreGuiInset": true,
+          "DisplayOrder": 5,
+          "ZIndexBehavior": "Sibling"
+        }
+      },
+      "Scoreboard": {
+        "$className": "ScreenGui",
+        "$properties": {
+          "ResetOnSpawn": false,
+          "IgnoreGuiInset": true,
+          "DisplayOrder": 15,
+          "ZIndexBehavior": "Sibling"
+        }
+      },
+      "Loadout": {
+        "$className": "ScreenGui",
+        "$properties": {
+          "ResetOnSpawn": false,
+          "IgnoreGuiInset": true,
+          "DisplayOrder": 25,
+          "ZIndexBehavior": "Sibling"
+        }
+      },
+      "Results": {
+        "$className": "ScreenGui",
+        "$properties": {
+          "ResetOnSpawn": false,
+          "IgnoreGuiInset": true,
+          "DisplayOrder": 30,
+          "ZIndexBehavior": "Sibling"
+        }
+      },
+      "Settings": {
+        "$className": "ScreenGui",
+        "$properties": {
+          "ResetOnSpawn": false,
+          "IgnoreGuiInset": true,
+          "DisplayOrder": 35,
+          "ZIndexBehavior": "Sibling"
+        }
+      },
+      "Shop": {
+        "$className": "ScreenGui",
+        "$properties": {
+          "ResetOnSpawn": false,
+          "IgnoreGuiInset": true,
+          "DisplayOrder": 25,
+          "ZIndexBehavior": "Sibling"
+        }
+      }
+    },
+    "Workspace": {
+      "$properties": {
+        "Gravity": 196.2,
+        "StreamingEnabled": false
+      }
+    },
+    "Lighting": {
+      "$properties": {
+        "Technology": "Future",
+        "Brightness": 2,
+        "ClockTime": 20,
+        "GlobalShadows": true
+      }
+    },
+    "SoundService": {
+      "$properties": {
+        "RespectFilteringEnabled": true
+      }
+    }
+  }
+}
