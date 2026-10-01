@@ -70,6 +70,8 @@ local PlayerConfig = {
 
 		JumpPad = {
 			Cooldown = 0.6,
+			-- Seconds past the apex that the launch's horizontal speed is held.
+			HoldExtra = 0.35,
 		},
 	},
 

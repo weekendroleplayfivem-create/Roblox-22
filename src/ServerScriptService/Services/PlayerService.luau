@@ -79,8 +79,10 @@ function PlayerService:SpawnCombatant(combatant, cframe: CFrame)
 	if not player or not player.Parent then
 		return nil
 	end
-	-- Mark dead while the new character loads so nothing targets it early.
+	-- Mark dead while the new character loads so nothing targets it early,
+	-- and pause movement checks until it has been moved to the spawn.
 	combatant.Alive = false
+	Services.AntiCheatService:ResetBaseline(player, nil, 3)
 	player:LoadCharacter()
 	local character = player.Character
 	if not character or not player.Parent then

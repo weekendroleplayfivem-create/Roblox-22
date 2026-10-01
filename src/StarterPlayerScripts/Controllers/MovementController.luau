@@ -53,6 +53,8 @@ local root: BasePart? = nil
 local trail: Trail? = nil
 local gravityForce: VectorForce? = nil
 local dashConstraint: LinearVelocity? = nil
+local launchConstraint: LinearVelocity? = nil
+local launchUntil = 0
 
 local state = {
 	SprintToggled = false,
@@ -211,6 +213,38 @@ local function endDash()
 	end
 end
 
+local function rootAttachment(): Attachment
+	local rootPart = root :: BasePart
+	local attachment = rootPart:FindFirstChild("RootAttachment") or rootPart:FindFirstChildOfClass("Attachment")
+	if not attachment then
+		attachment = Instance.new("Attachment")
+		attachment.Name = "RootAttachment"
+		attachment.Parent = rootPart
+	end
+	return attachment :: Attachment
+end
+
+-- Holds a horizontal velocity (vertical stays free for gravity/jumps).
+local function newPlaneVelocity(horizontal: Vector3): LinearVelocity
+	local constraint = Instance.new("LinearVelocity")
+	constraint.Attachment0 = rootAttachment()
+	constraint.RelativeTo = Enum.ActuatorRelativeTo.World
+	constraint.VelocityConstraintMode = Enum.VelocityConstraintMode.Plane
+	constraint.PrimaryTangentAxis = Vector3.xAxis
+	constraint.SecondaryTangentAxis = Vector3.zAxis
+	constraint.PlaneVelocity = Vector2.new(horizontal.X, horizontal.Z)
+	constraint.MaxForce = math.huge
+	constraint.Parent = root
+	return constraint
+end
+
+local function endLaunch()
+	if launchConstraint then
+		launchConstraint:Destroy()
+		launchConstraint = nil
+	end
+end
+
 -- Called by AbilityController. Returns true if the dash happened.
 function MovementController:Dash(): boolean
 	if not root or not humanoid or humanoid.Health <= 0 or state.Frozen then
@@ -230,22 +264,8 @@ function MovementController:Dash(): boolean
 	if dashConstraint then
 		dashConstraint:Destroy()
 	end
-	local attachment = root:FindFirstChild("RootAttachment") or root:FindFirstChildOfClass("Attachment")
-	if not attachment then
-		attachment = Instance.new("Attachment")
-		attachment.Name = "RootAttachment"
-		attachment.Parent = root
-	end
-	local constraint = Instance.new("LinearVelocity")
-	constraint.Attachment0 = attachment :: Attachment
-	constraint.RelativeTo = Enum.ActuatorRelativeTo.World
-	constraint.VelocityConstraintMode = Enum.VelocityConstraintMode.Plane
-	constraint.PrimaryTangentAxis = Vector3.xAxis
-	constraint.SecondaryTangentAxis = Vector3.zAxis
-	constraint.PlaneVelocity = Vector2.new(direction.X * dash.Speed, direction.Z * dash.Speed)
-	constraint.MaxForce = math.huge
-	constraint.Parent = root
-	dashConstraint = constraint
+	endLaunch()
+	dashConstraint = newPlaneVelocity(direction * dash.Speed)
 
 	state.DashDirection = direction
 	state.DashUntil = os.clock() + duration
@@ -383,9 +403,12 @@ local function step(deltaTime: number)
 		state.MinVerticalVelocity = math.min(state.MinVerticalVelocity, velocity.Y)
 	end
 
-	-- Dash lifetime.
+	-- Dash / pad-launch lifetimes.
 	if dashConstraint and now >= state.DashUntil then
 		endDash()
+	end
+	if launchConstraint and (now >= launchUntil or (grounded and now > launchUntil - 0.5)) then
+		endLaunch()
 	end
 
 	local moveDirection = humanoid.MoveDirection
@@ -481,6 +504,14 @@ local function onJumpPad(pad: BasePart)
 	state.JumpPadCooldown = now + Movement.JumpPad.Cooldown
 	endSlide(nil)
 	root.AssemblyLinearVelocity = velocity
+	-- Humanoid air control would brake the launch if no key is held, so the
+	-- horizontal part of the arc is held until roughly the apex.
+	endLaunch()
+	local horizontal = MathUtil.Flatten(velocity)
+	if horizontal.Magnitude > 1 and not dashConstraint then
+		launchConstraint = newPlaneVelocity(horizontal)
+		launchUntil = now + math.max(0.2, velocity.Y / workspace.Gravity) + Movement.JumpPad.HoldExtra
+	end
 	state.Momentum = math.max(state.Momentum, MathUtil.Flatten(velocity).Magnitude)
 	state.AirJumps = 0
 	state.WallJumps = 0
@@ -503,6 +534,7 @@ local function onCharacterAdded(newCharacter: Model)
 	state.Speed = Movement.WalkSpeed
 	state.DashUntil = 0
 	dashConstraint = nil
+	launchConstraint = nil
 	setControlsEnabled(true)
 
 	-- Movement trail (enabled while sliding/dashing).
@@ -559,6 +591,7 @@ local function onCharacterAdded(newCharacter: Model)
 
 	characterMaid:GiveTask(hum.Died:Connect(function()
 		endSlide(0)
+		endLaunch()
 		if dashConstraint then
 			dashConstraint:Destroy()
 			dashConstraint = nil
@@ -628,6 +661,7 @@ function MovementController:Start()
 	Net.Event("Movement", "Correction").OnClientEvent:Connect(function()
 		state.Momentum = 0
 		endSlide(0)
+		endLaunch()
 		if dashConstraint then
 			dashConstraint:Destroy()
 			dashConstraint = nil
