@@ -124,6 +124,8 @@ local function onPlayerAdded(player: Player)
 	combatant.Level = profile.Data.Level
 	combatant.Banner = profile.Data.Equipped.Banner
 	player:SetAttribute("Level", profile.Data.Level)
+	-- Movement abilities (Dash/Phase) work in the lobby too.
+	Services.AbilityService:ApplyLoadout(combatant)
 
 	PlayerService:SendToLobby(player)
 end

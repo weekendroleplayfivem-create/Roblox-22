@@ -23,7 +23,7 @@ local root: Frame
 local content: Frame
 local selection = {}
 local tiles = {}
-local detail = {}
+local detail: { [string]: any } = {}
 local statusLabel: TextLabel
 
 local function level(): number

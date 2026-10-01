@@ -62,9 +62,10 @@ function Viewmodel.new(weapon, skin, accentColor: Color3?)
 				part.CanTouch = false
 			end
 		end
+		local primary = model.PrimaryPart :: BasePart
 		local muzzle = model:FindFirstChild("Muzzle", true)
 		self.MuzzleOffset = if muzzle and muzzle:IsA("Attachment")
-			then model.PrimaryPart.CFrame:ToObjectSpace(muzzle.WorldCFrame)
+			then primary.CFrame:ToObjectSpace(muzzle.WorldCFrame)
 			else CFrame.new(0, 0, -2)
 		self.Accent = nil
 	else

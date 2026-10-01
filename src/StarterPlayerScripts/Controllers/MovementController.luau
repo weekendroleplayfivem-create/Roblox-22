@@ -623,7 +623,9 @@ end
 
 function MovementController:Init()
 	local ok, playerModule = pcall(function()
-		return require(player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule", 10))
+		-- Roblox's built-in PlayerModule (not part of this project's source tree).
+		local module = player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule", 10)
+		return (require :: any)(module)
 	end)
 	if ok and playerModule then
 		controls = playerModule:GetControls()

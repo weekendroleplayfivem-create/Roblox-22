@@ -42,7 +42,7 @@ local INDICATOR_LIFETIME = 1.4
 
 local screen: ScreenGui
 local hudRoot: Frame
-local ui = {}
+local ui: { [string]: any } = {}
 local killfeedEntries = {}
 local indicators = {}
 local lastCountdownSecond = -1
@@ -241,7 +241,10 @@ local function addKillfeed(data)
 	UIKit.Corner(entry, 6)
 	table.insert(killfeedEntries, entry)
 	while #killfeedEntries > KILLFEED_MAX do
-		table.remove(killfeedEntries, 1):Destroy()
+		local oldest = table.remove(killfeedEntries, 1)
+		if oldest then
+			oldest:Destroy()
+		end
 	end
 	task.delay(KILLFEED_LIFETIME, function()
 		if entry.Parent then

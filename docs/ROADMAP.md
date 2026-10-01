@@ -21,4 +21,4 @@
 6. **Analytics and anti-cheat heuristics.** Accuracy/headshot statistics per weapon, flagged-session review tooling.
 7. **More modes.** Use the `MatchService/Modes` interface for objective modes (King of the Hill, Capture).
 8. **Accessibility.** Colour-blind team palettes, a hit-marker size option, subtitles for announcements.
-9. **Automated CI.** Run `rojo build` and `luau-lsp analyze` in GitHub Actions. Consider TestEZ/Jest-Lua for the shared modules.
+9. **More automated tests.** CI already builds the place and runs `luau-lsp analyze` (`.github/workflows/ci.yml`); add TestEZ/Jest-Lua unit tests for shared modules and run the in-game `TestRunner` via Open Cloud Luau execution.

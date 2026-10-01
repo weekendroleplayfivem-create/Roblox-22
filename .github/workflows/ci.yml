@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      ROJO_VERSION: 7.4.4
+      LUAU_LSP_VERSION: 1.70.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rojo and luau-lsp
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -sSL -o rojo.zip "https://github.com/rojo-rbx/rojo/releases/download/v${ROJO_VERSION}/rojo-${ROJO_VERSION}-linux-x86_64.zip"
+          unzip -o rojo.zip -d "$HOME/bin"
+          curl -sSL -o lsp.zip "https://github.com/JohnnyMorganz/luau-lsp/releases/download/${LUAU_LSP_VERSION}/luau-lsp-linux-x86_64.zip"
+          unzip -o lsp.zip -d "$HOME/bin"
+          curl -sSL -o globalTypes.d.luau "https://raw.githubusercontent.com/JohnnyMorganz/luau-lsp/${LUAU_LSP_VERSION}/scripts/globalTypes.d.luau"
+          chmod +x "$HOME/bin/rojo" "$HOME/bin/luau-lsp"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Build place file
+        run: rojo build default.project.json -o VectorRush.rbxl
+
+      - name: Static analysis (Roblox types)
+        run: |
+          rojo sourcemap default.project.json -o sourcemap.json
+          luau-lsp analyze --sourcemap=sourcemap.json --definitions=globalTypes.d.luau --platform=roblox --no-strict-dm-types src
+
+      - name: Upload place file
+        uses: actions/upload-artifact@v4
+        with:
+          name: VectorRush-place
+          path: VectorRush.rbxl

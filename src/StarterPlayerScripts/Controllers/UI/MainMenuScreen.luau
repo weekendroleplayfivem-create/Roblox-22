@@ -26,7 +26,7 @@ local Theme = UIKit.Theme
 local screen: ScreenGui
 local lobbyRoot: Frame
 local pauseRoot: Frame
-local ui = {}
+local ui: { [string]: any } = {}
 local UIController = nil
 local activePanel = "Play"
 

@@ -406,13 +406,14 @@ local function watchCharacter(character: Model)
 	local function applyProtection()
 		local protected = character:GetAttribute("SpawnProtected") == true
 		if protected and not shield then
-			shield = Instance.new("Highlight")
-			shield.FillColor = Color3.fromRGB(150, 230, 255)
-			shield.FillTransparency = 0.7
-			shield.OutlineTransparency = 0.3
-			shield.DepthMode = Enum.HighlightDepthMode.Occluded
-			shield.Adornee = character
-			shield.Parent = character
+			local highlight = Instance.new("Highlight")
+			highlight.FillColor = Color3.fromRGB(150, 230, 255)
+			highlight.FillTransparency = 0.7
+			highlight.OutlineTransparency = 0.3
+			highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+			highlight.Adornee = character
+			highlight.Parent = character
+			shield = highlight
 		elseif not protected and shield then
 			shield:Destroy()
 			shield = nil

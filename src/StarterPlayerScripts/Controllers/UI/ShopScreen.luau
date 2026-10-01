@@ -143,7 +143,7 @@ function ShopScreen:Build(controller)
 	root, content = UIKit.MenuFrame(screen, "SHOP", function()
 		controller:CloseMenu()
 	end)
-	titleLabel = root:FindFirstChild("Holder"):FindFirstChildOfClass("TextLabel") :: TextLabel
+	titleLabel = (root:FindFirstChild("Holder") :: Frame):FindFirstChildOfClass("TextLabel") :: TextLabel
 	creditsLabel = UIKit.Label({ Text = "", TextSize = 20, TextColor3 = Theme.Yellow, TextXAlignment = Enum.TextXAlignment.Right, Position = UDim2.new(0.5, -140, 0, -50), Size = UDim2.new(0.5, 0, 0, 30), Parent = content })
 
 	local tabs = UIKit.Create("Frame", { Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1, Parent = content })

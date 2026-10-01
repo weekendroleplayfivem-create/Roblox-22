@@ -23,7 +23,7 @@ local player = Players.LocalPlayer
 local Theme = UIKit.Theme
 
 local root: Frame
-local ui = {}
+local ui: { [string]: any } = {}
 local closesAt = 0
 
 local function clear(container: Instance)

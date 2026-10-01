@@ -22,6 +22,7 @@
 Static checks used during development:
 - `rojo build` confirms the project tree builds.
 - `luau-lsp analyze` with Roblox type definitions, run over all sources, reports no errors in non-strict mode.
+- Both run in GitHub Actions on every push (`.github/workflows/ci.yml`), which also uploads a built `VectorRush.rbxl` as an artifact.
 
 ## Developer commands
 
