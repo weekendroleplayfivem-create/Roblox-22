@@ -453,8 +453,10 @@ local function updateLighting()
 	if ClientState.IsInMatch() and matchState and matchState.Map then
 		local map = MapConfig.Get(matchState.Map)
 		EffectsController:ApplyLighting(map and map.Lighting)
+		SoundController:SetAmbient(map and map.Ambient)
 	else
 		EffectsController:ApplyLighting(MapConfig.LobbyLighting)
+		SoundController:SetAmbient(nil)
 	end
 end
 

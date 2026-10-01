@@ -67,8 +67,11 @@ local SoundConfig = {
 		Countdown = { Id = PING, Volume = 0.4, Pitch = 1 },
 		MatchStart = { Id = PING, Volume = 0.6, Pitch = 1.4 },
 
-		-- Ambient (PLACEHOLDER: no looping ambience shipped; leave empty to skip)
+		-- Ambient loops per map (PLACEHOLDER: no licensed ambience included yet;
+		-- set an uploaded looping track id to enable).
 		AmbientNeon = { Id = "", Volume = 0.2, Pitch = 1, Looped = true },
+		AmbientSky = { Id = "", Volume = 0.2, Pitch = 1, Looped = true },
+		AmbientCore = { Id = "", Volume = 0.2, Pitch = 1, Looped = true },
 	},
 }
 

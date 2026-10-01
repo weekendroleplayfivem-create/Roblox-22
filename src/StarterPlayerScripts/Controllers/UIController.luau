@@ -119,7 +119,7 @@ function UIController:Start()
 	local modalGui = UIKit.GetScreen("ModalHelper", 1)
 	modalButton = UIKit.Create("TextButton", {
 		Name = "MouseRelease",
-		Size = UDim2.fromOffset(0, 0),
+		Size = UDim2.fromOffset(1, 1),
 		BackgroundTransparency = 1,
 		Text = "",
 		Modal = true,

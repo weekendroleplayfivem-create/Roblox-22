@@ -88,6 +88,29 @@ function SoundController:PlayAt(key: string, position: Vector3, pitchVariance: n
 	Debris:AddItem(holder, 3)
 end
 
+local ambient: Sound? = nil
+local ambientKey: string? = nil
+
+-- Plays (or stops, with nil) a looping ambience track.
+function SoundController:SetAmbient(key: string?)
+	if key == ambientKey then
+		return
+	end
+	ambientKey = key
+	if ambient then
+		ambient:Destroy()
+		ambient = nil
+	end
+	local base = key and template(key)
+	if base then
+		local sound = base:Clone()
+		sound.Looped = true
+		sound.Parent = SoundService
+		sound:Play()
+		ambient = sound
+	end
+end
+
 function SoundController:Init()
 	soundGroup = Instance.new("SoundGroup")
 	soundGroup.Name = "VectorRushSFX"

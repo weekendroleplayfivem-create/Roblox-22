@@ -287,18 +287,21 @@ function CombatService:Eliminate(victim, killer, info)
 	for _, helper in assists do
 		table.insert(assistNames, helper.Name)
 	end
-	Net.Event("Combat", "Elimination"):FireAllClients({
-		Killer = describe(killer),
-		Victim = describe(victim),
-		Weapon = info.Weapon,
-		Headshot = info.Headshot == true,
-		Reason = info.Reason,
-		Assists = assistNames,
-		Streak = if killer then killer.Stats.Streak else 0,
-		EffectColor = color,
-		Rainbow = rainbow,
-		Character = victim.Character,
-	})
+	-- Lobby deaths (reset button) don't belong in the kill feed.
+	if victim.InMatch then
+		Net.Event("Combat", "Elimination"):FireAllClients({
+			Killer = describe(killer),
+			Victim = describe(victim),
+			Weapon = info.Weapon,
+			Headshot = info.Headshot == true,
+			Reason = info.Reason,
+			Assists = assistNames,
+			Streak = if killer then killer.Stats.Streak else 0,
+			EffectColor = color,
+			Rainbow = rainbow,
+			Character = victim.Character,
+		})
+	end
 
 	CombatService.CombatantDied:Fire(victim, killer, info, assists)
 	if victim.InMatch then
