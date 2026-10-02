@@ -19,6 +19,7 @@ local InputController = require(script.Parent.InputController)
 local SoundController = require(script.Parent.SoundController)
 local MovementController = require(script.Parent.MovementController)
 local CameraController = require(script.Parent.CameraController)
+local EffectsController = require(script.Parent.EffectsController)
 
 local AbilityController = {}
 
@@ -104,6 +105,7 @@ function AbilityController:Use(slot: string)
 	if config.Id == "Pulse" or config.Id == "Shield" then
 		CameraController:Shake(0.15)
 	end
+	EffectsController.Screen:Pulse(config.Color, 0.22, 0.35)
 	Net.Event("Abilities", "UseAbility"):FireServer(slot, payload)
 	AbilityController.Used:Fire(slot, config.Id)
 	AbilityController.Changed:Fire()

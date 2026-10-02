@@ -39,7 +39,7 @@ local Viewmodel = require(script.Parent.Viewmodel)
 local WeaponController = {}
 
 WeaponController.ShotFired = Signal.new() -- (weapon)
-WeaponController.PredictedHit = Signal.new() -- (headshot)
+WeaponController.PredictedHit = Signal.new() -- (headshot, targetModel)
 WeaponController.StateChanged = Signal.new()
 
 local player = Players.LocalPlayer
@@ -69,6 +69,37 @@ local state = {
 }
 
 local viewmodel = nil
+local beamSession = nil -- active continuous beam visual
+local beamSound = nil
+local beamTarget: Vector3? = nil
+local chargeSound = nil
+local chargeReadyPlayed = false
+
+-- Weapons with a real scope show the scope overlay when fully aimed.
+local SCOPED_KITS = { Sniper = true, Marksman = true }
+
+local function reducedEffects(): boolean
+	return ClientState.GetSetting("ReducedEffects") == true
+end
+
+local function stopChargeSound()
+	if chargeSound then
+		chargeSound:Stop()
+		chargeSound = nil
+	end
+end
+
+local function stopBeam()
+	if beamSession then
+		beamSession:Stop()
+		beamSession = nil
+	end
+	if beamSound then
+		beamSound:Stop()
+		beamSound = nil
+	end
+	beamTarget = nil
+end
 
 function WeaponController:GetWeapon()
 	local id = state.Equipped and state.Slots[state.Equipped]
@@ -167,6 +198,8 @@ local function canUseWeapons(): boolean
 end
 
 local function rebuildViewmodel()
+	stopBeam()
+	stopChargeSound()
 	if viewmodel then
 		viewmodel:Destroy()
 		viewmodel = nil
@@ -177,7 +210,7 @@ local function rebuildViewmodel()
 	end
 	local profile = ClientState.Get("Profile")
 	local skin = profile and CosmeticConfig.Get(profile.Equipped.WeaponSkin)
-	viewmodel = Viewmodel.new(weapon, skin, nil)
+	viewmodel = Viewmodel.new(weapon, skin)
 end
 
 local function cancelReload()
@@ -218,6 +251,7 @@ function WeaponController:Reload()
 			return
 		end
 		state.Reloading = false
+		SoundController:Play("ReloadIn", 0.05)
 		-- Predict the refill; the server's WeaponState confirms it.
 		local needed = weapon.MagazineSize - ammo.Mag
 		local taken = if state.InfiniteReserve then needed else math.min(needed, ammo.Reserve)
@@ -297,15 +331,15 @@ local function fireOnce(chargeLevel: number?): boolean
 	local aim = camera.CFrame.LookVector
 	local spreadRadians = math.rad(WeaponController:GetSpreadDegrees())
 	local rng = Random.new()
-	local muzzle = if viewmodel then viewmodel:GetMuzzlePosition() else origin
-	local color = weapon.TracerColor
+	local muzzleCFrame = if viewmodel then viewmodel:GetMuzzleCFrame() else camera.CFrame
+	local muzzle = muzzleCFrame.Position
 
 	local payload: { [string]: any } = { Weapon = weapon.Id, Shot = shotId, Origin = origin }
 
 	if weapon.ProjectileType == "Projectile" then
 		local direction = MathUtil.RandomInCone(aim, spreadRadians, rng)
 		payload.Direction = direction
-		EffectsController:SpawnProjectile(tostring(player.UserId) .. "_" .. tostring(shotId), origin, muzzle, direction * weapon.Projectile.Speed, weapon, true)
+		EffectsController:SpawnProjectile(tostring(player.UserId) .. "_" .. tostring(shotId), origin, muzzle, direction * weapon.Projectile.Speed, weapon)
 	else
 		local ignore: { Instance } = { camera }
 		if player.Character then
@@ -314,6 +348,7 @@ local function fireOnce(chargeLevel: number?): boolean
 		local params = RaycastUtil.CombatParams(ignore, myTeam(), player.UserId)
 		local directions = {}
 		local hits = {}
+		local beamEnd = nil
 		for pellet = 1, weapon.Pellets do
 			local direction = MathUtil.RandomInCone(aim, spreadRadians, rng)
 			directions[pellet] = direction
@@ -323,16 +358,16 @@ local function fireOnce(chargeLevel: number?): boolean
 				local model = RaycastUtil.FindTargetModel(result.Instance)
 				if model and isEnemyModel(model) then
 					table.insert(hits, { Target = model, Part = result.Instance, Position = result.Position, Pellet = pellet })
-					WeaponController.PredictedHit:Fire(result.Instance.Name == "Head")
-					EffectsController:HitSpark(result.Position, color)
-				else
-					EffectsController:Impact(result.Position, result.Normal, color)
+					WeaponController.PredictedHit:Fire(result.Instance.Name == "Head", model)
+					EffectsController:HitTarget(model, result.Position, weapon)
+				elseif pellet == 1 or not reducedEffects() then
+					EffectsController:Impact(result.Position, result.Normal, weapon)
 				end
 			end
-			if weapon.ProjectileType == "Chain" then
-				EffectsController:Lightning(muzzle, endPoint, color)
+			if weapon.FireMode == "Beam" then
+				beamEnd = endPoint
 			else
-				EffectsController:Tracer(muzzle, endPoint, color, weapon.FireMode == "Beam")
+				EffectsController:Tracer(weapon, muzzle, endPoint, chargeLevel)
 			end
 		end
 		if weapon.Pellets > 1 then
@@ -343,6 +378,9 @@ local function fireOnce(chargeLevel: number?): boolean
 		end
 		if #hits > 0 then
 			payload.Hits = hits
+		end
+		if beamEnd then
+			beamTarget = beamEnd
 		end
 	end
 
@@ -359,8 +397,10 @@ local function fireOnce(chargeLevel: number?): boolean
 	if viewmodel then
 		viewmodel:Kick(math.clamp(weapon.Recoil.Vertical / 2, 0.3, 2))
 	end
-	EffectsController:MuzzleFlash(muzzle, color)
-	SoundController:Play(weapon.Sounds.Fire, 0.06)
+	if weapon.FireMode ~= "Beam" then
+		EffectsController:MuzzleFlash(muzzleCFrame, weapon)
+		SoundController:Play(weapon.Sounds.Fire, 0.06)
+	end
 	MovementController:NotifyFired()
 	WeaponController.ShotFired:Fire(weapon)
 	WeaponController.StateChanged:Fire()
@@ -396,7 +436,9 @@ local function onFirePressed()
 			state.Charging = true
 			state.ChargeStart = now
 			Net.Event("Combat", "ChargeStart"):FireServer()
-			SoundController:Play(weapon.Sounds.Charge or "Charge")
+			stopChargeSound()
+			chargeSound = SoundController:StartLoop(weapon.Sounds.Charge or "ChargeLoop")
+			chargeReadyPlayed = false
 		elseif ammo and ammo.Mag <= 0 then
 			WeaponController:Reload()
 		end
@@ -408,6 +450,7 @@ local function onFireReleased()
 	if weapon and weapon.FireMode == "Charge" and state.Charging then
 		local charge = WeaponController:GetChargeLevel()
 		state.Charging = false
+		stopChargeSound()
 		if fireOnce(charge) then
 			state.NextShotAt = os.clock() + 1 / weapon.FireRate
 		end
@@ -441,6 +484,33 @@ local function update(deltaTime: number)
 			end
 		end
 		state.Bloom = math.max(0, state.Bloom - weapon.Spread.Recovery * deltaTime)
+
+		-- Charge hum rises in pitch; a chime plays at full charge.
+		if state.Charging then
+			local charge = WeaponController:GetChargeLevel()
+			if chargeSound then
+				chargeSound:SetPitch(1 + charge * 1.6)
+			end
+			if charge >= 1 and not chargeReadyPlayed then
+				chargeReadyPlayed = true
+				SoundController:Play("ChargeReady")
+			end
+		elseif chargeSound then
+			stopChargeSound()
+		end
+	end
+
+	-- Continuous beam visual + hum while a Beam weapon is firing.
+	local beamActive = weapon ~= nil and weapon.FireMode == "Beam" and InputController:IsDown("Fire") and canUseWeapons()
+		and not state.Reloading and (state.Ammo[weapon.Id] and state.Ammo[weapon.Id].Mag > 0)
+	if beamActive and viewmodel and beamTarget then
+		if not beamSession then
+			beamSession = EffectsController:StartBeam(weapon.TracerColor)
+			beamSound = SoundController:StartLoop("BeamLoop")
+		end
+		beamSession:Update(viewmodel:GetMuzzlePosition(), beamTarget)
+	elseif beamSession and not beamActive then
+		stopBeam()
 	end
 
 	local aiming = WeaponController:IsAiming()
@@ -450,10 +520,36 @@ local function update(deltaTime: number)
 		local character = player.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 		local alive = humanoid ~= nil and humanoid.Health > 0
-		viewmodel:SetVisible(alive and CameraController:IsFirstPerson())
+		-- Scoped weapons hide the model and show a reticle when fully aimed.
+		local scoped = aiming and weapon ~= nil and SCOPED_KITS[weapon.Viewmodel.Kit] == true and viewmodel.AimAlpha > 0.85
+		EffectsController.Screen:SetScope(scoped and alive)
+		viewmodel:SetVisible(alive and CameraController:IsFirstPerson() and not scoped)
 		viewmodel:SetCharge(WeaponController:GetChargeLevel())
 		local speed, grounded = MovementController:GetBobInfo()
-		viewmodel:Update(deltaTime, aiming, speed, grounded)
+		viewmodel:Update(deltaTime, {
+			Aiming = aiming,
+			Speed = speed,
+			Grounded = grounded,
+			Sprinting = MovementController:IsSprinting(),
+			Sliding = MovementController:IsSliding(),
+		})
+	else
+		EffectsController.Screen:SetScope(false)
+	end
+end
+
+-- Show off the weapon (F / D-pad up). Purely cosmetic.
+function WeaponController:Inspect()
+	if viewmodel and not state.Charging and not WeaponController:IsAiming() then
+		viewmodel:Inspect()
+		SoundController:Play("Inspect")
+	end
+end
+
+-- Small viewmodel bump (landing).
+function WeaponController:Bump(amount: number)
+	if viewmodel then
+		viewmodel:Impulse(Vector3.new(0, -amount, 0))
 	end
 end
 
@@ -525,6 +621,8 @@ function WeaponController:Start()
 			cycleWeapon(1)
 		elseif action == "PrevWeapon" then
 			cycleWeapon(-1)
+		elseif action == "Inspect" then
+			WeaponController:Inspect()
 		elseif action == "Aim" and ClientState.GetSetting("ToggleAim") then
 			state.AimToggled = not state.AimToggled
 		end
@@ -536,6 +634,8 @@ function WeaponController:Start()
 	end)
 
 	player.CharacterAdded:Connect(function()
+		stopBeam()
+		stopChargeSound()
 		state.AimToggled = false
 		state.Charging = false
 		state.BurstRemaining = 0

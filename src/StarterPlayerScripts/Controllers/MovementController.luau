@@ -31,6 +31,7 @@ local ClientState = require(script.Parent.ClientState)
 local InputController = require(script.Parent.InputController)
 local SoundController = require(script.Parent.SoundController)
 local CameraController = require(script.Parent.CameraController)
+local EffectsController = require(script.Parent.EffectsController)
 
 local MovementController = {}
 
@@ -55,6 +56,8 @@ local gravityForce: VectorForce? = nil
 local dashConstraint: LinearVelocity? = nil
 local launchConstraint: LinearVelocity? = nil
 local launchUntil = 0
+local stopSlideSparks: (() -> ())? = nil
+local inGravityField = false
 
 local state = {
 	SprintToggled = false,
@@ -175,6 +178,10 @@ local function endSlide(carrySpeed: number?)
 	state.SlideCooldownUntil = os.clock() + Movement.Slide.Cooldown
 	state.Momentum = math.max(state.Momentum, carrySpeed or Movement.Slide.EndSpeed)
 	setControlsEnabled(true)
+	if stopSlideSparks then
+		stopSlideSparks()
+		stopSlideSparks = nil
+	end
 	if os.clock() > state.DashUntil then
 		setTrail(false)
 	end
@@ -194,6 +201,12 @@ local function startSlide()
 	setControlsEnabled(false)
 	setTrail(true)
 	SoundController:Play("Slide", 0.05)
+	if character then
+		if stopSlideSparks then
+			stopSlideSparks()
+		end
+		stopSlideSparks = EffectsController.World.StartSlideSparks(character, EffectsController:GetTrailColor())
+	end
 	Net.Event("Movement", "MovementAction"):FireServer("Slide")
 end
 
@@ -272,6 +285,10 @@ function MovementController:Dash(): boolean
 	setTrail(true)
 	CameraController:DashKick()
 	SoundController:Play("Dash", 0.05)
+	if character then
+		EffectsController.World.Dash(character, EffectsController:GetTrailColor())
+	end
+	EffectsController.Screen:DashBlur()
 	return true
 end
 
@@ -295,7 +312,8 @@ local function tryAirJump()
 			state.LastWall = part
 			state.LastWallTime = now
 			state.MinVerticalVelocity = 0
-			SoundController:Play("DoubleJump", 0.1)
+			SoundController:Play("WallJump", 0.1)
+			EffectsController.World.WallJump(root.Position - normal * 1.2, normal, EffectsController:GetTrailColor())
 			Net.Event("Movement", "MovementAction"):FireServer("WallJump")
 			return
 		end
@@ -315,6 +333,9 @@ local function tryAirJump()
 		root.AssemblyLinearVelocity = Vector3.new(horizontal.X, jumpConfig.Power, horizontal.Z)
 		state.MinVerticalVelocity = 0
 		SoundController:Play("DoubleJump", 0.1)
+		if character then
+			EffectsController.World.JumpRing(character, EffectsController:GetTrailColor())
+		end
 		Net.Event("Movement", "MovementAction"):FireServer("DoubleJump")
 	end
 end
@@ -367,8 +388,13 @@ local function updateGravityField()
 	if multiplier then
 		gravityForce.Force = Vector3.new(0, root.AssemblyMass * workspace.Gravity * (1 - multiplier), 0)
 		gravityForce.Enabled = true
+		if not inGravityField then
+			inGravityField = true
+			SoundController:Play("GravityEnter")
+		end
 	else
 		gravityForce.Enabled = false
+		inGravityField = false
 	end
 end
 
@@ -518,6 +544,8 @@ local function onJumpPad(pad: BasePart)
 	state.LeftGroundAt = now
 	SoundController:Play("JumpPad", 0.05)
 	CameraController:Shake(0.25)
+	EffectsController.World.JumpPadLaunch(pad.Position, pad.Color)
+	EffectsController.Screen:Pulse(pad.Color, 0.3, 0.4)
 end
 
 local function onCharacterAdded(newCharacter: Model)
@@ -580,8 +608,14 @@ local function onCharacterAdded(newCharacter: Model)
 		if new == Enum.HumanoidStateType.Landed then
 			local fallSpeed = -state.MinVerticalVelocity
 			CameraController:Land(fallSpeed)
-			if fallSpeed > 25 then
+			if fallSpeed > 70 then
+				SoundController:Play("HeavyLand", 0.08)
+				EffectsController.World.Landing(newCharacter, math.clamp((fallSpeed - 40) / 80, 0, 1))
+			elseif fallSpeed > 25 then
 				SoundController:Play("Land", 0.08)
+				if fallSpeed > 45 then
+					EffectsController.World.Landing(newCharacter, 0)
+				end
 			end
 			state.MinVerticalVelocity = 0
 		elseif new == Enum.HumanoidStateType.Jumping then
@@ -636,6 +670,7 @@ end
 
 function MovementController:Start()
 	CameraController:SetMovementSource(MovementController)
+	EffectsController.Screen:SetSpeedSource(MovementController)
 	player.CharacterAdded:Connect(onCharacterAdded)
 	if player.Character then
 		task.spawn(onCharacterAdded, player.Character)

@@ -16,6 +16,7 @@ local ProgressionConfig = require(Shared.Config.ProgressionConfig)
 local UIKit = require(script.Parent.UIKit)
 local ClientState = require(script.Parent.Parent.ClientState)
 local SoundController = require(script.Parent.Parent.SoundController)
+local EffectsController = require(script.Parent.Parent.EffectsController)
 
 local ResultsScreen = {}
 
@@ -128,7 +129,10 @@ function ResultsScreen:Show(data)
 
 	closesAt = os.clock() + (data.Duration or 10)
 	UIKit.SetOpen(root, true)
-	SoundController:Play(if data.Won then "LevelUp" else "MatchStart")
+	SoundController:Play(if data.Won then "Victory" else "Defeat")
+	if data.Won then
+		EffectsController.Screen:Confetti(70)
+	end
 	task.spawn(function()
 		while root.Visible do
 			ui.Countdown.Text = string.format("Returning to lobby in %d...", math.max(0, math.ceil(closesAt - os.clock())))

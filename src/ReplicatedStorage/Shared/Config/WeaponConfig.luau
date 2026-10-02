@@ -29,6 +29,9 @@
 	  UnlockLevel       level required (progression, never purchases)
 	  Viewmodel         placeholder procedural model description
 	  TracerColor
+	  TracerStyle       "Bolt" | "Rail" | "Pellet" | "Spray" | "Orb" | "Arc" | "Beam"
+	                    (client visual style, see Controllers/Effects/WeaponFX)
+	  Viewmodel.Kit     procedural model kit (Shared/Modules/WeaponModelBuilder)
 ]]
 
 local TableUtil = require(script.Parent.Parent.Modules.TableUtil)
@@ -64,8 +67,9 @@ local Weapons = {
 		Sounds = { Fire = "PulseFire", Reload = "Reload", Equip = "Equip" },
 		CosmeticCategory = "Rifle",
 		UnlockLevel = 1,
-		Viewmodel = { BodySize = Vector3.new(0.35, 0.45, 2.0), BarrelLength = 0.9, Color = Color3.fromRGB(40, 220, 255) },
+		Viewmodel = { Kit = "Rifle", BodySize = Vector3.new(0.35, 0.45, 2.0), BarrelLength = 0.9, Color = Color3.fromRGB(40, 220, 255) },
 		TracerColor = Color3.fromRGB(60, 230, 255),
+		TracerStyle = "Bolt",
 	},
 
 	BurstBlaster = {
@@ -94,8 +98,9 @@ local Weapons = {
 		Sounds = { Fire = "BurstFire", Reload = "Reload", Equip = "Equip" },
 		CosmeticCategory = "Rifle",
 		UnlockLevel = 3,
-		Viewmodel = { BodySize = Vector3.new(0.4, 0.5, 1.8), BarrelLength = 0.7, Color = Color3.fromRGB(255, 200, 40) },
+		Viewmodel = { Kit = "Burst", BodySize = Vector3.new(0.4, 0.5, 1.8), BarrelLength = 0.7, Color = Color3.fromRGB(255, 200, 40) },
 		TracerColor = Color3.fromRGB(255, 220, 80),
+		TracerStyle = "Bolt",
 	},
 
 	ScatterBlaster = {
@@ -122,8 +127,9 @@ local Weapons = {
 		Sounds = { Fire = "ScatterFire", Reload = "Reload", Equip = "Equip" },
 		CosmeticCategory = "Heavy",
 		UnlockLevel = 2,
-		Viewmodel = { BodySize = Vector3.new(0.55, 0.55, 1.6), BarrelLength = 0.5, Color = Color3.fromRGB(255, 120, 60) },
+		Viewmodel = { Kit = "Shotgun", BodySize = Vector3.new(0.55, 0.55, 1.6), BarrelLength = 0.5, Color = Color3.fromRGB(255, 120, 60) },
 		TracerColor = Color3.fromRGB(255, 150, 80),
+		TracerStyle = "Pellet",
 	},
 
 	PrecisionBlaster = {
@@ -150,8 +156,9 @@ local Weapons = {
 		Sounds = { Fire = "PrecisionFire", Reload = "Reload", Equip = "Equip" },
 		CosmeticCategory = "Precision",
 		UnlockLevel = 5,
-		Viewmodel = { BodySize = Vector3.new(0.35, 0.45, 2.6), BarrelLength = 1.3, Color = Color3.fromRGB(170, 90, 255) },
+		Viewmodel = { Kit = "Sniper", BodySize = Vector3.new(0.35, 0.45, 2.6), BarrelLength = 1.3, Color = Color3.fromRGB(170, 90, 255) },
 		TracerColor = Color3.fromRGB(190, 120, 255),
+		TracerStyle = "Rail",
 	},
 
 	RapidBlaster = {
@@ -178,8 +185,9 @@ local Weapons = {
 		Sounds = { Fire = "RapidFire", Reload = "Reload", Equip = "Equip" },
 		CosmeticCategory = "Compact",
 		UnlockLevel = 1,
-		Viewmodel = { BodySize = Vector3.new(0.4, 0.5, 1.3), BarrelLength = 0.4, Color = Color3.fromRGB(80, 255, 140) },
+		Viewmodel = { Kit = "SMG", BodySize = Vector3.new(0.4, 0.5, 1.3), BarrelLength = 0.4, Color = Color3.fromRGB(80, 255, 140) },
 		TracerColor = Color3.fromRGB(100, 255, 160),
+		TracerStyle = "Spray",
 	},
 
 	PlasmaLauncher = {
@@ -215,8 +223,9 @@ local Weapons = {
 		Sounds = { Fire = "PlasmaFire", Reload = "Reload", Equip = "Equip" },
 		CosmeticCategory = "Heavy",
 		UnlockLevel = 8,
-		Viewmodel = { BodySize = Vector3.new(0.6, 0.6, 1.9), BarrelLength = 0.6, Color = Color3.fromRGB(255, 70, 200) },
+		Viewmodel = { Kit = "Launcher", BodySize = Vector3.new(0.6, 0.6, 1.9), BarrelLength = 0.6, Color = Color3.fromRGB(255, 70, 200) },
 		TracerColor = Color3.fromRGB(255, 90, 220),
+		TracerStyle = "Orb",
 	},
 
 	ChargeBlaster = {
@@ -242,11 +251,12 @@ local Weapons = {
 		MovementPenalty = 0.92,
 		EquipTime = 0.4,
 		AdsFov = 48,
-		Sounds = { Fire = "ChargeFire", Reload = "Reload", Equip = "Equip", Charge = "Charge" },
+		Sounds = { Fire = "ChargeFire", Reload = "Reload", Equip = "Equip", Charge = "ChargeLoop" },
 		CosmeticCategory = "Precision",
 		UnlockLevel = 10,
-		Viewmodel = { BodySize = Vector3.new(0.45, 0.5, 2.2), BarrelLength = 1.0, Color = Color3.fromRGB(80, 140, 255) },
+		Viewmodel = { Kit = "Charge", BodySize = Vector3.new(0.45, 0.5, 2.2), BarrelLength = 1.0, Color = Color3.fromRGB(80, 140, 255) },
 		TracerColor = Color3.fromRGB(110, 170, 255),
+		TracerStyle = "Rail",
 	},
 
 	ArcBlaster = {
@@ -274,8 +284,9 @@ local Weapons = {
 		Sounds = { Fire = "ArcFire", Reload = "Reload", Equip = "Equip" },
 		CosmeticCategory = "Heavy",
 		UnlockLevel = 12,
-		Viewmodel = { BodySize = Vector3.new(0.5, 0.55, 1.5), BarrelLength = 0.5, Color = Color3.fromRGB(120, 255, 255) },
+		Viewmodel = { Kit = "Tesla", BodySize = Vector3.new(0.5, 0.55, 1.5), BarrelLength = 0.5, Color = Color3.fromRGB(120, 255, 255) },
 		TracerColor = Color3.fromRGB(150, 255, 255),
+		TracerStyle = "Arc",
 	},
 
 	BeamBlaster = {
@@ -302,8 +313,9 @@ local Weapons = {
 		Sounds = { Fire = "BeamFire", Reload = "Reload", Equip = "Equip" },
 		CosmeticCategory = "Heavy",
 		UnlockLevel = 15,
-		Viewmodel = { BodySize = Vector3.new(0.5, 0.5, 1.7), BarrelLength = 0.8, Color = Color3.fromRGB(255, 255, 120) },
+		Viewmodel = { Kit = "Beam", BodySize = Vector3.new(0.5, 0.5, 1.7), BarrelLength = 0.8, Color = Color3.fromRGB(255, 255, 120) },
 		TracerColor = Color3.fromRGB(255, 255, 150),
+		TracerStyle = "Beam",
 	},
 
 	EnergySidearm = {
@@ -330,8 +342,9 @@ local Weapons = {
 		Sounds = { Fire = "SidearmFire", Reload = "Reload", Equip = "Equip" },
 		CosmeticCategory = "Sidearm",
 		UnlockLevel = 1,
-		Viewmodel = { BodySize = Vector3.new(0.3, 0.5, 0.9), BarrelLength = 0.3, Color = Color3.fromRGB(255, 255, 255) },
+		Viewmodel = { Kit = "Pistol", BodySize = Vector3.new(0.3, 0.5, 0.9), BarrelLength = 0.3, Color = Color3.fromRGB(255, 255, 255) },
 		TracerColor = Color3.fromRGB(230, 240, 255),
+		TracerStyle = "Bolt",
 	},
 
 	FlickSidearm = {
@@ -355,11 +368,12 @@ local Weapons = {
 		MovementPenalty = 1,
 		EquipTime = 0.18,
 		AdsFov = 72,
-		Sounds = { Fire = "RapidFire", Reload = "Reload", Equip = "Equip" },
+		Sounds = { Fire = "FlickFire", Reload = "Reload", Equip = "Equip" },
 		CosmeticCategory = "Sidearm",
 		UnlockLevel = 4,
-		Viewmodel = { BodySize = Vector3.new(0.3, 0.55, 1.0), BarrelLength = 0.25, Color = Color3.fromRGB(120, 255, 200) },
+		Viewmodel = { Kit = "MachinePistol", BodySize = Vector3.new(0.3, 0.55, 1.0), BarrelLength = 0.25, Color = Color3.fromRGB(120, 255, 200) },
 		TracerColor = Color3.fromRGB(140, 255, 210),
+		TracerStyle = "Spray",
 	},
 
 	CometSidearm = {
@@ -383,11 +397,70 @@ local Weapons = {
 		MovementPenalty = 1,
 		EquipTime = 0.22,
 		AdsFov = 64,
-		Sounds = { Fire = "PrecisionFire", Reload = "Reload", Equip = "Equip" },
+		Sounds = { Fire = "CometFire", Reload = "Reload", Equip = "Equip" },
 		CosmeticCategory = "Sidearm",
 		UnlockLevel = 7,
-		Viewmodel = { BodySize = Vector3.new(0.35, 0.6, 1.1), BarrelLength = 0.35, Color = Color3.fromRGB(255, 100, 100) },
+		Viewmodel = { Kit = "Revolver", BodySize = Vector3.new(0.35, 0.6, 1.1), BarrelLength = 0.35, Color = Color3.fromRGB(255, 100, 100) },
 		TracerColor = Color3.fromRGB(255, 130, 130),
+		TracerStyle = "Rail",
+	},
+
+	MarksmanRifle = {
+		DisplayName = "Spectre",
+		Category = "Precision Blaster",
+		Slot = "Primary",
+		Description = "Semi-auto marksman blaster. Three quick hits finish a fight.",
+		Damage = 40,
+		HeadshotMultiplier = 1.6,
+		FireRate = 3.2,
+		FireMode = "Semi",
+		MagazineSize = 12,
+		ReserveAmmo = 60,
+		ReloadTime = 1.9,
+		Range = 450,
+		Falloff = { Start = 150, End = 350, MinMultiplier = 0.8 },
+		Spread = { Hip = 2.2, Ads = 0.1, Move = 1.2, Air = 2.5, PerShot = 0.5, Max = 4, Recovery = 7 },
+		Recoil = { Vertical = 2.2, Horizontal = 0.4, Recovery = 8 },
+		ProjectileType = "Hitscan",
+		Pellets = 1,
+		MovementPenalty = 0.94,
+		EquipTime = 0.38,
+		AdsFov = 45,
+		Sounds = { Fire = "MarksmanFire", Reload = "Reload", Equip = "Equip" },
+		CosmeticCategory = "Precision",
+		UnlockLevel = 6,
+		Viewmodel = { Kit = "Marksman", BodySize = Vector3.new(0.38, 0.48, 2.3), BarrelLength = 1.0, Color = Color3.fromRGB(255, 150, 60) },
+		TracerColor = Color3.fromRGB(255, 170, 90),
+		TracerStyle = "Rail",
+	},
+
+	AutoScatter = {
+		DisplayName = "Hailstorm",
+		Category = "Scatter Blaster",
+		Slot = "Primary",
+		Description = "Full-auto scatter blaster. Less punch per shot, constant pressure up close.",
+		Damage = 7,
+		HeadshotMultiplier = 1.25,
+		FireRate = 3.2,
+		FireMode = "Auto",
+		MagazineSize = 12,
+		ReserveAmmo = 60,
+		ReloadTime = 2.2,
+		Range = 55,
+		Falloff = { Start = 14, End = 45, MinMultiplier = 0.35 },
+		Spread = { Hip = 6, Ads = 4.5, Move = 0.5, Air = 1.0, PerShot = 0.3, Max = 7.5, Recovery = 8 },
+		Recoil = { Vertical = 2, Horizontal = 0.9, Recovery = 9 },
+		ProjectileType = "Hitscan",
+		Pellets = 6,
+		MovementPenalty = 0.95,
+		EquipTime = 0.38,
+		AdsFov = 72,
+		Sounds = { Fire = "AutoScatterFire", Reload = "Reload", Equip = "Equip" },
+		CosmeticCategory = "Heavy",
+		UnlockLevel = 9,
+		Viewmodel = { Kit = "Drum", BodySize = Vector3.new(0.55, 0.55, 1.7), BarrelLength = 0.55, Color = Color3.fromRGB(120, 255, 90) },
+		TracerColor = Color3.fromRGB(150, 255, 110),
+		TracerStyle = "Pellet",
 	},
 }
 
@@ -398,6 +471,8 @@ local Order = {
 	"ScatterBlaster",
 	"BurstBlaster",
 	"PrecisionBlaster",
+	"MarksmanRifle",
+	"AutoScatter",
 	"PlasmaLauncher",
 	"ChargeBlaster",
 	"ArcBlaster",

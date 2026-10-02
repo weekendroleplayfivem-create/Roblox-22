@@ -32,6 +32,11 @@ RaycastUtil.Tags = {
 	JumpPad = "JumpPad",
 	GravityField = "GravityField",
 	KillZone = "KillZone",
+	-- Decorative animation tags (animated client-side by Effects/MapAnimator).
+	Spin = "VR_Spin",
+	Bob = "VR_Bob",
+	Pulse = "VR_Pulse",
+	Flicker = "VR_Flicker",
 }
 
 -- Returns a workspace container folder. The server creates every container at

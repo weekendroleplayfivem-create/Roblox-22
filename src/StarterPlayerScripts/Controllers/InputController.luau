@@ -19,6 +19,7 @@
 	  Scoreboard        Tab                Select / View
 	  Menu              M                  Start / Menu
 	  Emote             G                  DPad Down
+	  Inspect weapon    F                  DPad Up
 	Touch: on-screen buttons (see UI/TouchControls).
 ]]
 
@@ -49,6 +50,7 @@ local KeyBindings: { [Enum.KeyCode]: string } = {
 	[Enum.KeyCode.Tab] = "Scoreboard",
 	[Enum.KeyCode.M] = "Menu",
 	[Enum.KeyCode.G] = "Emote",
+	[Enum.KeyCode.F] = "Inspect",
 	[Enum.KeyCode.F2] = "DevConsole",
 
 	[Enum.KeyCode.ButtonR2] = "Fire",
@@ -65,6 +67,7 @@ local KeyBindings: { [Enum.KeyCode]: string } = {
 	[Enum.KeyCode.ButtonSelect] = "Scoreboard",
 	[Enum.KeyCode.ButtonStart] = "Menu",
 	[Enum.KeyCode.DPadDown] = "Emote",
+	[Enum.KeyCode.DPadUp] = "Inspect",
 }
 
 local MouseBindings: { [Enum.UserInputType]: string } = {

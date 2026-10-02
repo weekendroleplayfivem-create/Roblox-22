@@ -14,9 +14,11 @@
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(Shared.Modules.Net)
+local WeaponModelBuilder = require(Shared.Modules.WeaponModelBuilder)
 local WeaponConfig = require(Shared.Config.WeaponConfig)
 local AbilityConfig = require(Shared.Config.AbilityConfig)
 local CosmeticConfig = require(Shared.Config.CosmeticConfig)
@@ -98,8 +100,11 @@ local function skinFor(combatant)
 	return nil
 end
 
--- PLACEHOLDER third-person weapon: a few welded parts built from the weapon's
--- Viewmodel description. Replace with real models from ServerStorage/Weapons.
+-- Third-person weapon: the same procedural model as the first-person view
+-- (Shared/Modules/WeaponModelBuilder), scaled down and welded to the hand.
+-- A hand-built BasePart/Model in ServerStorage/Weapons/<WeaponId> takes priority.
+local WORLD_MODEL_SCALE = 0.7
+
 local function attachWorldModel(combatant, weaponId: string?)
 	local character = combatant.Character
 	if not character then
@@ -119,57 +124,25 @@ local function attachWorldModel(combatant, weaponId: string?)
 		return
 	end
 
-	-- A hand-built model in ServerStorage/Weapons/<WeaponId> takes priority.
-	local custom = game:GetService("ServerStorage"):FindFirstChild("Weapons")
-	local template = custom and custom:FindFirstChild(weaponId)
-
-	local model = Instance.new("Model")
-	model.Name = "WorldWeapon"
-	local skin = skinFor(combatant)
-	local bodyColor = if skin and skin.Color then skin.Color else Color3.fromRGB(40, 40, 55)
-	local material = if skin then Enum.Material[skin.Material] else Enum.Material.SmoothPlastic
-
+	local customFolder = ServerStorage:FindFirstChild("Weapons")
+	local template = customFolder and customFolder:FindFirstChild(weaponId)
+	local model: Model
 	local body: BasePart
-	if template and template:IsA("BasePart") then
-		body = template:Clone()
+	if template and template:IsA("Model") and template.PrimaryPart then
+		model = template:Clone()
+		body = model.PrimaryPart :: BasePart
 	else
-		local part = Instance.new("Part")
-		part.Size = weapon.Viewmodel.BodySize
-		part.Color = bodyColor
-		part.Material = material
-		body = part
+		local info
+		model, info = WeaponModelBuilder.Build(weapon, { Skin = skinFor(combatant), Scale = WORLD_MODEL_SCALE, Anchored = false })
+		body = info.Body
 	end
-	body.Name = "Body"
-	body.CanCollide = false
-	body.CanQuery = false
-	body.CanTouch = false
-	body.Massless = true
-	body.CFrame = hand.CFrame * CFrame.new(0, -hand.Size.Y / 2, -body.Size.Z / 2 + 0.3)
-	body.Parent = model
-
-	local accent = Instance.new("Part")
-	accent.Name = "Accent"
-	accent.Size = Vector3.new(body.Size.X + 0.05, 0.12, body.Size.Z * 0.8)
-	accent.Color = weapon.Viewmodel.Color
-	accent.Material = Enum.Material.Neon
-	accent.CanCollide = false
-	accent.CanQuery = false
-	accent.CanTouch = false
-	accent.Massless = true
-	accent.CFrame = body.CFrame * CFrame.new(0, body.Size.Y / 2, 0)
-	accent.Parent = model
-
-	for _, part in { accent } do
-		local weld = Instance.new("WeldConstraint")
-		weld.Part0 = body
-		weld.Part1 = part
-		weld.Parent = part
-	end
+	model.Name = "WorldWeapon"
+	-- Grip sits in the palm; the barrel points along the hand's forward axis.
+	model:PivotTo(hand.CFrame * CFrame.new(0, -hand.Size.Y / 2 - 0.1, -0.3))
 	local handWeld = Instance.new("WeldConstraint")
 	handWeld.Part0 = hand
 	handWeld.Part1 = body
 	handWeld.Parent = body
-	model.PrimaryPart = body
 	model.Parent = character
 end
 

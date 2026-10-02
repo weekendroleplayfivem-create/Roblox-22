@@ -11,6 +11,7 @@ local Net = require(Shared.Modules.Net)
 
 local UIKit = require(script.Parent.UIKit)
 local SoundController = require(script.Parent.Parent.SoundController)
+local EffectsController = require(script.Parent.Parent.EffectsController)
 
 local Notifications = {}
 
@@ -63,6 +64,7 @@ function Notifications:LevelUp(data)
 	scale.Scale = 0.6
 	UIKit.Tween(scale, 0.4, { Scale = 1 }, Enum.EasingStyle.Back)
 	SoundController:Play("LevelUp")
+	EffectsController.Screen:Confetti(50)
 	task.delay(data.Duration or 3.5, function()
 		levelUp.Visible = false
 	end)
@@ -91,6 +93,7 @@ function Notifications:Start()
 			Notifications:LevelUp(data)
 		elseif type(data.Text) == "string" then
 			Notifications:Toast(data.Text, data.Kind, data.Duration)
+			SoundController:Play(if data.Kind == "Warning" then "Error" else "Notify")
 		end
 	end)
 end

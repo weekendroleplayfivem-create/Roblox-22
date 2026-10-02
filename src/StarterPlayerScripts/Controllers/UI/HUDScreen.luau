@@ -399,6 +399,7 @@ local function updateAbilities()
 			stroke.Transparency = if ready then 0.1 else 0.75
 		end
 		if ready and not widget.WasReady then
+			SoundController:Play("AbilityReady")
 			-- Small pop when an ability comes off cooldown.
 			local scale = widget.Tile:FindFirstChildOfClass("UIScale") or UIKit.Create("UIScale", { Parent = widget.Tile })
 			scale.Scale = 1.15
@@ -482,6 +483,11 @@ function HUDScreen:Start()
 			comboCount = if now - lastKillTime <= COMBO_WINDOW then comboCount + 1 else 1
 			lastKillTime = now
 			local callouts = { "ELIMINATION", "DOUBLE ELIM!", "TRIPLE ELIM!", "QUAD ELIM!", "UNSTOPPABLE!" }
+			if comboCount >= 2 then
+				task.delay(0.15, function()
+					SoundController:Play("MultiElimination")
+				end)
+			end
 			ui.Combo.Text = callouts[math.min(comboCount, #callouts)] .. (if data.Streak and data.Streak >= 3 then string.format("  •  %d STREAK", data.Streak) else "")
 			ui.Combo.TextTransparency = 0
 			local scale = ui.Combo:FindFirstChildOfClass("UIScale") or UIKit.Create("UIScale", { Parent = ui.Combo })

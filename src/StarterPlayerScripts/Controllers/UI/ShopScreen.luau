@@ -16,6 +16,7 @@ local CosmeticConfig = require(Shared.Config.CosmeticConfig)
 local UIKit = require(script.Parent.UIKit)
 local ClientState = require(script.Parent.Parent.ClientState)
 local SoundController = require(script.Parent.Parent.SoundController)
+local EffectsController = require(script.Parent.Parent.EffectsController)
 
 local ShopScreen = {}
 
@@ -112,6 +113,7 @@ local function render()
 					return Net.Function("UI", "EquipCosmetic"):InvokeServer(item.Id)
 				end)
 				setStatus(if ok then message else "Could not reach the server", ok and success)
+				SoundController:Play(if ok and success then "CosmeticEquip" else "Error")
 			end
 		else
 			actionText, actionColor = "BUY", Color3.fromRGB(20, 120, 150)
@@ -121,7 +123,10 @@ local function render()
 				end)
 				setStatus(if ok then message else "Could not reach the server", ok and success)
 				if ok and success then
-					SoundController:Play("LevelUp")
+					SoundController:Play("Purchase")
+					EffectsController.Screen:Confetti(30)
+				else
+					SoundController:Play("Error")
 				end
 			end
 		end

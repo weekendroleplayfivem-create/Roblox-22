@@ -17,6 +17,7 @@ local ProgressionConfig = require(Shared.Config.ProgressionConfig)
 
 local UIKit = require(script.Parent.UIKit)
 local ClientState = require(script.Parent.Parent.ClientState)
+local SoundController = require(script.Parent.Parent.SoundController)
 
 local MainMenuScreen = {}
 
@@ -52,6 +53,7 @@ local function buildPlayPanel(parent: Frame)
 			Size = UDim2.fromOffset(200, 220),
 			LayoutOrder = index,
 			OnClick = function()
+				SoundController:Play("QueueJoin")
 				Net.Event("Match", "QueueRequest"):FireServer("Join", modeId)
 			end,
 			Parent = cards,
@@ -71,6 +73,7 @@ local function buildPlayPanel(parent: Frame)
 		Position = UDim2.fromOffset(0, 300),
 		Size = UDim2.fromOffset(624, 60),
 		OnClick = function()
+			SoundController:Play("QueueJoin")
 			Net.Event("Match", "QueueRequest"):FireServer("Join", nil)
 		end,
 		Parent = panel,
