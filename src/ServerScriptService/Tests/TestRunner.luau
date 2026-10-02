@@ -26,6 +26,8 @@ local PlayerConfig = require(Shared.Config.PlayerConfig)
 local ProgressionConfig = require(Shared.Config.ProgressionConfig)
 local SettingsConfig = require(Shared.Config.SettingsConfig)
 local CosmeticConfig = require(Shared.Config.CosmeticConfig)
+local SoundConfig = require(Shared.Config.SoundConfig)
+local WeaponModelBuilder = require(Shared.Modules.WeaponModelBuilder)
 
 local TestRunner = {}
 
@@ -102,6 +104,21 @@ Tests["Weapon configs are complete and valid"] = function()
 		end
 	end
 	assertTrue(count >= 10, "Expected at least 10 weapons")
+end
+
+Tests["Every weapon has a model kit, tracer style and sound recipes"] = function()
+	local kits = WeaponModelBuilder.GetKitNames()
+	local styles = { Bolt = true, Rail = true, Pellet = true, Spray = true, Orb = true, Arc = true, Beam = true }
+	for id, weapon in WeaponConfig.Weapons do
+		assertTrue(table.find(kits, weapon.Viewmodel.Kit), id .. " unknown kit " .. tostring(weapon.Viewmodel.Kit))
+		assertTrue(styles[weapon.TracerStyle], id .. " unknown tracer style")
+		for slot, key in weapon.Sounds do
+			assertTrue(SoundConfig.Sounds[key], id .. " missing sound recipe " .. slot .. "=" .. key)
+		end
+		local model, info = WeaponModelBuilder.Build(weapon, { Anchored = true })
+		assertTrue(model.PrimaryPart and #info.Glow > 0, id .. " model has no core/glow parts")
+		model:Destroy()
+	end
 end
 
 Tests["No weapon can eliminate a full health+shield target in one shot"] = function()

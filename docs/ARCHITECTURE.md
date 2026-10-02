@@ -90,6 +90,12 @@ On the server (`CombatService.HandleFireRequest`):
 
 Server-side tuning guarantees that **no weapon can eliminate a full health + shield target with one shot**. `TestRunner` asserts this.
 
+### Weapon models and feel
+
+`Shared/Modules/WeaponModelBuilder` builds each weapon from its kit (Rifle, Burst, Shotgun, Drum, Sniper, Marksman, SMG, Launcher, Charge, Tesla, Beam, Pistol, MachinePistol, Revolver), with stocks, scopes, barrels, coils, magazines and neon accents. The client viewmodel and the server's third-person model use the same builder.
+
+The viewmodel animates everything procedurally: swing-in on equip, recoil kick, sway, bob, sprint and slide poses, aim-down-sights, landing bumps, reloads where the magazine drops out and slides back in, an inspect animation (F), charge glow, and a neon flash on every shot. Sniper and marksman rifles switch to a scope reticle when fully aimed.
+
 ## Abilities (`AbilityConfig`, `AbilityService`, `AbilityController`)
 
 You have one Movement slot (Dash, Phase) and one Tactical slot (Barrier, Scan Pulse, Decoy, Low-G Field). The client predicts cooldowns and the server owns them.
@@ -134,8 +140,12 @@ You have one Movement slot (Dash, Phase) and one Tactical slot (Barrier, Scan Pu
 | `MovementController` | Everything in the Movement section |
 | `WeaponController` | Fire modes, spread, recoil, ammo prediction, reload and switch, viewmodel |
 | `AbilityController` | Cooldown prediction, local dash, ability requests |
-| `EffectsController` | Pooled tracers and rings, bursts, projectile visuals, dissolve on elimination, reveals, other players' movement FX, lighting and ambience per map |
-| `SoundController` | Keyed 2D and 3D sounds, master volume |
+| `EffectsController` | Facade over `Effects/`. Wires server events to effects and applies per-map lighting, atmosphere, colour grade, bloom and ambience |
+| `Effects/WeaponFX` | Per-weapon tracer styles (Bolt, Spray, Pellet, Rail, Arc, Beam, Orb), muzzle flashes, impact rings + sparks + surface marks, enemy hit flashes, continuous beam, plasma orbs, explosions |
+| `Effects/WorldFX` | Dash afterimages, slide sparks, jump/wall-jump rings, landing dust, jump-pad launches, pixel dissolve eliminations, spawn beams, scan-pulse waves, reveal highlights, dressing for barriers/fields/decoys/pads |
+| `Effects/ScreenFX` | Speed lines, edge vignette pulses, low-health state (pulse, desaturation, heartbeat), dash blur, kill "pop", scope overlay, phase tint, confetti |
+| `Effects/MapAnimator` | Spins/bobs/pulses/flickers map decorations tagged by `MapBuilder` (client-only, batched with `BulkMoveTo`) |
+| `SoundController` | Plays `SoundConfig` recipes: layered sounds with pitch, delay and SoundEffects; 2D, 3D, loops (charge, beam, ambience) |
 | `UIController` | Screen coordination, Modal mouse release, CoreGui setup |
 
 ## Remotes (`Shared/Modules/Net.Definitions`)

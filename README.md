@@ -53,7 +53,8 @@ src/
 │   │   │                  ProgressionConfig, CosmeticConfig, SettingsConfig, SoundConfig,
 │   │   │                  BotConfig, DevConfig
 │   │   ├── Modules/       Signal, Maid, Spring, RaycastUtil, MathUtil, TableUtil,
-│   │   │                  Net (remote registry + rate limiting), ObjectPool, WallMovement
+│   │   │                  Net (remote registry + rate limiting), ObjectPool, WallMovement,
+│   │   │                  WeaponModelBuilder (procedural weapon models, shared client/server)
 │   │   └── Types          shared type definitions
 │   ├── Assets/            (optional) Viewmodels/<WeaponId> models, see ASSETS.md
 │   └── Remotes/           created at runtime by Net.Setup() from Net.Definitions
@@ -88,6 +89,7 @@ src/
         ├── ClientState, InputController, CameraController, MovementController,
         ├── WeaponController, Viewmodel, AbilityController, EffectsController,
         ├── SoundController, UIController
+        ├── Effects/       FXUtil, WeaponFX, WorldFX, ScreenFX, MapAnimator
         └── UI/            UIKit, MainMenuScreen, HUDScreen, Crosshair, ScoreboardScreen,
                            LoadoutScreen, ShopScreen (Shop + Customize), SettingsScreen,
                            ResultsScreen, TouchControls, Notifications, DevPanel
@@ -113,6 +115,7 @@ StarterGui contains the empty `MainMenu`, `HUD`, `Scoreboard`, `Loadout`, `Resul
 | Scoreboard | Tab (hold) | Select / View | TAB |
 | Menu | M | Start / Menu | ≡ |
 | Emote (lobby) | G | D-pad ↓ | — |
+| Inspect weapon | F | D-pad ↑ | — |
 | Dev console (Studio) | F2 | — | — |
 
 ---

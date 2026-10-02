@@ -12,6 +12,8 @@ local Colors = {
 	Cyan = Color3.fromRGB(40, 225, 255),
 	Pink = Color3.fromRGB(255, 80, 200),
 	Yellow = Color3.fromRGB(255, 210, 70),
+	Green = Color3.fromRGB(110, 255, 150),
+	Purple = Color3.fromRGB(170, 110, 255),
 }
 
 return {
@@ -49,6 +51,35 @@ return {
 		b:Neon(Vector3.new(2.2, 0.4, 30), Vector3.new(0, 14, 40), Colors.Yellow)
 		b:Ramp(Vector3.new(-50, 0, 20), Vector3.new(-50, 16, 42), 8, Colors.Tile, Enum.Material.DiamondPlate)
 		b:Ramp(Vector3.new(50, 0, 20), Vector3.new(50, 16, 42), 8, Colors.Tile, Enum.Material.DiamondPlate)
+
+		-- Showpiece: floating logo with halo rings above a glowing dais.
+		b:Block(Vector3.new(16, 1, 16), Vector3.new(0, 0.5, -45), Colors.Tile, Enum.Material.SmoothPlastic, "Dais")
+		b:Neon(Vector3.new(16.2, 0.2, 16.2), Vector3.new(0, 1, -45), Colors.Cyan)
+		b:Hologram("VECTOR RUSH", Vector3.new(22, 5, 0.3), Vector3.new(0, 11, -45), Colors.Cyan, Vector3.new(0, 11, 0))
+		b:HaloRing(Vector3.new(0, 11, -45), 26, Colors.Pink, 25, 14)
+		b:HaloRing(Vector3.new(0, 11, -45), 20, Colors.Cyan, -40, -10)
+		local orb = b:DecoCFrame(Vector3.one * 2, CFrame.new(0, 17, -45), Colors.Yellow, Enum.Material.Neon, Enum.PartType.Ball)
+		b:Bob(orb, 0.7, 0.3)
+		b:Particles(orb, "Sparkle", Colors.Yellow, 8)
+
+		-- Mode billboards along the walls.
+		b:Hologram("TEAM DEATHMATCH", Vector3.new(16, 3, 0.3), Vector3.new(-66, 9, -25), Colors.Cyan, Vector3.new(0, 9, -25))
+		b:Hologram("FREE FOR ALL", Vector3.new(16, 3, 0.3), Vector3.new(-66, 9, 0), Colors.Yellow, Vector3.new(0, 9, 0))
+		b:Hologram("GUN GAME", Vector3.new(16, 3, 0.3), Vector3.new(-66, 9, 25), Colors.Pink, Vector3.new(0, 9, 25))
+		b:Hologram("MOVEMENT COURSE", Vector3.new(18, 3, 0.3), Vector3.new(0, 18, 66), Colors.Green, Vector3.new(0, 18, 0))
+
+		-- Trees, lamps, drones, ambient sparkles.
+		for _, data in { { Vector3.new(-58, 0, -58), Colors.Green }, { Vector3.new(58, 0, -58), Colors.Pink }, { Vector3.new(58, 0, 10), Colors.Purple }, { Vector3.new(-58, 0, 10), Colors.Cyan } } do
+			b:Tree(data[1], data[2], 8)
+		end
+		b:Lamp(Vector3.new(-20, 0, -10), 9, Colors.Cyan)
+		b:Lamp(Vector3.new(20, 0, -30), 9, Colors.Pink)
+		b:Drone(Vector3.new(-25, 16, -35), Colors.Cyan)
+		b:Drone(Vector3.new(28, 18, 10), Colors.Pink)
+		b:Drone(Vector3.new(0, 20, 30), Colors.Yellow)
+		local sparkle = b:Deco(Vector3.new(120, 20, 120), Vector3.new(0, 10, 0), Colors.Floor)
+		sparkle.Transparency = 1
+		b:Particles(sparkle, "Dust", Color3.fromRGB(200, 180, 255), 16)
 
 		for index = 0, 7 do
 			local angle = index / 8 * math.pi * 2

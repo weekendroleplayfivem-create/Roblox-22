@@ -1,7 +1,7 @@
 --[[
 	MapAnimator
 	Animates decorative map parts on the client (zero network cost):
-	  VR_Spin    attributes SpinAxis (Vector3), SpinSpeed (degrees/second)
+	  VR_Spin    attributes SpinAxis (world Vector3), SpinSpeed (degrees/second)
 	  VR_Bob     attributes BobHeight (studs), BobSpeed (cycles/second)
 	  VR_Pulse   attributes PulseSpeed, PulseMin, PulseMax (Transparency range)
 	  VR_Flicker hologram flicker (Transparency)
@@ -66,8 +66,9 @@ local function step(deltaTime: number)
 		local cframe = entry.Base
 		local speed = part:GetAttribute("SpinSpeed")
 		if speed then
+			-- World-space axis through the part's own centre.
 			local axis = part:GetAttribute("SpinAxis") or Vector3.yAxis
-			cframe = cframe * CFrame.fromAxisAngle(axis.Unit, math.rad(speed) * now + entry.Phase)
+			cframe = CFrame.new(cframe.Position) * CFrame.fromAxisAngle(axis.Unit, math.rad(speed) * now + entry.Phase) * cframe.Rotation
 		end
 		local height = part:GetAttribute("BobHeight")
 		if height then

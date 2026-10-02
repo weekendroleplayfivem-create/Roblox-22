@@ -7,6 +7,7 @@
 | Test | Covers |
 | --- | --- |
 | Weapon configs are complete and valid | every field, slot, fire mode, mode-specific tables |
+| Every weapon has a model kit, tracer style and sound recipes | builds every weapon model, checks every referenced sound exists |
 | No weapon can eliminate a full health+shield target in one shot | "no instant unavoidable kills" |
 | Ability, match, map and cosmetic configs are consistent | rules module per mode, map module per map, gun-game ladder, free default cosmetics |
 | Data validation repairs corrupt and old profiles | migration v1→v2, wrong types, negative credits, wrong-slot equips, unknown items/settings |
