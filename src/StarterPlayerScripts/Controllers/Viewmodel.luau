@@ -11,6 +11,7 @@
 	  charge glow + shake, neon flash on every shot.
 ]]
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 
@@ -18,12 +19,13 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Spring = require(Shared.Modules.Spring)
 local MathUtil = require(Shared.Modules.MathUtil)
 local WeaponModelBuilder = require(Shared.Modules.WeaponModelBuilder)
+local MatchConfig = require(Shared.Config.MatchConfig)
 
 local Viewmodel = {}
 Viewmodel.__index = Viewmodel
 
-local HIP_OFFSET = CFrame.new(0.85, -0.82, -1.45)
-local ADS_OFFSET = CFrame.new(0, -0.43, -1.05)
+local HIP_OFFSET = CFrame.new(0.8, -0.85, -1.65)
+local ADS_DISTANCE = 1.05 -- how far in front of the eye the sight sits when aiming
 local SPRINT_POSE = CFrame.new(-0.15, -0.25, 0.15) * CFrame.Angles(math.rad(-18), math.rad(38), math.rad(22))
 local SLIDE_POSE = CFrame.new(-0.1, 0.05, 0) * CFrame.Angles(0, 0, math.rad(-14))
 local EQUIP_DROP = CFrame.new(0.1, -1.3, 0.5) * CFrame.Angles(math.rad(-65), math.rad(20), math.rad(-25))
@@ -31,6 +33,41 @@ local RELOAD_TILT = CFrame.new(0.05, -0.15, 0.1) * CFrame.Angles(math.rad(-12), 
 local MAG_DROP = CFrame.new(0, -0.9, 0.15) * CFrame.Angles(math.rad(-25), 0, 0)
 local INSPECT_TIME = 2.2
 local FLASH_TIME = 0.06
+
+local GLOVE = Color3.fromRGB(30, 31, 38)
+local DEFAULT_SLEEVE = Color3.fromRGB(62, 66, 84)
+
+local function armPart(model: Model, name: string, size: Vector3, cframe: CFrame, color: Color3, material: Enum.Material): BasePart
+	local part = Instance.new("Part")
+	part.Name = name
+	part.Size = size
+	part.CFrame = cframe
+	part.Color = color
+	part.Material = material
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.CastShadow = false
+	part.Parent = model
+	return part
+end
+
+-- Gloved hand + forearm reaching from `hand` back toward `elbow` (model space).
+local function buildArm(model: Model, hand: Vector3, elbow: Vector3, sleeve: Color3, accent: Color3, side: number): { BasePart }
+	local parts = {}
+	local direction = (elbow - hand)
+	local forearmLength = direction.Magnitude
+	local glove = CFrame.lookAt(hand, elbow)
+	table.insert(parts, armPart(model, "Glove", Vector3.new(0.22, 0.24, 0.3), glove * CFrame.new(0, 0, 0.05), GLOVE, Enum.Material.Fabric))
+	table.insert(parts, armPart(model, "Knuckles", Vector3.new(0.23, 0.05, 0.12), glove * CFrame.new(side * 0.02, 0.12, -0.02), accent, Enum.Material.Neon))
+	table.insert(parts, armPart(model, "Thumb", Vector3.new(0.07, 0.07, 0.18), glove * CFrame.new(-side * 0.11, 0.05, -0.08), GLOVE, Enum.Material.Fabric))
+	table.insert(parts, armPart(model, "Wrist", Vector3.new(0.2, 0.2, 0.12), glove * CFrame.new(0, 0, 0.24), GLOVE, Enum.Material.SmoothPlastic))
+	table.insert(parts, armPart(model, "Cuff", Vector3.new(0.27, 0.27, 0.08), glove * CFrame.new(0, 0, 0.32), accent, Enum.Material.Neon))
+	table.insert(parts, armPart(model, "Sleeve", Vector3.new(0.27, 0.27, forearmLength), glove * CFrame.new(0, 0, 0.36 + forearmLength / 2), sleeve, Enum.Material.Fabric))
+	table.insert(parts, armPart(model, "SleevePanel", Vector3.new(0.28, 0.1, forearmLength * 0.6), glove * CFrame.new(0, 0.1, 0.36 + forearmLength * 0.5), sleeve:Lerp(Color3.new(1, 1, 1), 0.25), Enum.Material.SmoothPlastic))
+	return parts
+end
 
 local function prepare(model: Model)
 	for _, part in model:GetDescendants() do
@@ -62,14 +99,28 @@ function Viewmodel.new(weapon, skin)
 			then primary.CFrame:ToObjectSpace(muzzle.WorldCFrame)
 			else CFrame.new(0, 0, -2)
 		self.Glow = {}
-		self.Magazine = nil
+		self.MagazineParts = {}
+		self.EjectOffset = CFrame.new(0.2, 0.1, 0) * CFrame.Angles(0, math.rad(90), 0)
+		self.LeftArm = {}
 	else
 		local info
 		model, info = WeaponModelBuilder.Build(weapon, { Skin = skin, Anchored = true })
 		self.MuzzleOffset = info.Muzzle
 		self.Glow = info.Glow
-		self.Magazine = info.Magazine
-		self.MagazineRest = info.MagazineRest
+		self.MagazineParts = info.MagazineParts
+		self.EjectOffset = info.Eject
+		self.AdsOffset = CFrame.new(-info.Sight.X, -info.Sight.Y, -ADS_DISTANCE - info.Sight.Z)
+
+		-- First-person arms (sleeves use your team colour).
+		local team = Players.LocalPlayer:GetAttribute("Team")
+		local sleeve = if team and MatchConfig.Teams[team] then MatchConfig.Teams[team].Color:Lerp(DEFAULT_SLEEVE, 0.45) else DEFAULT_SLEEVE
+		local accent = weapon.Viewmodel.Color
+		buildArm(model, info.RightHand + Vector3.new(0.02, 0, 0.04), Vector3.new(0.45, -0.85, info.RightHand.Z + 1.25), sleeve, accent, 1)
+		self.LeftArm = buildArm(model, info.LeftHand, Vector3.new(-0.75, -0.8, info.LeftHand.Z + 1.25), sleeve, accent, -1)
+	end
+	self.LeftArmRest = {}
+	for index, part in self.LeftArm do
+		self.LeftArmRest[index] = part.CFrame
 	end
 	self.GlowColors = {}
 	for index, part in self.Glow do
@@ -164,6 +215,11 @@ function Viewmodel:GetMuzzleCFrame(): CFrame
 	return self.CurrentCFrame * self.MuzzleOffset
 end
 
+-- Ejection port (casings fly out along its look vector).
+function Viewmodel:GetEjectCFrame(): CFrame
+	return self.CurrentCFrame * self.EjectOffset
+end
+
 local function smoothstep(alpha: number): number
 	alpha = math.clamp(alpha, 0, 1)
 	return alpha * alpha * (3 - 2 * alpha)
@@ -251,7 +307,7 @@ function Viewmodel:Update(deltaTime: number, pose)
 	end
 	self.Light.Brightness = flash * 6 + self.Charge * 2
 
-	local base = HIP_OFFSET:Lerp(ADS_OFFSET, self.AimAlpha)
+	local base = HIP_OFFSET:Lerp(self.AdsOffset or CFrame.new(0, -0.43, -1.05), self.AimAlpha)
 	local final = camera.CFrame
 		* base
 		* CFrame.identity:Lerp(SPRINT_POSE, self.SprintAlpha)
@@ -267,8 +323,16 @@ function Viewmodel:Update(deltaTime: number, pose)
 		* CFrame.Angles(kick.X, kick.Y, 0)
 	self.CurrentCFrame = final
 	self.Model:PivotTo(final)
-	if self.Magazine and self.MagazineRest then
-		self.Magazine.CFrame = final * self.MagazineRest * magazineOffset
+	if magazineOffset ~= CFrame.identity then
+		local lift = CFrame.new(magazineOffset.Position)
+		for _, entry in self.MagazineParts do
+			entry.Part.CFrame = final * lift * entry.Rest * magazineOffset.Rotation
+		end
+		-- The support hand pulls the magazine out and pushes the new one in.
+		local handLift = CFrame.new(magazineOffset.Position * 0.85)
+		for index, part in self.LeftArm do
+			part.CFrame = final * handLift * self.LeftArmRest[index]
+		end
 	end
 end
 

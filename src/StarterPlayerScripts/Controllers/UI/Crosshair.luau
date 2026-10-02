@@ -23,6 +23,7 @@ local UIKit = require(script.Parent.UIKit)
 local ClientState = require(script.Parent.Parent.ClientState)
 local SoundController = require(script.Parent.Parent.SoundController)
 local WeaponController = require(script.Parent.Parent.WeaponController)
+local EffectsController = require(script.Parent.Parent.EffectsController)
 
 local Crosshair = {}
 
@@ -266,6 +267,9 @@ function Crosshair:Start()
 		end
 		if data.ShieldBroken then
 			SoundController:Play("ShieldBreak")
+			if typeof(data.Position) == "Vector3" then
+				EffectsController:ShieldShatter(data.Position)
+			end
 		end
 		if typeof(data.Position) == "Vector3" and data.Damage then
 			local color = if data.Headshot then UIKit.Theme.Yellow elseif data.ShieldHit then UIKit.Theme.Accent else Color3.new(1, 1, 1)

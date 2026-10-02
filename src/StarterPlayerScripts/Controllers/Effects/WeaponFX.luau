@@ -28,6 +28,188 @@ local HIT_FLASH_POOL = 4
 
 local linePool
 local marks: { BasePart } = {}
+
+--[[ Glow beams (Beam instances between Terrain attachments) ]]
+
+type GlowBeam = { Beam: Beam, A: Attachment, B: Attachment, Born: number, Duration: number, Width: number, Busy: boolean }
+local beamPool: { GlowBeam } = {}
+local activeBeams: { GlowBeam } = {}
+local MAX_BEAMS = 90
+
+local function acquireBeam(): GlowBeam?
+	for _, entry in beamPool do
+		if not entry.Busy then
+			return entry
+		end
+	end
+	if #beamPool >= MAX_BEAMS then
+		return nil
+	end
+	local terrain = workspace.Terrain
+	local a = Instance.new("Attachment")
+	a.Name = "VR_BeamA"
+	a.Parent = terrain
+	local b = Instance.new("Attachment")
+	b.Name = "VR_BeamB"
+	b.Parent = terrain
+	local beam = Instance.new("Beam")
+	beam.Attachment0 = a
+	beam.Attachment1 = b
+	beam.FaceCamera = true
+	beam.LightEmission = 1
+	beam.LightInfluence = 0
+	beam.Segments = 12
+	beam.Texture = FXUtil.Textures.Sparkle
+	beam.TextureMode = Enum.TextureMode.Stretch
+	beam.TextureSpeed = 2
+	beam.Enabled = false
+	beam.Parent = terrain
+	local entry = { Beam = beam, A = a, B = b, Born = 0, Duration = 0, Width = 0, Busy = false }
+	table.insert(beamPool, entry)
+	return entry
+end
+
+-- Soft glowing beam from `from` to `to` that fades and thins over `duration`.
+function WeaponFX.GlowBeam(from: Vector3, to: Vector3, color: Color3, width: number, duration: number, curve: number?)
+	local entry = acquireBeam()
+	if not entry then
+		return
+	end
+	entry.Busy = true
+	entry.A.WorldPosition = from
+	entry.B.WorldPosition = to
+	local beam = entry.Beam
+	beam.Color = ColorSequence.new(Color3.new(1, 1, 1), color)
+	beam.Width0 = width
+	beam.Width1 = width * 0.7
+	beam.CurveSize0 = curve or 0
+	beam.CurveSize1 = -(curve or 0)
+	beam.Transparency = NumberSequence.new(0)
+	beam.Enabled = true
+	entry.Born = os.clock()
+	entry.Duration = duration
+	entry.Width = width
+	table.insert(activeBeams, entry)
+end
+
+local function stepBeams()
+	local now = os.clock()
+	for index = #activeBeams, 1, -1 do
+		local entry = activeBeams[index]
+		local alpha = (now - entry.Born) / entry.Duration
+		if alpha >= 1 then
+			entry.Beam.Enabled = false
+			entry.Busy = false
+			table.remove(activeBeams, index)
+		else
+			entry.Beam.Transparency = NumberSequence.new(alpha * alpha)
+			local width = entry.Width * (1 - alpha * 0.8)
+			entry.Beam.Width0 = width
+			entry.Beam.Width1 = width * 0.7
+		end
+	end
+end
+
+--[[ Physical debris: small client-only parts that bounce and fade ]]
+
+local MAX_DEBRIS = 40
+local debrisCount = 0
+
+function WeaponFX.Debris(position: Vector3, normal: Vector3, color: Color3, count: number, speed: number?, glow: boolean?)
+	if FXUtil.Reduced() then
+		return
+	end
+	for _ = 1, count do
+		if debrisCount >= MAX_DEBRIS then
+			return
+		end
+		debrisCount += 1
+		local chip = Instance.new("Part")
+		chip.Name = "Chip"
+		chip.Size = Vector3.one * (0.1 + math.random() * 0.15)
+		chip.Color = color
+		chip.Material = if glow then Enum.Material.Neon else Enum.Material.SmoothPlastic
+		chip.CanQuery = false
+		chip.CanTouch = false
+		chip.CastShadow = false
+		chip.CollisionGroup = "Default"
+		chip.CFrame = CFrame.new(position + normal * 0.2) * CFrame.Angles(math.random() * 6, math.random() * 6, 0)
+		local spread = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5)
+		chip.AssemblyLinearVelocity = (normal + spread * 1.2).Unit * (speed or 18) * (0.5 + math.random())
+		chip.AssemblyAngularVelocity = spread * 30
+		chip.Parent = FXUtil.Folder()
+		FXUtil.Tween(chip, 1.1, { Transparency = 1, Size = chip.Size * 0.4 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		task.delay(1.15, function()
+			debrisCount -= 1
+			chip:Destroy()
+		end)
+	end
+end
+
+-- Spent energy casing flicked out of the ejection port.
+function WeaponFX.Casing(eject: CFrame, color: Color3, big: boolean?)
+	if FXUtil.Reduced() or debrisCount >= MAX_DEBRIS then
+		return
+	end
+	debrisCount += 1
+	local casing = Instance.new("Part")
+	casing.Name = "Casing"
+	casing.Size = if big then Vector3.new(0.12, 0.12, 0.3) else Vector3.new(0.06, 0.06, 0.16)
+	casing.Color = Color3.fromRGB(200, 170, 90)
+	casing.Material = Enum.Material.Metal
+	casing.CanQuery = false
+	casing.CanTouch = false
+	casing.CastShadow = false
+	casing.CFrame = eject
+	local band = Instance.new("Part")
+	band.Name = "Band"
+	band.Size = casing.Size * Vector3.new(1.1, 1.1, 0.3)
+	band.Color = color
+	band.Material = Enum.Material.Neon
+	band.CanCollide = false
+	band.CanQuery = false
+	band.CanTouch = false
+	band.Massless = true
+	band.CFrame = eject
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = casing
+	weld.Part1 = band
+	weld.Parent = band
+	band.Parent = casing
+	local camera = workspace.CurrentCamera
+	local up = if camera then camera.CFrame.UpVector else Vector3.yAxis
+	casing.AssemblyLinearVelocity = eject.LookVector * (8 + math.random() * 4) + up * (6 + math.random() * 3)
+	casing.AssemblyAngularVelocity = Vector3.new(math.random() * 20, math.random() * 20, math.random() * 20)
+	casing.Parent = FXUtil.Folder()
+	task.delay(1.4, function()
+		debrisCount -= 1
+		casing:Destroy()
+	end)
+end
+
+-- Cyan shards when a shield breaks.
+function WeaponFX.ShieldShatter(position: Vector3)
+	local color = Color3.fromRGB(120, 230, 255)
+	FXUtil.Sphere(position, color, 1, 5, 0.25, 0.3)
+	FXUtil.Emit(position, { Color = color, Count = 20, Speed = NumberRange.new(10, 22), Lifetime = NumberRange.new(0.3, 0.6), Acceleration = Vector3.new(0, -40, 0), Size = 0.3, Essential = true })
+	if not FXUtil.Reduced() then
+		for _ = 1, 8 do
+			local shard = Instance.new("WedgePart")
+			shard.Size = Vector3.new(0.05, 0.4 + math.random() * 0.3, 0.3)
+			shard.Color = color
+			shard.Material = Enum.Material.Glass
+			shard.Transparency = 0.3
+			shard.Anchored = true
+			shard.CanCollide = false
+			shard.CanQuery = false
+			shard.CanTouch = false
+			shard.CastShadow = false
+			shard.CFrame = CFrame.new(position) * CFrame.Angles(math.random() * 6, math.random() * 6, math.random() * 6)
+			local offset = Vector3.new(math.random() - 0.5, math.random() - 0.2, math.random() - 0.5).Unit * (3 + math.random() * 3)
+			FXUtil.Flash(shard, 0.5, { CFrame = CFrame.new(position + offset) * CFrame.Angles(math.random() * 6, math.random() * 6, 0), Transparency = 1 })
+		end
+	end
+end
 local hitHighlights: { Highlight } = {}
 local hitHighlightIndex = 0
 
@@ -77,6 +259,14 @@ function WeaponFX.Tracer(style: string, from: Vector3, to: Vector3, color: Color
 		return
 	end
 	local power = intensity or 1
+	if not FXUtil.Reduced() then
+		local glowWidth = if style == "Rail" then 0.6 + 0.6 * power
+			elseif style == "Beam" then 0.5
+			elseif style == "Pellet" or style == "Spray" then 0.12
+			else 0.22
+		local glowTime = if style == "Rail" then 0.4 elseif style == "Pellet" or style == "Spray" then 0.08 else 0.14
+		WeaponFX.GlowBeam(from, to, color, glowWidth, glowTime)
+	end
 	if style == "Rail" then
 		local width = 0.12 + 0.22 * power
 		fadeLine(line(from, to, color, width, 0.05), 0.35, 0.01)
@@ -107,6 +297,15 @@ end
 
 -- Jagged arc that flickers a few times.
 function WeaponFX.Lightning(from: Vector3, to: Vector3, color: Color3)
+	if not FXUtil.Reduced() then
+		local distance = (to - from).Magnitude
+		for strand = 1, 3 do
+			task.delay((strand - 1) * 0.03, function()
+				WeaponFX.GlowBeam(from, to, color, 0.18 + strand * 0.05, 0.12, (math.random() - 0.5) * distance * 0.25)
+			end)
+		end
+		FXUtil.Emit(to, { Color = color, Count = 6, Speed = NumberRange.new(8, 18), Lifetime = NumberRange.new(0.1, 0.25), Size = 0.2 })
+	end
 	local flickers = if FXUtil.Reduced() then 1 else 3
 	for flicker = 0, flickers - 1 do
 		task.delay(flicker * 0.035, function()
@@ -124,9 +323,35 @@ function WeaponFX.Lightning(from: Vector3, to: Vector3, color: Color3)
 	end
 end
 
-function WeaponFX.MuzzleFlash(cframe: CFrame, color: Color3, scale: number?)
+function WeaponFX.MuzzleFlash(cframe: CFrame, color: Color3, scale: number?, style: string?)
 	local size = scale or 1
 	local position = cframe.Position
+	if style == "Rail" then
+		FXUtil.Ring(position, cframe.LookVector, color, 0.3, 2.2 * size, 0.18, 0.06)
+		FXUtil.Ring(position + cframe.LookVector * 0.6, cframe.LookVector, Color3.new(1, 1, 1), 0.2, 1.4 * size, 0.14, 0.04)
+	elseif style == "Pellet" then
+		FXUtil.Emit(position, { Color = color, Count = 10, Direction = cframe.LookVector, Spread = Vector2.new(30, 30), Speed = NumberRange.new(20, 40), Lifetime = NumberRange.new(0.06, 0.14), Size = 0.25 })
+	elseif style == "Arc" then
+		for _ = 1, 3 do
+			local tip = position + (cframe.LookVector + Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5) * 0.8).Unit * 1.2
+			WeaponFX.GlowBeam(position, tip, color, 0.08, 0.06, (math.random() - 0.5) * 0.6)
+		end
+	end
+	if style == "Rail" or style == "Pellet" or style == "Orb" then
+		-- Lingering smoke wisp from heavy shots.
+		FXUtil.Emit(position, {
+			Color = Color3.fromRGB(200, 200, 215),
+			Texture = FXUtil.Textures.Smoke,
+			Count = 2,
+			Direction = Vector3.yAxis,
+			Spread = Vector2.new(20, 20),
+			Speed = NumberRange.new(1, 2.5),
+			Lifetime = NumberRange.new(0.6, 1),
+			Size = NumberSequence.new(0.3, 1.2),
+			LightEmission = 0,
+			Transparency = NumberSequence.new(0.6, 1),
+		})
+	end
 	FXUtil.Sphere(position, color:Lerp(Color3.new(1, 1, 1), 0.4), 0.35 * size, 0.9 * size, 0.06, 0)
 	-- Star "petals" facing forward.
 	for index = 0, 1 do
@@ -169,8 +394,25 @@ local function surfaceMark(position: Vector3, normal: Vector3, color: Color3)
 	FXUtil.Tween(mark, 1.6, { Transparency = 1, Color = Color3.new(0.2, 0.2, 0.25) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 end
 
-function WeaponFX.Impact(position: Vector3, normal: Vector3, color: Color3, heavy: boolean?)
+function WeaponFX.Impact(position: Vector3, normal: Vector3, color: Color3, heavy: boolean?, surfaceColor: Color3?)
 	FXUtil.Ring(position + normal * 0.05, normal, color, 0.3, if heavy then 3 else 1.6, 0.2)
+	FXUtil.Light(position + normal * 0.5, color, if heavy then 10 else 6, 2, 0.08)
+	if surfaceColor then
+		WeaponFX.Debris(position, normal, surfaceColor, if heavy then 4 else 2, 14)
+	end
+	FXUtil.Emit(position, {
+		Color = surfaceColor or Color3.fromRGB(180, 180, 200),
+		Texture = FXUtil.Textures.Smoke,
+		Count = if heavy then 3 else 1,
+		Direction = normal,
+		Spread = Vector2.new(25, 25),
+		Speed = NumberRange.new(2, 5),
+		Lifetime = NumberRange.new(0.3, 0.6),
+		Size = NumberSequence.new(0.4, 1.4),
+		LightEmission = 0,
+		Transparency = NumberSequence.new(0.5, 1),
+		Drag = 4,
+	})
 	FXUtil.Emit(position, {
 		Color = color,
 		Count = if heavy then 14 else 6,
@@ -212,6 +454,30 @@ end
 
 -- Big colourful explosion (plasma impacts).
 function WeaponFX.Explosion(position: Vector3, color: Color3, radius: number)
+	-- Distortion-like shockwave shell.
+	local shell = FXUtil.Part("Shockwave", Enum.PartType.Ball)
+	shell.Material = Enum.Material.ForceField
+	shell.Color = color
+	shell.Size = Vector3.one * 2
+	shell.CFrame = CFrame.new(position)
+	FXUtil.Flash(shell, 0.4, { Size = Vector3.one * radius * 3, Transparency = 1 })
+	-- Scorch ring that lingers on the ground.
+	local scorch = FXUtil.Ring(position - Vector3.new(0, 0.5, 0), Vector3.yAxis, Color3.fromRGB(30, 25, 35), radius * 0.8, radius * 1.4, 2.5, 0.06)
+	scorch.Transparency = 0.3
+	WeaponFX.Debris(position, Vector3.yAxis, color, 8, 30, true)
+	FXUtil.Emit(position, {
+		Color = Color3.fromRGB(90, 80, 110),
+		Texture = FXUtil.Textures.Smoke,
+		Count = 6,
+		Direction = Vector3.yAxis,
+		Spread = Vector2.new(30, 30),
+		Speed = NumberRange.new(6, 12),
+		Lifetime = NumberRange.new(1.2, 1.8),
+		Size = NumberSequence.new(3, 7),
+		LightEmission = 0,
+		Transparency = NumberSequence.new(0.5, 1),
+		Drag = 2,
+	})
 	FXUtil.Sphere(position, Color3.new(1, 1, 1), 1, radius * 0.9, 0.18, 0)
 	FXUtil.Sphere(position, color, 1.5, radius * 2, 0.45, 0.25)
 	FXUtil.Ring(position, Vector3.yAxis, color, 1, radius * 2.6, 0.45, 0.3)
@@ -403,6 +669,9 @@ function WeaponFX:Init()
 	RunService.Heartbeat:Connect(function(deltaTime)
 		if next(orbs) then
 			stepOrbs(deltaTime)
+		end
+		if #activeBeams > 0 then
+			stepBeams()
 		end
 	end)
 end

@@ -256,6 +256,14 @@ function WeaponController:Reload()
 	if viewmodel then
 		viewmodel:PlayReload(weapon.ReloadTime)
 	end
+	-- Mechanical sounds synced with the magazine-out / magazine-in animation.
+	for _, cue in { { 0.18, "MagOut" }, { 0.55, "MagIn" } } do
+		task.delay(weapon.ReloadTime * cue[1], function()
+			if state.ReloadToken == token and state.Reloading then
+				SoundController:Play(cue[2], 0.04)
+			end
+		end)
+	end
 	task.delay(weapon.ReloadTime, function()
 		if state.ReloadToken ~= token or not state.Reloading then
 			return
@@ -371,7 +379,7 @@ local function fireOnce(chargeLevel: number?): boolean
 					WeaponController.PredictedHit:Fire(result.Instance.Name == "Head", model)
 					EffectsController:HitTarget(model, result.Position, weapon)
 				elseif pellet == 1 or not reducedEffects() then
-					EffectsController:Impact(result.Position, result.Normal, weapon)
+					EffectsController:Impact(result.Position, result.Normal, weapon, result.Instance.Color)
 				end
 			end
 			if weapon.FireMode == "Beam" then
@@ -418,6 +426,9 @@ local function fireOnce(chargeLevel: number?): boolean
 	if weapon.FireMode ~= "Beam" then
 		EffectsController:MuzzleFlash(muzzleCFrame, weapon)
 		SoundController:Play(weapon.Sounds.Fire, 0.06)
+		if viewmodel then
+			EffectsController:EjectCasing(viewmodel:GetEjectCFrame(), weapon)
+		end
 	end
 	MovementController:NotifyFired()
 	WeaponController.ShotFired:Fire(weapon)

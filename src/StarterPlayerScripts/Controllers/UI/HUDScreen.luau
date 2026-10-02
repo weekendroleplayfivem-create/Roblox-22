@@ -29,6 +29,7 @@ local WeaponController = require(script.Parent.Parent.WeaponController)
 local AbilityController = require(script.Parent.Parent.AbilityController)
 local CameraController = require(script.Parent.Parent.CameraController)
 local InputController = require(script.Parent.Parent.InputController)
+local EffectsController = require(script.Parent.Parent.EffectsController)
 
 local HUDScreen = {}
 
@@ -151,6 +152,27 @@ local function buildCenter(parent: Frame)
 	ui.AnnouncementSub = UIKit.Label({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0.18, 66), Size = UDim2.fromOffset(900, 30), Text = "", TextSize = 24, TextColor3 = Theme.Accent, TextXAlignment = Enum.TextXAlignment.Center, Parent = parent })
 	ui.Status = UIKit.Label({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0.62, 0), Size = UDim2.fromOffset(600, 30), Text = "", TextSize = 22, TextXAlignment = Enum.TextXAlignment.Center, TextStrokeTransparency = 0.6, Parent = parent })
 	ui.Combo = UIKit.Label({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0.56, 0), Size = UDim2.fromOffset(600, 34), Text = "", Font = UIKit.FontBlack, TextSize = 28, TextColor3 = Theme.Accent2, TextXAlignment = Enum.TextXAlignment.Center, TextStrokeTransparency = 0.5, Parent = parent })
+	-- Kill banner (slides up when you get an elimination).
+	local banner = UIKit.Create("Frame", {
+		Name = "KillBanner",
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -130),
+		Size = UDim2.fromOffset(380, 70),
+		BackgroundColor3 = Theme.Panel,
+		BackgroundTransparency = 0.15,
+		Visible = false,
+		Parent = parent,
+	})
+	UIKit.Corner(banner, 10)
+	ui.KillBannerStroke = UIKit.Stroke(banner, Theme.Accent2, 2, 0)
+	UIKit.Create("Frame", { Size = UDim2.new(0, 6, 1, 0), BackgroundColor3 = Theme.Accent2, BorderSizePixel = 0, Name = "Bar", Parent = banner })
+	ui.KillBannerTitle = UIKit.Label({ Text = "ELIMINATED", TextSize = 14, TextColor3 = Theme.Accent2, Position = UDim2.fromOffset(18, 6), Size = UDim2.new(1, -24, 0, 18), Parent = banner })
+	ui.KillBannerName = UIKit.Label({ Text = "", Font = UIKit.FontBlack, TextSize = 28, Position = UDim2.fromOffset(18, 22), Size = UDim2.new(1, -24, 0, 30), Parent = banner })
+	ui.KillBannerSub = UIKit.Label({ Text = "", TextSize = 13, TextColor3 = Theme.SubText, Position = UDim2.fromOffset(18, 50), Size = UDim2.new(1, -24, 0, 16), Parent = banner })
+	ui.KillBannerScale = UIKit.Create("UIScale", { Parent = banner })
+	UIKit.AutoScale(banner, 0.6, 1.2)
+	ui.KillBanner = banner
+
 	ui.XPHolder = UIKit.Create("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0.5, 60, 0.5, 30), Size = UDim2.fromOffset(260, 120), BackgroundTransparency = 1, Parent = parent })
 	UIKit.List(ui.XPHolder, Enum.FillDirection.Vertical, 2)
 	ui.IndicatorHolder = UIKit.Create("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Parent = parent })
@@ -185,6 +207,44 @@ function HUDScreen:Announce(text: string, sub: string?, duration: number?, small
 		if ui.AnnouncementToken == token then
 			UIKit.Tween(ui.Announcement, 0.3, { TextTransparency = 1 })
 			UIKit.Tween(ui.AnnouncementSub, 0.3, { TextTransparency = 1 })
+		end
+	end)
+end
+
+function HUDScreen:KillBanner(victimName: string, weaponName: string?, headshot: boolean, streak: number)
+	local banner = ui.KillBanner
+	ui.KillBannerName.Text = string.upper(victimName)
+	local details = {}
+	if weaponName then
+		table.insert(details, weaponName)
+	end
+	if headshot then
+		table.insert(details, "HEADSHOT")
+	end
+	if streak >= 2 then
+		table.insert(details, string.format("%d STREAK", streak))
+	end
+	ui.KillBannerSub.Text = table.concat(details, "  •  ")
+	local color = if headshot then Theme.Yellow else Theme.Accent2
+	ui.KillBannerTitle.TextColor3 = color
+	ui.KillBannerStroke.Color = color
+	local bar = banner:FindFirstChild("Bar") :: Frame
+	bar.BackgroundColor3 = color
+	banner.Visible = true
+	banner.BackgroundTransparency = 0.15
+	banner.Position = UDim2.new(0.5, 0, 1, -100)
+	ui.KillBannerScale.Scale = 1.15
+	UIKit.Tween(banner, 0.22, { Position = UDim2.new(0.5, 0, 1, -130) }, Enum.EasingStyle.Back)
+	UIKit.Tween(ui.KillBannerScale, 0.22, { Scale = 1 }, Enum.EasingStyle.Back)
+	local token = os.clock()
+	ui.KillBannerToken = token
+	task.delay(1.8, function()
+		if ui.KillBannerToken == token then
+			UIKit.Tween(banner, 0.25, { Position = UDim2.new(0.5, 0, 1, -110), BackgroundTransparency = 1 })
+			task.wait(0.26)
+			if ui.KillBannerToken == token then
+				banner.Visible = false
+			end
 		end
 	end)
 end
@@ -490,6 +550,8 @@ function HUDScreen:Start()
 			end
 			ui.Combo.Text = callouts[math.min(comboCount, #callouts)] .. (if data.Streak and data.Streak >= 3 then string.format("  •  %d STREAK", data.Streak) else "")
 			ui.Combo.TextTransparency = 0
+			local weapon = data.Weapon and WeaponConfig.Get(data.Weapon)
+			HUDScreen:KillBanner(data.Victim and data.Victim.Name or "?", weapon and weapon.DisplayName, data.Headshot == true, data.Streak or 0)
 			local scale = ui.Combo:FindFirstChildOfClass("UIScale") or UIKit.Create("UIScale", { Parent = ui.Combo })
 			scale.Scale = 1.25
 			UIKit.Tween(scale, 0.2, { Scale = 1 }, Enum.EasingStyle.Back)
@@ -509,6 +571,9 @@ function HUDScreen:Start()
 			if root and root:IsA("BasePart") then
 				CameraController:DamagePunch((data.From - root.Position).Unit)
 			end
+		end
+		if data.ShieldBroken then
+			EffectsController.Screen:Pulse(Color3.fromRGB(120, 230, 255), 0.6, 0.5)
 		end
 		local shieldLeft = (player.Character and player.Character:GetAttribute("Shield") or 0) > 0
 		ui.Flash.BackgroundColor3 = if shieldLeft then Theme.Accent else Theme.Accent2

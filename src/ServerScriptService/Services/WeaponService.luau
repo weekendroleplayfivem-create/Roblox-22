@@ -133,7 +133,7 @@ local function attachWorldModel(combatant, weaponId: string?)
 		body = model.PrimaryPart :: BasePart
 	else
 		local info
-		model, info = WeaponModelBuilder.Build(weapon, { Skin = skinFor(combatant), Scale = WORLD_MODEL_SCALE, Anchored = false })
+		model, info = WeaponModelBuilder.Build(weapon, { Skin = skinFor(combatant), Scale = WORLD_MODEL_SCALE, Anchored = false, LowDetail = true })
 		body = info.Body
 	end
 	model.Name = "WorldWeapon"

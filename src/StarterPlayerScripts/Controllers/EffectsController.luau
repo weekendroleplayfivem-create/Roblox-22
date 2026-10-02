@@ -15,6 +15,7 @@
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local Lighting = game:GetService("Lighting")
+local SoundService = game:GetService("SoundService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -73,11 +74,20 @@ end
 
 function EffectsController:MuzzleFlash(cframe: CFrame, weapon)
 	local scale = if weapon.TracerStyle == "Rail" or weapon.Projectile then 1.5 elseif weapon.TracerStyle == "Spray" then 0.7 else 1
-	WeaponFX.MuzzleFlash(cframe, weapon.TracerColor, scale)
+	WeaponFX.MuzzleFlash(cframe, weapon.TracerColor, scale, weapon.TracerStyle)
 end
 
-function EffectsController:Impact(position: Vector3, normal: Vector3, weapon)
-	WeaponFX.Impact(position, normal, weapon.TracerColor, weapon.TracerStyle == "Rail")
+function EffectsController:Impact(position: Vector3, normal: Vector3, weapon, surfaceColor: Color3?)
+	WeaponFX.Impact(position, normal, weapon.TracerColor, weapon.TracerStyle == "Rail" or weapon.TracerStyle == "Pellet", surfaceColor)
+end
+
+-- Spent casing from the viewmodel's ejection port (not for beam/orb weapons).
+function EffectsController:EjectCasing(eject: CFrame, weapon)
+	if weapon.FireMode == "Beam" or weapon.Projectile or weapon.ProjectileType == "Chain" then
+		return
+	end
+	WeaponFX.Casing(eject, weapon.TracerColor, weapon.TracerStyle == "Rail" or weapon.Pellets > 1)
+	SoundController:Play("Casing", 0.15)
 end
 
 function EffectsController:HitTarget(model: Model, position: Vector3, weapon)
@@ -141,7 +151,7 @@ local function onShotReplicated(data)
 				if model then
 					WeaponFX.HitSpark(result.Position, weapon.TracerColor, (model:GetAttribute("Shield") or 0) > 0)
 				else
-					WeaponFX.Impact(result.Position, result.Normal, weapon.TracerColor, weapon.TracerStyle == "Rail")
+					WeaponFX.Impact(result.Position, result.Normal, weapon.TracerColor, weapon.TracerStyle == "Rail", result.Instance.Color)
 				end
 			end
 		end
@@ -157,8 +167,21 @@ local function onShotReplicated(data)
 			end
 		end
 	end
-	WeaponFX.MuzzleFlash(CFrame.lookAt(start, start + data.Directions[1]), weapon.TracerColor, 0.8)
+	WeaponFX.MuzzleFlash(CFrame.lookAt(start, start + data.Directions[1]), weapon.TracerColor, 0.8, weapon.TracerStyle)
 	SoundController:PlayAt(weapon.Sounds.Fire, data.Origin, 0.08)
+
+	-- Near miss: shots passing close to your head whiz by.
+	if camera and typeof(data.Directions[1]) == "Vector3" then
+		local eye = camera.CFrame.Position
+		local toEye = eye - data.Origin
+		local along = toEye:Dot(data.Directions[1])
+		if along > 15 and along < weapon.Range then
+			local closest = data.Origin + data.Directions[1] * along
+			if (closest - eye).Magnitude < 5 then
+				SoundController:PlayAt("Whiz", closest, 0.1)
+			end
+		end
+	end
 end
 
 local function onProjectileImpact(data)
@@ -372,10 +395,19 @@ local function updateLighting()
 		local map = MapConfig.Get(matchState.Map)
 		EffectsController:ApplyLighting(map and map.Lighting)
 		SoundController:SetAmbient(map and map.Ambient)
+		pcall(function()
+			SoundService.AmbientReverb = (Enum.ReverbType :: any)[map and map.Reverb or "GenericReverb"]
+		end)
 	else
 		EffectsController:ApplyLighting(MapConfig.LobbyLighting)
 		SoundController:SetAmbient("AmbientLobby")
+		SoundService.AmbientReverb = Enum.ReverbType.Arena
 	end
+end
+
+-- Shield break feedback (attacker sees shards; victim gets a cyan flash).
+function EffectsController:ShieldShatter(position: Vector3)
+	WeaponFX.ShieldShatter(position)
 end
 
 function EffectsController:Init()

@@ -4,7 +4,7 @@ There are no external models, meshes, images, sounds or animations in this repos
 
 | Placeholder | Where | How to replace |
 | --- | --- | --- |
-| **Sounds** (all) | `Shared/Config/SoundConfig` builds about 70 sound "recipes" by layering the sounds bundled with the Roblox client (`rbxasset://sounds/...`) and processing them with pitch, delays and SoundEffects (distortion, reverb, echo, flange, chorus, tremolo, EQ) | Upload original audio and replace a recipe's layers with `L("rbxassetid://<id>", volume, pitch)` |
+| **Sounds** (all) | `Shared/Config/SoundConfig` builds about 70 sound "recipes" by layering the sounds bundled with the Roblox client (`rbxasset://sounds/...`) and processing them with pitch, delays and SoundEffects (distortion, reverb, echo, flange, chorus, tremolo, EQ) | Fastest path: put asset ids in `SoundConfig.Overrides` (e.g. `PulseFire = { Id = "rbxassetid://…", Volume = 0.5, Pitch = 1 }`). The file lists suggested Creator Store search terms for each key. Overrides replace the recipe entirely |
 | **Map ambience** | `SoundConfig.AmbientNeon/Sky/Core` (empty ids = silent) | Set looping track ids |
 | **First-person weapon models** | `Shared/Modules/WeaponModelBuilder` builds detailed procedural kits from primitives | Add `ReplicatedStorage/Assets/Viewmodels/<WeaponId>` (Model with PrimaryPart and an Attachment named `Muzzle`). It's picked up automatically |
 | **Third-person weapon models** | The same builder, scaled 0.7 and welded to the right hand | Put a Model (with PrimaryPart) named `<WeaponId>` in `ServerStorage/Weapons` |
