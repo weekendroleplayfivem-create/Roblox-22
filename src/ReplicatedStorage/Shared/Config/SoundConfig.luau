@@ -65,7 +65,12 @@ local SHIMMER = { Depth = 0.5, Rate = 3, Mix = 0.5 }
 local SoundConfig = {
 	Sounds = {
 		--[[ Weapons ]]
-		PulseFire = recipe(L(SNAP, 0.42, 1.6), L(PING, 0.12, 2.6, { Effects = { Distortion = 0.5 } }), L(SWOOSH, 0.07, 2.6)),
+		PulseFire = recipe(
+			L(SNAP, 0.42, 1.6),
+			L(SNAP, 0.22, 0.75, { Effects = { EQ = LOW_BOOST } }),
+			L(PING, 0.12, 2.6, { Effects = { Distortion = 0.5 } }),
+			L(SWOOSH, 0.07, 2.6)
+		),
 		BurstFire = recipe(L(SNAP, 0.38, 1.95), L(PING, 0.09, 3.1, { Effects = { EQ = THIN } })),
 		ScatterFire = recipe(
 			L(SNAP, 0.6, 0.7, { Effects = { Distortion = 0.6, EQ = LOW_BOOST } }),

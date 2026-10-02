@@ -48,6 +48,11 @@ local SLOT_ORDER = { "Primary", "Secondary" }
 local AUTO_RELOAD_DELAY = 0.25
 local SERVER_EQUIP_GRACE = 0.6
 local ADS_RECOIL_MULTIPLIER = 0.6
+-- First shot after a short pause is extra accurate (rewards tap/burst firing).
+local FIRST_SHOT_PAUSE = 0.35
+local FIRST_SHOT_SPREAD = 0.45
+-- Early shots in a spray kick less; the pattern then climbs and sways.
+local RECOIL_RAMP_SHOTS = 3
 
 local state = {
 	Slots = {} :: { [string]: string },
@@ -66,6 +71,8 @@ local state = {
 	AimToggled = false,
 	Bloom = 0,
 	ShotCounter = 0,
+	LastShotAt = 0,
+	SprayCount = 0,
 }
 
 local viewmodel = nil
@@ -137,6 +144,9 @@ function WeaponController:GetSpreadDegrees(): number
 	local total = base + spread.Move * speedFactor + state.Bloom
 	if not MovementController:IsGrounded() then
 		total += spread.Air
+	end
+	if os.clock() - state.LastShotAt > FIRST_SHOT_PAUSE and MovementController:IsGrounded() then
+		total *= FIRST_SHOT_SPREAD
 	end
 	return total
 end
@@ -386,12 +396,20 @@ local function fireOnce(chargeLevel: number?): boolean
 
 	Net.Event("Combat", "RequestFire"):FireServer(payload)
 
-	-- Local feedback.
+	-- Local feedback: a readable recoil pattern (climb + slow side sway).
+	if now - state.LastShotAt > FIRST_SHOT_PAUSE then
+		state.SprayCount = 0
+	end
+	state.SprayCount += 1
+	state.LastShotAt = now
 	local recoilScale = if WeaponController:IsAiming() then ADS_RECOIL_MULTIPLIER else 1
 	if chargeLevel then
 		recoilScale *= 0.5 + chargeLevel
 	end
-	CameraController:Recoil(weapon.Recoil.Vertical * recoilScale, weapon.Recoil.Horizontal * recoilScale)
+	local ramp = math.min(1, 0.55 + state.SprayCount / RECOIL_RAMP_SHOTS * 0.45)
+	local sway = math.sin(state.SprayCount * 0.7 + #weapon.Id) * weapon.Recoil.Horizontal
+	local jitter = (math.random() - 0.5) * weapon.Recoil.Horizontal * 0.4
+	CameraController:Recoil(weapon.Recoil.Vertical * recoilScale * ramp, (sway + jitter) * recoilScale, weapon.Recoil.Recovery)
 	local maxBloom = math.max(0, weapon.Spread.Max - weapon.Spread.Hip)
 	state.Bloom = math.min(maxBloom, state.Bloom + weapon.Spread.PerShot)
 	if viewmodel then

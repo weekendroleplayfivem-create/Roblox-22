@@ -88,6 +88,8 @@ On the server (`CombatService.HandleFireRequest`):
    - the point is near where the target was during the last `ping + 0.15s` (lag compensation from a 1-second position history).
 7. Computes damage from config (falloff × headshot × charge), then applies shields first, then health.
 
+**Gun feel (client):** the first shot after a short pause gets 45% of the normal spread, which rewards tap and burst firing. Recoil follows a learnable pattern: early shots kick less, then the aim climbs and sways side to side, and each weapon has its own recovery speed. Body-shot time-to-kill is tuned to about 0.5–0.9s for primaries and about 0.8s for sidearms.
+
 Server-side tuning guarantees that **no weapon can eliminate a full health + shield target with one shot**. `TestRunner` asserts this.
 
 ### Weapon models and feel
@@ -127,7 +129,8 @@ You have one Movement slot (Dash, Phase) and one Tactical slot (Barrier, Scan Pu
 
 - **States**: Patrol (pathfinding between map bot nodes), Investigate (sounds), Chase (last seen position), Engage (strafe, keep a preferred range, shoot after a reaction delay with aim error) and Retreat (low health).
 - **Fair perception**: a view cone plus distance plus line of sight, hearing gunshots within a radius, being damaged, and allied scan pulses. Bots never read positions they couldn't perceive.
-- **Difficulty**: Easy, Normal and Hard change reaction time, aim error, fire rate, view distance, field of view, hearing, strafing and weapon pool.
+- **No aimbot**: a bot's aim is a direction that turns at a limited speed (`TurnSpeed`) toward where the target *was* a moment ago (`TrackingLag`), so strafing players get missed. It starts off-target when a target is first spotted and settles in over `SettleTime`. It has constant hand shake, worse while the bot moves. Bots only fire when their aim is inside `FireCone`, they fire in bursts with pauses, they mostly aim at the body, and they only partly lead projectiles.
+- **Difficulty**: Easy, Normal and Hard tune all of the aim settings above, plus reaction time, fire rate, view distance, field of view, hearing, strafing and weapon pool (`BotConfig`).
 - **Same rules as players**: bots fire through `WeaponService` (ammo and fire-rate rules) and `CombatService`. They avoid strafing off ledges.
 
 ## Client controllers

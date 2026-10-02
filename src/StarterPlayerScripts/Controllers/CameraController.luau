@@ -83,10 +83,15 @@ function CameraController:DashKick()
 	fovKick = CameraConfig.DashFovKick
 end
 
--- Permanent aim kick in degrees (recovers via the spring).
-function CameraController:Recoil(verticalDegrees: number, horizontalDegrees: number)
-	local yaw = (math.random() * 2 - 1) * horizontalDegrees
-	recoilSpring:Impulse(Vector3.new(math.rad(verticalDegrees), math.rad(yaw), 0) * 18)
+-- Permanent aim kick in degrees (recovers via the spring). `yawDegrees` is
+-- signed so weapons can follow a learnable recoil pattern. `recovery` (the
+-- weapon's Recoil.Recovery) sets how quickly the aim settles back.
+function CameraController:Recoil(verticalDegrees: number, yawDegrees: number, recovery: number?)
+	if recovery then
+		recoilSpring.Stiffness = math.clamp(recovery * 14, 70, 220)
+		recoilSpring.Damping = 2 * math.sqrt(recoilSpring.Stiffness) * 0.8
+	end
+	recoilSpring:Impulse(Vector3.new(math.rad(verticalDegrees), math.rad(yawDegrees), 0) * 18)
 end
 
 -- Turns the camera permanently (used by the mobile fire button drag-to-aim).

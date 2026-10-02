@@ -51,6 +51,13 @@ function BotBrain.new(combatant, settings, services)
 		LastPathTime = 0,
 		PathPending = false,
 		PathFailed = false,
+		AimDirection = nil :: Vector3?,
+		AimErrorAxis = nil :: Vector3?,
+		AcquiredAt = 0,
+		TargetHistory = {},
+		AimAtHead = false,
+		BurstLeft = 0,
+		BurstPauseUntil = 0,
 		PatrolGoal = nil :: Vector3?,
 		LastPosition = nil :: Vector3?,
 		StuckSince = nil :: number?,
@@ -62,6 +69,8 @@ end
 function BotBrain:OnSpawned(character: Model)
 	self.State = "Patrol"
 	self.Target = nil
+	self.AimDirection = nil
+	self.TargetHistory = {}
 	self.Goal = nil
 	self.Waypoints = nil
 	self.Noise = nil
@@ -286,14 +295,110 @@ function BotBrain:Face(position: Vector3?)
 	humanoid.AutoRotate = true
 end
 
-function BotBrain:TryFire(targetModel: Model, eye: Vector3, now: number)
+--[[ Aiming: human-like, never an aimbot ]]
+
+local HISTORY_SECONDS = 1
+
+local function rotateToward(current: Vector3, target: Vector3, maxRadians: number): Vector3
+	local angle = MathUtil.AngleBetween(current, target)
+	if angle <= maxRadians or angle < 1e-4 then
+		return target
+	end
+	local axis = current:Cross(target)
+	if axis.Magnitude < 1e-4 then
+		axis = Vector3.yAxis
+	end
+	return (CFrame.fromAxisAngle(axis.Unit, maxRadians) * current).Unit
+end
+
+local function perpendicular(direction: Vector3, rng: Random): Vector3
+	local random = Vector3.new(rng:NextNumber(-1, 1), rng:NextNumber(-1, 1), rng:NextNumber(-1, 1))
+	local axis = direction:Cross(random)
+	return if axis.Magnitude > 1e-3 then axis.Unit else Vector3.yAxis
+end
+
+local function aimPartOf(model: Model, head: boolean): BasePart?
+	local part = if head then model:FindFirstChild("Head") else nil
+	part = part or model:FindFirstChild("UpperTorso") or model:FindFirstChild("Torso") or model:FindFirstChild("HumanoidRootPart")
+	if part and part:IsA("BasePart") then
+		return part
+	end
+	return nil
+end
+
+-- Called when a new target is spotted: aim starts off-target and settles.
+function BotBrain:OnAcquire(now: number)
+	self.AcquiredAt = now
+	self.AimErrorAxis = nil
+	self.TargetHistory = {}
+	self.AimAtHead = self.Rng:NextNumber() < self.Settings.HeadAimChance
+	self.BurstLeft = self.Rng:NextInteger(self.Settings.Burst[1], self.Settings.Burst[2])
+end
+
+-- Where the bot *thinks* the target is: a delayed sample of its position.
+function BotBrain:PerceivedPoint(part: BasePart, now: number): Vector3
+	local history = self.TargetHistory
+	table.insert(history, { Time = now, Position = part.Position, Velocity = part.AssemblyLinearVelocity })
+	while history[1] and now - history[1].Time > HISTORY_SECONDS do
+		table.remove(history, 1)
+	end
+	local wanted = now - self.Settings.TrackingLag
+	local sample = history[1]
+	for _, entry in history do
+		if entry.Time <= wanted then
+			sample = entry
+		else
+			break
+		end
+	end
+	return sample.Position, sample.Velocity
+end
+
+-- Rotates the bot's aim toward the (delayed, error-offset) target at a
+-- limited turn speed. Returns the true direction to the target.
+function BotBrain:UpdateAim(targetModel: Model, eye: Vector3, now: number, deltaTime: number): (Vector3?, number)
+	local settings = self.Settings
+	local part = aimPartOf(targetModel, self.AimAtHead)
+	if not part then
+		return nil, 0
+	end
+	local perceived, velocity = self:PerceivedPoint(part, now)
+	local weapon = self.Services.WeaponService:GetEquippedWeapon(self.Combatant)
+	local distance = (perceived - eye).Magnitude
+	if weapon and weapon.Projectile and settings.LeadFactor > 0 then
+		perceived += velocity * (distance / weapon.Projectile.Speed) * settings.LeadFactor
+	end
+	local desired = (perceived - eye).Unit
+
+	-- Acquisition error that shrinks as the bot settles onto the target.
+	local settle = math.clamp((now - (self.AcquiredAt or now)) / settings.SettleTime, 0, 1)
+	local acquireError = settings.AcquireError * (1 - settle) ^ 2
+	-- Constant hand shake, worse while the bot itself is moving.
+	local moving = math.clamp(self.Combatant.Root.AssemblyLinearVelocity.Magnitude / 20, 0, 1)
+	local shake = settings.AimShake * (1 + moving)
+	self.AimErrorAxis = self.AimErrorAxis or perpendicular(desired, self.Rng)
+	local errored = CFrame.fromAxisAngle(self.AimErrorAxis, math.rad(acquireError)) * desired
+	errored = MathUtil.RandomInCone(errored, math.rad(shake), self.Rng)
+
+	local current = self.AimDirection or self.Combatant.Root.CFrame.LookVector
+	self.AimDirection = rotateToward(current, errored, math.rad(settings.TurnSpeed) * deltaTime)
+	local trueDirection = (part.Position - eye).Unit
+	return trueDirection, distance
+end
+
+function BotBrain:TryFire(targetModel: Model, eye: Vector3, now: number, deltaTime: number)
 	local bot = self.Combatant
+	local settings = self.Settings
 	local WeaponService = self.Services.WeaponService
-	if now < self.ReactionReadyAt or now < self.NextFireAt then
+	local trueDirection, distance = self:UpdateAim(targetModel, eye, now, deltaTime)
+	if not trueDirection or not self.AimDirection then
+		return
+	end
+	if now < self.ReactionReadyAt or now < self.NextFireAt or now < (self.BurstPauseUntil or 0) then
 		return
 	end
 	local weapon = WeaponService:GetEquippedWeapon(bot)
-	if not weapon then
+	if not weapon or distance > weapon.Range * 0.9 then
 		return
 	end
 	local ammo = WeaponService:GetAmmo(bot)
@@ -302,33 +407,25 @@ function BotBrain:TryFire(targetModel: Model, eye: Vector3, now: number)
 		self.NextFireAt = now + 0.3
 		return
 	end
+	-- Only pull the trigger when the aim is actually near the target.
+	if MathUtil.AngleBetween(self.AimDirection, trueDirection) > math.rad(settings.FireCone) then
+		return
+	end
 
-	local aimPart = targetModel:FindFirstChild("UpperTorso") or targetModel:FindFirstChild("Torso") or targetModel:FindFirstChild("HumanoidRootPart")
-	if self.Rng:NextNumber() < 0.2 then
-		aimPart = targetModel:FindFirstChild("Head") or aimPart
-	end
-	if not aimPart or not aimPart:IsA("BasePart") then
-		return
-	end
-	local distance = (aimPart.Position - eye).Magnitude
-	if distance > weapon.Range then
-		return
-	end
-	-- Aim error grows with target speed so strafing players are harder to hit.
-	local targetSpeed = aimPart.AssemblyLinearVelocity.Magnitude
-	local errorDegrees = self.Settings.AimErrorDegrees * (1 + targetSpeed / 30)
-	local aimPoint = aimPart.Position
-	if weapon.Projectile then
-		-- Lead projectile targets a little.
-		aimPoint += aimPart.AssemblyLinearVelocity * (distance / weapon.Projectile.Speed) * 0.6
-	end
-	local direction = MathUtil.RandomInCone((aimPoint - eye).Unit, math.rad(errorDegrees), self.Rng)
-	self.Services.CombatService:FireBotShot(bot, weapon.Id, eye, direction, self.Rng)
+	self.Services.CombatService:FireBotShot(bot, weapon.Id, eye, self.AimDirection, self.Rng)
 	local interval = 1 / WeaponConfig.GetMaxShotsPerSecond(weapon)
-	self.NextFireAt = now + interval / self.Settings.FireRateMultiplier
+	self.NextFireAt = now + interval / settings.FireRateMultiplier
+	-- Burst discipline: pause between bursts like a person would.
+	self.BurstLeft = (self.BurstLeft or 1) - 1
+	if self.BurstLeft <= 0 then
+		self.BurstPauseUntil = now + self.Rng:NextNumber(settings.BurstPause[1], settings.BurstPause[2])
+		self.BurstLeft = self.Rng:NextInteger(settings.Burst[1], settings.Burst[2])
+		self.AimAtHead = self.Rng:NextNumber() < settings.HeadAimChance
+		self.AimErrorAxis = nil
+	end
 end
 
-function BotBrain:Think(_deltaTime: number)
+function BotBrain:Think(deltaTime: number)
 	local bot = self.Combatant
 	if not bot then
 		return
@@ -354,6 +451,7 @@ function BotBrain:Think(_deltaTime: number)
 	if target then
 		if target ~= self.Target then
 			self.ReactionReadyAt = now + self.Settings.ReactionTime
+			self:OnAcquire(now)
 		end
 		self.Target = target
 		self.TargetIsDecoy = isDecoy
@@ -389,7 +487,8 @@ function BotBrain:Think(_deltaTime: number)
 			self.Target = nil
 			return
 		end
-		self:Face(targetPosition)
+		-- The body turns with the bot's (imperfect) aim, not straight at the target.
+		self:Face(eye + (self.AimDirection or (targetPosition - eye).Unit) * 10)
 		local toTarget = MathUtil.Flatten(targetPosition - root.Position)
 		local distance = toTarget.Magnitude
 		local forward = MathUtil.SafeUnit(toTarget, look)
@@ -420,16 +519,18 @@ function BotBrain:Think(_deltaTime: number)
 		local moveDirection = forward * approach + right * self.StrafeDirection
 		humanoid:Move(self:SafeDirection(MathUtil.SafeUnit(moveDirection, Vector3.zero)))
 		if model then
-			self:TryFire(model, eye, now)
+			self:TryFire(model, eye, now, deltaTime)
 		end
 	elseif state == "Chase" then
 		self:Face(nil)
+		self.AimDirection = nil
 		self:MoveToGoal(self.LastSeenPosition, now)
 		if (root.Position - self.LastSeenPosition).Magnitude < 6 then
 			self.Target = nil
 		end
 	elseif state == "Investigate" then
 		self:Face(nil)
+		self.AimDirection = nil
 		self:MoveToGoal(self.Noise, now)
 		if (root.Position - self.Noise).Magnitude < 8 then
 			self.Noise = nil
